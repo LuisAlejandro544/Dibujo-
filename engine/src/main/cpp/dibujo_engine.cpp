@@ -121,6 +121,27 @@ Java_com_dibujo_engine_NativeEngine_nativoZoom(
 }
 
 JNIEXPORT void JNICALL
+Java_com_dibujo_engine_NativeEngine_nativoRotar(
+        JNIEnv*, jobject, jlong handle, jfloat delta) {
+    peer(handle)->rotar(delta);
+}
+
+JNIEXPORT void JNICALL
+Java_com_dibujo_engine_NativeEngine_nativoLeerCamara(
+        JNIEnv* env, jobject, jlong handle, jfloatArray destino) {
+    auto* e = peer(handle);
+    if (e == nullptr || destino == nullptr) return;
+    if (env->GetArrayLength(destino) < 4) return;
+    float panX = 0.0f;
+    float panY = 0.0f;
+    float zoom = 1.0f;
+    float rotacion = 0.0f;
+    e->leerCamara(panX, panY, zoom, rotacion);
+    const jfloat datos[4] = {panX, panY, zoom, rotacion};
+    env->SetFloatArrayRegion(destino, 0, 4, datos);
+}
+
+JNIEXPORT void JNICALL
 Java_com_dibujo_engine_NativeEngine_nativoCentrarVista(JNIEnv*, jobject, jlong handle) {
     peer(handle)->centrarVista();
 }

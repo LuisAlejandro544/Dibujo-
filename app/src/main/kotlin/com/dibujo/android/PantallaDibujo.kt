@@ -51,6 +51,7 @@ import androidx.compose.material.icons.rounded.AddPhotoAlternate
 import androidx.compose.material.icons.rounded.Brush
 import androidx.compose.material.icons.rounded.CenterFocusWeak
 import androidx.compose.material.icons.rounded.CleaningServices
+import androidx.compose.material.icons.rounded.ContentCopy
 import androidx.compose.material.icons.rounded.Delete
 import androidx.compose.material.icons.rounded.Draw
 import androidx.compose.material.icons.rounded.FormatColorFill
@@ -61,6 +62,7 @@ import androidx.compose.material.icons.rounded.OpenInFull
 import androidx.compose.material.icons.rounded.PanTool
 import androidx.compose.material.icons.rounded.Remove
 import androidx.compose.material.icons.rounded.SaveAlt
+import androidx.compose.material.icons.rounded.ScreenRotation
 import androidx.compose.material.icons.rounded.Settings
 import androidx.compose.material.icons.rounded.Visibility
 import androidx.compose.material.icons.rounded.VisibilityOff
@@ -100,6 +102,7 @@ import androidx.compose.ui.graphics.FilterQuality
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.drawscope.withTransform
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
@@ -109,11 +112,13 @@ import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.Density
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.dibujo.core.BackendRender
+import com.dibujo.core.Camara
 import com.dibujo.core.Colores
 import com.dibujo.core.Herramienta
 import com.dibujo.core.Lapiz
@@ -124,7 +129,9 @@ import kotlinx.coroutines.withContext
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import kotlin.math.cos
 import kotlin.math.roundToInt
+import kotlin.math.sin
 
 
 class MainActivity : ComponentActivity() {
@@ -265,6 +272,7 @@ fun PantallaDibujo(vm: DibujoViewModel = viewModel()) {
                 alDeshacer = vm::deshacer,
                 alRehacer = vm::rehacer,
                 alCentrar = vm::centrar,
+                alEnderezar = vm::enderezar,
                 alLimpiar = vm::limpiar,
                 alExportar = alExportar,
                 exportando = exportando,
@@ -341,6 +349,7 @@ private fun BarraSuperior(
     alDeshacer: () -> Unit,
     alRehacer: () -> Unit,
     alCentrar: () -> Unit,
+    alEnderezar: () -> Unit,
     alLimpiar: () -> Unit,
     alExportar: () -> Unit,
     exportando: Boolean,
@@ -375,6 +384,12 @@ private fun BarraSuperior(
                 icono = Icons.Rounded.CenterFocusWeak,
                 descripcion = stringResource(R.string.cd_centrar),
                 alPulsar = alCentrar,
+            )
+            BotonIcono(
+                icono = Icons.Rounded.ScreenRotation,
+                descripcion = stringResource(R.string.cd_enderezar),
+                habilitado = estado.camara.rotacion != 0f,
+                alPulsar = alEnderezar,
             )
             BotonIcono(
                 icono = Icons.Rounded.Delete,
@@ -530,8 +545,14 @@ private fun CapaGestos(
     Canvas(
         modifier.pointerInput(modo) {
             if (modo == Modo.MOVER) {
-                detectTransformGestures { foco, pan, zoom, _ ->
+                // Pan + pinch de zoom + rotación de dos dedos, todos anclados
+                // al foco (el punto bajo los dedos). La rotación llega en
+                // grados y el motor la usa en radianes.
+                detectTransformGestures { foco, pan, zoom, rotacion ->
                     if (zoom != 1f) vm.zoomear(zoom, foco.x, foco.y)
+                    if (rotacion != 0f) {
+                        vm.rotar(Math.toRadians(rotacion.toDouble()).toFloat(), foco.x, foco.y)
+                    }
                     if (pan != Offset.Zero) vm.panear(pan.x, pan.y)
                 }
             } else {
@@ -565,16 +586,12 @@ private fun CapaGestos(
             val colorTrazo = if (borran) Color(Colores.BLANCO) else Color(lapiz.color)
             val grosorTrazo = lapiz.grosorEfectivo()
             val path = Path()
-            path.moveTo(
-                trazo[0] * camara.zoom - camara.panX,
-                trazo[1] * camara.zoom - camara.panY,
-            )
+            val primero = aPantallaCamara(camara, trazo[0], trazo[1])
+            path.moveTo(primero.x, primero.y)
             var i = 2
             while (i + 1 < trazo.size) {
-                path.lineTo(
-                    trazo[i] * camara.zoom - camara.panX,
-                    trazo[i + 1] * camara.zoom - camara.panY,
-                )
+                val p = aPantallaCamara(camara, trazo[i], trazo[i + 1])
+                path.lineTo(p.x, p.y)
                 i += 2
             }
             drawPath(
@@ -584,6 +601,15 @@ private fun CapaGestos(
             )
         }
     }
+}
+
+/** Punto de pantalla de una coordenada de hoja según la cámara (con rotación). */
+private fun aPantallaCamara(cam: Camara, hx: Float, hy: Float): Offset {
+    val zx = hx * cam.zoom
+    val zy = hy * cam.zoom
+    val c = cos(cam.rotacion.toDouble()).toFloat()
+    val s = sin(cam.rotacion.toDouble()).toFloat()
+    return Offset(c * zx - s * zy - cam.panX, s * zx + c * zy - cam.panY)
 }
 
 /**
@@ -621,21 +647,27 @@ private fun CapaCalco(
         val altoHoja = imagen.height * escala
         val xHoja = (estado.hojaAncho - anchoHoja) / 2f
         val yHoja = (estado.hojaAlto - altoHoja) / 2f
-        drawImage(
-            image = imagen,
-            srcOffset = IntOffset.Zero,
-            srcSize = IntSize(imagen.width, imagen.height),
-            dstOffset = IntOffset(
-                (xHoja * cam.zoom - cam.panX).roundToInt(),
-                (yHoja * cam.zoom - cam.panY).roundToInt(),
-            ),
-            dstSize = IntSize(
-                (anchoHoja * cam.zoom).roundToInt(),
-                (altoHoja * cam.zoom).roundToInt(),
-            ),
-            alpha = estado.calcoAlfa,
-            filterQuality = FilterQuality.Medium,
-        )
+        // La imagen se dibuja en coordenadas de hoja y el `withTransform` la
+        // lleva a pantalla igual que el motor: pantalla = R(rot)·(hoja·zoom) − pan.
+        // (Orden de transformaciones = se aplica la primera envuelta: T·R·S.)
+        withTransform({
+            translate(-cam.panX, -cam.panY)
+            rotate(
+                degrees = Math.toDegrees(cam.rotacion.toDouble()).toFloat(),
+                pivot = Offset.Zero,
+            )
+            scale(scaleX = cam.zoom, scaleY = cam.zoom, pivot = Offset.Zero)
+        }) {
+            drawImage(
+                image = imagen,
+                srcOffset = IntOffset.Zero,
+                srcSize = IntSize(imagen.width, imagen.height),
+                dstOffset = IntOffset(xHoja.roundToInt(), yHoja.roundToInt()),
+                dstSize = IntSize(anchoHoja.roundToInt(), altoHoja.roundToInt()),
+                alpha = estado.calcoAlfa,
+                filterQuality = FilterQuality.Medium,
+            )
+        }
     }
 }
 
@@ -1117,16 +1149,18 @@ private fun Herramientas(
     estado: DibujoEstado,
     vm: DibujoViewModel,
 ) {
-    // Botones de icono compactos: entran todos en una fila, sin scroll.
+    // Botones de icono compactos: entran todos en una fila, sin scroll. El
+    // DOBLE va al final, con el mismo tamaño reducido para que quepan seis.
     val pares = listOf(
         Triple(Herramienta.LAPIZ, R.string.herramienta_lapiz, Icons.Rounded.Draw),
         Triple(Herramienta.PORTAMINA, R.string.herramienta_portamina, Icons.Rounded.Mode),
         Triple(Herramienta.CARBONCILLO, R.string.herramienta_carboncillo, Icons.Rounded.Brush),
         Triple(Herramienta.BORRADOR, R.string.herramienta_borrador, Icons.Rounded.CleaningServices),
         Triple(Herramienta.PINTAR, R.string.herramienta_pintar, Icons.Rounded.FormatColorFill),
+        Triple(Herramienta.DOBLE, R.string.herramienta_doble, Icons.Rounded.ContentCopy),
     )
     Row(
-        horizontalArrangement = Arrangement.spacedBy(2.dp),
+        horizontalArrangement = Arrangement.spacedBy(1.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         pares.forEach { (herramienta, etiquetaRes, icono) ->
@@ -1135,6 +1169,7 @@ private fun Herramientas(
                 icono = icono,
                 descripcion = etiqueta,
                 seleccionado = estado.lapiz.herramienta == herramienta,
+                tamano = 34.dp,
                 alPulsar = { vm.elegirHerramienta(herramienta) },
             )
         }
@@ -1153,10 +1188,11 @@ private fun IconoToggle(
     seleccionado: Boolean,
     alPulsar: () -> Unit,
     habilitado: Boolean = true,
+    tamano: Dp = 40.dp,
 ) {
     Box(
         Modifier
-            .size(40.dp)
+            .size(tamano)
             .clip(MaterialTheme.shapes.medium)
             .background(
                 if (seleccionado) MaterialTheme.colorScheme.secondaryContainer else Color.Transparent,

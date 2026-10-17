@@ -9,6 +9,10 @@ layout(push_constant) uniform Push {
     vec2 uPan;
     float uZoom;
     float uFlipY;
+    float uRot;
+    float uPad0;
+    float uPad1;
+    float uPad2;
 } pc;
 
 layout(location = 0) out vec2 vPantalla;

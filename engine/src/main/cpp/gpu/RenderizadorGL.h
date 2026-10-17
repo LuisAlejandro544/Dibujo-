@@ -48,6 +48,7 @@ private:
     GLint uHojaTam_ = -1;
     GLint uPan_ = -1;
     GLint uZoom_ = -1;
+    GLint uRot_ = -1;
     GLint uFuera_ = -1;
     GLint uHoja_ = -1;
 

@@ -9,12 +9,14 @@
     <string name="herramienta_carboncillo">Carbón</string>
     <string name="herramienta_borrador">Borrador</string>
     <string name="herramienta_pintar">Pintar</string>
+    <string name="herramienta_doble">Doble</string>
 
     <!-- Accesibilidad (contentDescription) -->
     <string name="cd_deshacer">Deshacer</string>
     <string name="cd_rehacer">Rehacer</string>
     <string name="cd_limpiar">Limpiar hoja</string>
     <string name="cd_centrar">Centrar la vista</string>
+    <string name="cd_enderezar">Enderezar la hoja (quitar la rotación)</string>
     <string name="cd_grosor_mas">Aumentar grosor</string>
     <string name="cd_grosor_menos">Reducir grosor</string>
     <string name="cd_color">Color %1$s</string>

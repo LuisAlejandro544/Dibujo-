@@ -75,6 +75,8 @@ class DibujoViewModel(app: Application) : AndroidViewModel(app) {
         app.getSharedPreferences(PREFERENCIAS, Context.MODE_PRIVATE)
 
     private var motor: MotorDibujo? = null
+    private var vistaAncho = 0
+    private var vistaAlto = 0
     private val seleccionInicial = leerBackend()
     private val _estado = MutableStateFlow(
         DibujoEstado(
@@ -88,7 +90,10 @@ class DibujoViewModel(app: Application) : AndroidViewModel(app) {
 
     /** Crea el motor una sola vez con el tamaño físico de la pantalla (px). */
     fun inicializar(vw: Int, vh: Int) {
-        if (vw <= 0 || vh <= 0 || motor != null) return
+        if (vw <= 0 || vh <= 0) return
+        vistaAncho = vw
+        vistaAlto = vh
+        if (motor != null) return
         val m = Motores.crear(vw.coerceIn(1, MAX_LADO), vh.coerceIn(1, MAX_LADO))
         motor = m
         m.configurarLapiz(_estado.value.lapiz)
@@ -214,16 +219,47 @@ class DibujoViewModel(app: Application) : AndroidViewModel(app) {
         _estado.update { it.copy(camara = m.camara(), marco = it.marco + 1) }
     }
 
-    /** Pinch de zoom anclado al punto donde están los dedos. */
+    /**
+     * Pinch de zoom anclado al punto donde están los dedos: la hoja que está
+     * bajo el foco no se mueve. La transformación incluye la rotación:
+     * `hoja = R(−rot)·(pantalla + pan)/zoom` y
+     * `pantalla = R(rot)·(hoja·zoom) − pan`.
+     */
     fun zoomear(factor: Float, focoX: Float, focoY: Float) {
         val m = motor ?: return
         if (_estado.value.modo != Modo.MOVER) return
         val cam = m.camara()
-        val hfx = (focoX + cam.panX) / cam.zoom
-        val hfy = (focoY + cam.panY) / cam.zoom
+        val hf = pantallaAUnrotado(cam, focoX, focoY)
         m.zoom(factor)
-        val cam2 = m.camara()
-        m.pan(hfx * cam2.zoom - focoX - cam2.panX, hfy * cam2.zoom - focoY - cam2.panY)
+        anclarFoco(m, hf.first, hf.second, focoX, focoY)
+        _estado.update { it.copy(camara = m.camara(), marco = it.marco + 1) }
+    }
+
+    /**
+     * Gira la hoja [delta] radianes anclado a [focoX]/[focoY]: el punto de la
+     * hoja bajo los dedos queda quieto. Es el gesto de rotación de dos dedos
+     * (modo MOVER), como en las apps de dibujo profesionales.
+     */
+    fun rotar(delta: Float, focoX: Float, focoY: Float) {
+        val m = motor ?: return
+        if (_estado.value.modo != Modo.MOVER) return
+        val cam = m.camara()
+        val hf = pantallaAUnrotado(cam, focoX, focoY)
+        m.rotar(delta)
+        anclarFoco(m, hf.first, hf.second, focoX, focoY)
+        _estado.update { it.copy(camara = m.camara(), marco = it.marco + 1) }
+    }
+
+    /** Endereza la hoja (rotación 0) sin tocar el zoom, anclado al centro. */
+    fun enderezar() {
+        val m = motor ?: return
+        val cam = m.camara()
+        if (cam.rotacion == 0f) return
+        val cx = vistaAncho / 2f
+        val cy = vistaAlto / 2f
+        val hf = pantallaAUnrotado(cam, cx, cy)
+        m.rotar(-cam.rotacion)
+        anclarFoco(m, hf.first, hf.second, cx, cy)
         _estado.update { it.copy(camara = m.camara(), marco = it.marco + 1) }
     }
 
@@ -383,9 +419,38 @@ class DibujoViewModel(app: Application) : AndroidViewModel(app) {
         _estado.update { it.copy(lapiz = nuevo) }
     }
 
-    private fun aHoja(m: MotorDibujo, px: Float, py: Float): Pair<Float, Float> {
-        val cam = m.camara()
-        return (px + cam.panX) / cam.zoom to (py + cam.panY) / cam.zoom
+    private fun aHoja(m: MotorDibujo, px: Float, py: Float): Pair<Float, Float> =
+        pantallaAUnrotado(m.camara(), px, py)
+
+    /** Punto de hoja bajo (px, py) según la cámara: `R(−rot)(pantalla+pan)/zoom`. */
+    private fun pantallaAUnrotado(cam: Camara, px: Float, py: Float): Pair<Float, Float> {
+        val ex = px + cam.panX
+        val ey = py + cam.panY
+        val c = kotlin.math.cos(cam.rotacion.toDouble()).toFloat()
+        val s = kotlin.math.sin(cam.rotacion.toDouble()).toFloat()
+        return ((c * ex + s * ey) / cam.zoom) to ((-s * ex + c * ey) / cam.zoom)
+    }
+
+    /**
+     * Ajusta el pan para que el punto de hoja (hfx, hfy) vuelva a caer en el
+     * foco de pantalla (focoX, focoY) tras cambiar zoom/rotación: despeja
+     * `pan = R(rot)·(hoja·zoom) − foco` leyendo la cámara ya actualizada.
+     */
+    private fun anclarFoco(
+        m: MotorDibujo,
+        hfx: Float,
+        hfy: Float,
+        focoX: Float,
+        focoY: Float,
+    ) {
+        val cam2 = m.camara()
+        val zx = hfx * cam2.zoom
+        val zy = hfy * cam2.zoom
+        val c = kotlin.math.cos(cam2.rotacion.toDouble()).toFloat()
+        val s = kotlin.math.sin(cam2.rotacion.toDouble()).toFloat()
+        val deseadoX = (c * zx - s * zy) - focoX
+        val deseadoY = (s * zx + c * zy) - focoY
+        m.pan(deseadoX - cam2.panX, deseadoY - cam2.panY)
     }
 
     private fun leerBackend(): BackendRender =

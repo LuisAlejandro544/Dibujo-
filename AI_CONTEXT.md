@@ -51,7 +51,8 @@ Cualquier cambio en el rasterizado (disco, bloque, línea gruesa, relleno,
 grosor efectivo por herramienta, cámara, render) debe hacerse en las DOS
 implementaciones y pasar `MotorTest` (paridad píxel a píxel). Las diferencias:
 - `grosorEfectivo`: PORTAMINA `grosor/2`, CARBONCILLO `grosor+2`, BORRADOR `grosor+4`
-  (la fórmula vive en `Lapiz.grosorEfectivo()`; el C++ la replica).
+  (la fórmula vive en `Lapiz.grosorEfectivo()`; el C++ la replica). DOBLE y
+  PINTAR usan el grosor tal cual.
 - **Antialiasing**: `disco()` calcula la cobertura de cada píxel como
   `0.5 + radio − distancia` (distancia en `Double` y `sqrt` correctamente
   redondeado en ambos lados) y mezcla con el fondo con `pintarMezcla` /
@@ -62,12 +63,29 @@ implementaciones y pasar `MotorTest` (paridad píxel a píxel). Las diferencias:
 - FUERA de hoja en render = gris `0xFFECECEC`.
 
 ### Cámara
-`renderizar()` define la transformación canonical:
-**pantalla = hoja * zoom − pan**, o sea **hoja = (pantalla + pan) / zoom**.
-De ahí salen (ver `README_AI.md`):
+`renderizar()` define la transformación canonical (con rotación):
+**pantalla = R(rot)·(hoja·zoom) − pan**, o sea **hoja = R(−rot)·(pantalla + pan) / zoom**
+(`R` es la rotación en el plano; con `rot = 0` queda la fórmula vieja
+`hoja = (pantalla + pan)/zoom`). El coseno/seno se calculan en `Double` y se
+castean a `Float` en AMBOS lados para que la paridad no dependa de la última
+ulp de la libm. De ahí salen (ver `README_AI.md`):
 - pan natural: `motor.pan(-dx, -dy)` para que el contenido siga al dedo.
 - zoom anclado: tras `motor.zoom(f)`, corregir `pan` con
-  `pan = hojaFoco * zoomNuevo − focoPantalla` (así lo hace `DibujoViewModel.zoomear`).
+  `pan = R(rot)·(hojaFoco·zoomNuevo) − focoPantalla` (así lo hacen
+  `DibujoViewModel.zoomear` y `rotar`).
+- rotación anclada (`MotorDibujo.rotar`, gesto de dos dedos): se guarda el
+  punto de hoja bajo el foco y se reancla el pan tras girar; `centrarVista`
+  deja `rot = 0`. El giro se normaliza a `(-π, π]`.
+- Límites de zoom: `ZOOM_MIN = 0.05`, `ZOOM_MAX = 64` (antes 0.25..8), en
+  Kotlin y C++ (`kZoomMin`/`kZoomMax`).
+
+### Herramienta DOBLE
+`Herramienta.DOBLE` (ordinal 5, mismo orden que `Tool::DOBLE` en C++) dibuja
+**dos trazos paralelos**: cada segmento se replica desplazado perpendicularmente
+`separacion = (grosor + 2) * 0.5` hacia ambos lados (C++ `separacionDoble`, Kotlin
+igual). El trazo original y su gemelo se rasterizan con la misma lógica de línea
+gruesa; un toque sin arrastre dibuja un único disco/bloque centrado. La paridad
+la cubre `MotorTest.dobleParidadNativoKotlin`.
 
 ### Hoja
 `Lienzo` admite 1..4096 por lado, ARGB, fondo configurable (BLANCO por defecto).
@@ -137,10 +155,17 @@ Particularidades:
   rasterizado por `motor.renderizar(buffer, vw, vh)` + overlay del trazo en
   curso (Path con la misma transformación de cámara) para feedback inmediato.
 - **Gestos**: `detectDragGestures` (EDICION) y `detectTransformGestures`
-  con foco (MOVER), en `pointerInput(estado.modo)`.
+  con foco (MOVER) que además de pan/zoom entrega `rotation` (en grados): la
+  capa de gestos la pasa a radianes y llama `DibujoViewModel.rotar`. La vista
+  previa del trazo aplica la cámara completa (rotación incluida) y la `CapaCalco`
+  se transforma con `withTransform { translate(-pan); rotate(rot, Offset.Zero);
+  scale(zoom, Offset.Zero) }` para quedar alineada con la hoja.
 - **Edge-to-edge** desde la Activity (`enableEdgeToEdge()`), `Scaffold` con
-  `TopAppBar` (título + motor + deshacer/rehacer/centrar/limpiar/configuración)
-  y barra inferior con herramientas/chips de modo/grosor y la paleta.
+  `TopAppBar` (título + motor + deshacer/rehacer/centrar/enderezar/limpiar/configuración;
+  "enderezar" queda habilitado sólo si hay rotación) y barra inferior con
+  herramientas/chips de modo/grosor y la paleta. Las herramientas son seis
+  (…+ DOBLE), con botones compactos (`IconoToggle(tamano = 34.dp)`) para que
+  entren en una fila sin scroll.
   Particularidades que costaron bugs reales:
   - Las barras del sistema usan `SystemBarStyle.light(...)`: el tema es claro
     y, con el teléfono en modo oscuro, `auto()` dejaba hora/batería blancas
@@ -199,10 +224,11 @@ corresponde.
 - `RenderizadorVulkan` monta instancia/dispositivo/swapchain/render pass y
   presenta; recrea la cadena ante `VK_ERROR_OUT_OF_DATE_KHR`.
 - Los shaders presentan la hoja como textura y resuelven la cámara en la GPU:
-  `hoja = (pantalla + pan) / zoom` con `texelFetch`; el color se lee del
-  `0xAARRGGBB` en bytes B,G,R,A y se reordena a RGBA. Parámetros en un bloque
-  std430 de 48 bytes (`ParametrosPresentacion.h`). El rasterizado del trazo
-  sigue en CPU (paridad `MotorTest` intacta); la GPU sólo presenta.
+  `hoja = R(−rot)·(pantalla + pan) / zoom` (`rot` en el uniform `uRot`) con
+  `texelFetch`; el color se lee del `0xAARRGGBB` en bytes B,G,R,A y se reordena
+  a RGBA. Parámetros en un bloque std430 de 64 bytes —`rot` + 3 de relleno,
+  `static_assert` lo fija— (`ParametrosPresentacion.h`). El rasterizado del
+  trazo sigue en CPU (paridad `MotorTest` intacta); la GPU sólo presenta.
 - `GpuJni.cpp` expone `nativoGpuCrear/Render/Redimensionar/Nombre/Destruir` y
   guarda el `ANativeWindow` (`ANativeWindow_fromSurface`).
 - Vulkan GLSL se compila a SPIR-V en configure (glslc del NDK) e incrusta en

@@ -191,6 +191,8 @@ class LapizTest {
         assertEquals(6, Lapiz(herramienta = Herramienta.BORRADOR, grosor = 2).grosorEfectivo())
         // PINTAR no ajusta el grosor (rellena, no traza).
         assertEquals(5, Lapiz(herramienta = Herramienta.PINTAR, grosor = 5).grosorEfectivo())
+        // DOBLE usa el grosor para cada una de sus dos líneas.
+        assertEquals(5, Lapiz(herramienta = Herramienta.DOBLE, grosor = 5).grosorEfectivo())
     }
 }
 

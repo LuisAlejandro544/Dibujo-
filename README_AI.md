@@ -13,10 +13,10 @@ garantizada por tests). Dos front-ends: consola JVM (`:ui`) y Android Compose
 
 | Ruta | Contenido |
 |---|---|
-| `core/src/main/kotlin/com/dibujo/core/` | Dominio: `Lienzo` (hoja ARGB ≤4096×4096, disco con antialiasing), `MotorDibujo` (fachada), `Lapiz`, `Colores`, `Modo`, `Historial`, `BackendRender`, `ComandoLinea` (parser). |
+| `core/src/main/kotlin/com/dibujo/core/` | Dominio: `Lienzo` (hoja ARGB ≤4096×4096, disco con antialiasing), `MotorDibujo` (fachada: trazado, cámara con rotación, expandir, copiarHoja), `Lapiz` (herramientas LAPIZ/PORTAMINA/CARBONCILLO/BORRADOR/PINTAR/DOBLE), `Colores`, `Modo`, `Historial`, `BackendRender`, `ComandoLinea` (parser). |
 | `engine/src/main/kotlin/com/dibujo/engine/` | `Motores.crear()` → `MotorNativo` (JNI) o `MotorKotlin` (respaldo); `NativeEngine` declara los `external`. |
 | `engine/src/main/cpp/` | C++17: `DibujoEngine` (núcleo, disco antialiased), `dibujo_engine.cpp` (JNI), `gpu/` (`RenderizadorGL`, `RenderizadorVulkan`, `GpuJni.cpp`, shaders; sólo Android), `CMakeLists.txt` (JDK en escritorio, NDK en Android). |
-| `ui/` | Consola ANSI: `Main.kt`, `ControladorConsola`, `VistaHoja`, `Menu`. |
+| `ui/` | Consola ANSI: `Main.kt`, `ControladorConsola` (`r`/`,` giran la hoja), `VistaHoja`, `Menu`. |
 | `app/` | Android: `MainActivity`, `PantallaDibujo` (Compose M3, edge-to-edge + fuente fija), `SuperficieGpu` (SurfaceView + hilo de render GPU), `DibujoViewModel`, `CapacidadesGraficas` (detección Vulkan 1.1 / OpenGL ES), `ExportadorGaleria` (guardar PNG en la galería vía MediaStore), manifest, recursos e adaptive icon. |
 | `app/src/debug/` | Solo variant debug: `PanelDebugActivity` (icono propio en el launcher), `MonitorDibujo` (RAM/hilos/crashes), `CapturaLogs`, `MonitorProvider` y LeakCanary 2.14. No existe en release. |
 | `.github/workflows/` | `android-apk.yml` (assembleDebug manual y en PRs contra main). |
@@ -24,12 +24,17 @@ garantizada por tests). Dos front-ends: consola JVM (`:ui`) y Android Compose
 ## Semántica de cámara (crítica, no re-derivar)
 
 `renderizar(destino, vw, vh)` mapea pantalla→hoja como
-**hoja = (pantalla + pan) / zoom**. Derivar de ahí:
+**hoja = R(−rot)·(pantalla + pan) / zoom** (o sea
+**pantalla = R(rot)·(hoja·zoom) − pan**; con `rot = 0` es `(pantalla + pan)/zoom`).
+Derivar de ahí:
 - pan con dedo que arrastra contenido: `motor.pan(-dx, -dy)`.
 - zoom anclado al foco: ajustar `pan` después de `zoom()` con la fórmula
-  `pan = hojaFoco * zoomNuevo − focoPantalla`.
-La app Android usa exactamente esa conversión; si la cambiás, actualizar los
-dos motores y el test de paridad juntos.
+  `pan = R(rot)·(hojaFoco·zoomNuevo) − focoPantalla`.
+- rotación anclada: `motor.rotar(delta)` y reanclar el pan igual; `centrarVista`
+  resetea `rot = 0`. Degradados a `(-π, π]`.
+Zoom de `0.05` a `64` (`ZOOM_MIN`/`ZOOM_MAX` = `kZoomMin`/`kZoomMax`). La app
+Android usa exactamente esa conversión; si la cambiás, actualizar los dos
+motores y el test de paridad juntos.
 
 ## Comandos
 

@@ -41,6 +41,14 @@ interface MotorDibujo : AutoCloseable {
     /** Cámara: la vista sobre la hoja (modo moverse libremente). */
     fun pan(dx: Float, dy: Float)
     fun zoom(factor: Float)
+
+    /**
+     * Gira la hoja [delta] radianes alrededor del origen de la hoja (como el
+     * gesto de rotación de dos dedos de las apps de dibujo). La rotación forma
+     * parte de la transformación de cámara:
+     * `pantalla = R(rot) * (hoja * zoom) − pan`.
+     */
+    fun rotar(delta: Float)
     fun centrarVista()
     fun camara(): Camara
 
@@ -64,5 +72,17 @@ interface MotorDibujo : AutoCloseable {
     val handleNativo: Long get() = 0L
 }
 
-/** Estado de la cámara: pan (px de hoja) y zoom. */
-data class Camara(val panX: Float, val panY: Float, val zoom: Float)
+/**
+ * Estado de la cámara: pan (px de hoja), zoom y rotación (radianes).
+ *
+ * La transformación canonical es
+ * `pantalla = R(rotacion) · (hoja · zoom) − (panX, panY)`, así que su inversa
+ * es `hoja = R(−rotacion) · (pantalla + pan) / zoom`. Con `rotacion = 0`
+ * coincide con la de siempre (`hoja = (pantalla + pan) / zoom`).
+ */
+data class Camara(
+    val panX: Float,
+    val panY: Float,
+    val zoom: Float,
+    val rotacion: Float = 0f,
+)

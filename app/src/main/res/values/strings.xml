@@ -19,8 +19,25 @@
     <string name="cd_color">Color %1$s</string>
     <string name="cd_modo_editar">Modo edición: tocar para cambiar a mover</string>
     <string name="cd_modo_mover">Modo mover: tocar para cambiar a edición</string>
+    <string name="cd_configuracion">Abrir configuración</string>
+    <string name="cd_cargando_render">Preparando el motor gráfico</string>
 
     <!-- Estado -->
     <string name="estado_motor">Motor: %1$s</string>
     <string name="estado_grosor">Grosor %1$d</string>
+    <string name="cargando_render">Preparando render %1$s…</string>
+
+    <!-- Configuración -->
+    <string name="config_titulo">Configuración</string>
+    <string name="config_backend">Motor gráfico</string>
+    <string name="config_backend_efectivo">En uso: %1$s</string>
+    <string name="config_vulkan_no_soportado">Este equipo no soporta Vulkan 1.1; la opción queda bloqueada.</string>
+    <string name="config_opengl_version">OpenGL ES %1$s disponible</string>
+    <string name="config_render_gpu">Dibujo por GPU: %1$s</string>
+    <string name="config_render_cpu">Dibujo por CPU (sin render GPU)</string>
+    <string name="config_render_cpu_fallo">Dibujo por CPU (el render GPU falló)</string>
+    <string name="backend_automatico">Automático</string>
+    <string name="backend_opengl">OpenGL ES</string>
+    <string name="backend_vulkan">Vulkan</string>
+    <string name="cerrar">Cerrar</string>
 </resources>

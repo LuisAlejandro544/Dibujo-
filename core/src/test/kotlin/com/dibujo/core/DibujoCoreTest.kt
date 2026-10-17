@@ -63,6 +63,59 @@ class LienzoTest {
         copia.pintar(1, 1, Colores.AZUL)
         assertEquals(Colores.ROJO, l.pixel(1, 1))
     }
+
+    @Test
+    fun discoBordeSuavizadoNoEsEscalonado() {
+        // Un disco de radio 1 sobre blanco deja el centro opaco y el borde
+        // con cobertura parcial (valor intermedio entre negro y blanco).
+        val l = Lienzo(9, 9)
+        l.disco(4f, 4f, 1f, Colores.NEGRO)
+        assertEquals(Colores.NEGRO, l.pixel(4, 4))
+        val borde = l.pixel(5, 4)
+        assertTrue(borde != Colores.NEGRO && borde != Colores.BLANCO, "borde=$borde")
+    }
+
+    @Test
+    fun pintarMezclaCoberturaTotalReemplaza() {
+        val l = Lienzo(3, 3)
+        l.pintarMezcla(1, 1, Colores.ROJO, 255)
+        assertEquals(Colores.ROJO, l.pixel(1, 1))
+    }
+
+    @Test
+    fun pintarMezclaCoberturaCeroNoPinta() {
+        val l = Lienzo(3, 3)
+        l.pintarMezcla(1, 1, Colores.ROJO, 0)
+        assertEquals(Colores.BLANCO, l.pixel(1, 1))
+    }
+}
+
+class BackendRenderTest {
+    @Test
+    fun automaticoUsaVulkanSiHaySoporte() {
+        assertEquals(BackendRender.VULKAN, BackendRender.AUTOMATICO.resolver(vulkanSoportado = true))
+        assertEquals(BackendRender.OPENGL, BackendRender.AUTOMATICO.resolver(vulkanSoportado = false))
+    }
+
+    @Test
+    fun vulkanPideFallbackAOpenGLSinSoporte() {
+        assertEquals(BackendRender.OPENGL, BackendRender.VULKAN.resolver(vulkanSoportado = false))
+        assertEquals(BackendRender.VULKAN, BackendRender.VULKAN.resolver(vulkanSoportado = true))
+    }
+
+    @Test
+    fun openglSiempreDisponible() {
+        assertEquals(BackendRender.OPENGL, BackendRender.OPENGL.resolver(vulkanSoportado = false))
+        assertEquals(BackendRender.OPENGL, BackendRender.OPENGL.resolver(vulkanSoportado = true))
+    }
+
+    @Test
+    fun vulkanSoloDisponibleConSoporte() {
+        assertTrue(BackendRender.OPENGL.disponible(vulkanSoportado = false))
+        assertTrue(BackendRender.AUTOMATICO.disponible(vulkanSoportado = false))
+        assertTrue(!BackendRender.VULKAN.disponible(vulkanSoportado = false))
+        assertTrue(BackendRender.VULKAN.disponible(vulkanSoportado = true))
+    }
 }
 
 class HistorialTest {

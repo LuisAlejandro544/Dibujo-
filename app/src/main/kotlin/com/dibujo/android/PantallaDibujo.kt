@@ -1,8 +1,10 @@
 package com.dibujo.android
 
 import android.graphics.Bitmap
+import android.graphics.Color as ColorAndroid
 import android.os.Bundle
 import androidx.activity.ComponentActivity
+import androidx.activity.SystemBarStyle
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.Canvas
@@ -16,11 +18,18 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.selection.selectable
+import androidx.compose.foundation.selection.selectableGroup
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.Redo
@@ -35,6 +44,9 @@ import androidx.compose.material.icons.rounded.Gesture
 import androidx.compose.material.icons.rounded.Mode
 import androidx.compose.material.icons.rounded.PanTool
 import androidx.compose.material.icons.rounded.Remove
+import androidx.compose.material.icons.rounded.Settings
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilterChipDefaults
@@ -42,14 +54,19 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.IconButtonDefaults
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.State
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -62,12 +79,16 @@ import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
-import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.IntSize
+import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.dibujo.core.BackendRender
 import com.dibujo.core.Colores
 import com.dibujo.core.Herramienta
 import com.dibujo.core.Lapiz
@@ -76,33 +97,99 @@ import com.dibujo.core.Modo
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        enableEdgeToEdge()
+        // Forzamos iconos oscuros en las barras del sistema: el tema de la app
+        // es claro y sin esto, con el teléfono en modo oscuro, la hora y la
+        // batería quedaban blancas sobre fondo claro (invisibles).
+        enableEdgeToEdge(
+            statusBarStyle = SystemBarStyle.light(
+                ColorAndroid.TRANSPARENT,
+                ColorAndroid.TRANSPARENT,
+            ),
+            navigationBarStyle = SystemBarStyle.light(
+                ColorAndroid.TRANSPARENT,
+                ColorAndroid.TRANSPARENT,
+            ),
+        )
         setContent {
-            MaterialTheme {
+            TemaDibujo {
                 PantallaDibujo()
             }
         }
     }
 }
 
-/** Pantalla principal: barra superior (acciones) + hoja táctil + herramientas. */
+/**
+ * Tema de la app. Fija `fontScale = 1` para que el tamaño del texto no
+ * dependa de la configuración de letra del teléfono del usuario (la UI de una
+ * app de dibujo debe verse igual en todos los equipos).
+ */
 @Composable
-fun PantallaDibujo(vm: DibujoViewModel = viewModel()) {
-    val estado by vm.estado.collectAsState()
-
-    Scaffold(
-        topBar = { BarraSuperior(estado, vm) },
-        bottomBar = { BarraHerramientas(estado, vm) },
-    ) { margenes ->
-        Hoja(estado, vm, Modifier.padding(margenes).fillMaxSize())
+fun TemaDibujo(content: @Composable () -> Unit) {
+    val densidadBase = LocalDensity.current
+    CompositionLocalProvider(
+        LocalDensity provides Density(
+            density = densidadBase.density,
+            fontScale = 1f,
+        ),
+    ) {
+        MaterialTheme(content = content)
     }
 }
 
-/** Barra superior: título + estado del motor + deshacer/rehacer/centrar/limpiar. */
+/** Pantalla principal: barra superior (acciones) + hoja táctil + herramientas. */
+@Composable
+fun PantallaDibujo(vm: DibujoViewModel = viewModel()) {
+    val estadoState = vm.estado.collectAsState()
+    val estado = estadoState.value
+    var mostrarConfig by remember { mutableStateOf(false) }
+
+    Scaffold(
+        topBar = {
+            BarraSuperior(
+                estado = estado,
+                alDeshacer = vm::deshacer,
+                alRehacer = vm::rehacer,
+                alCentrar = vm::centrar,
+                alLimpiar = vm::limpiar,
+                alAbrirConfig = { mostrarConfig = true },
+            )
+        },
+        bottomBar = { BarraHerramientas(estado, vm) },
+        // Transparente: deja ver la superficie GPU que va en una capa detrás
+        // de la ventana (el `SurfaceView`). Las barras y la vista previa del
+        // trazo se dibujan encima en la ventana de Compose.
+        containerColor = Color.Transparent,
+    ) {
+        // A propósito NO aplicamos `margenes`: la hoja ocupa toda la ventana
+        // (detrás de las barras). Así la superficie GPU, la capa de gestos y el
+        // motor comparten EXACTAMENTE el mismo origen y tamaño (pantalla
+        // completa), y el trazo cae justo donde se dibuja. Las barras se pintan
+        // encima y siguen recibiendo el toque.
+        AreaDibujo(estadoState, vm, Modifier.fillMaxSize())
+    }
+
+    if (mostrarConfig) {
+        DialogoConfiguracion(
+            estado = estado,
+            alElegirBackend = vm::elegirBackend,
+            alCerrar = { mostrarConfig = false },
+        )
+    }
+}
+
+/** Barra superior: título + motor + deshacer/rehacer/centrar/limpiar/config. */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun BarraSuperior(estado: DibujoEstado, vm: DibujoViewModel) {
+private fun BarraSuperior(
+    estado: DibujoEstado,
+    alDeshacer: () -> Unit,
+    alRehacer: () -> Unit,
+    alCentrar: () -> Unit,
+    alLimpiar: () -> Unit,
+    alAbrirConfig: () -> Unit,
+) {
     TopAppBar(
+        modifier = Modifier.absorberToque(),
         title = {
             Column {
                 Text(stringResource(R.string.app_name))
@@ -118,23 +205,28 @@ private fun BarraSuperior(estado: DibujoEstado, vm: DibujoViewModel) {
                 icono = Icons.AutoMirrored.Rounded.Undo,
                 descripcion = stringResource(R.string.cd_deshacer),
                 habilitado = estado.puedeDeshacer,
-                alPulsar = { vm.deshacer() },
+                alPulsar = alDeshacer,
             )
             BotonIcono(
                 icono = Icons.AutoMirrored.Rounded.Redo,
                 descripcion = stringResource(R.string.cd_rehacer),
                 habilitado = estado.puedeRehacer,
-                alPulsar = { vm.rehacer() },
+                alPulsar = alRehacer,
             )
             BotonIcono(
                 icono = Icons.Rounded.CenterFocusWeak,
                 descripcion = stringResource(R.string.cd_centrar),
-                alPulsar = { vm.centrar() },
+                alPulsar = alCentrar,
             )
             BotonIcono(
                 icono = Icons.Rounded.Delete,
                 descripcion = stringResource(R.string.cd_limpiar),
-                alPulsar = { vm.limpiar() },
+                alPulsar = alLimpiar,
+            )
+            BotonIcono(
+                icono = Icons.Rounded.Settings,
+                descripcion = stringResource(R.string.cd_configuracion),
+                alPulsar = alAbrirConfig,
             )
         },
         colors = TopAppBarDefaults.topAppBarColors(
@@ -143,10 +235,88 @@ private fun BarraSuperior(estado: DibujoEstado, vm: DibujoViewModel) {
     )
 }
 
+/**
+ * Área de dibujo: superficie GPU con caída a CPU y capa de gestos encima.
+ *
+ * La hoja se presenta por GPU sólo si el equipo la soporta, no falló antes y
+ * el motor nativo está disponible; si no, se pinta por CPU en un `Canvas`.
+ * Los gestos y la vista previa del trazo van siempre en una capa Compose
+ * encima, así funcionan igual con GPU o CPU.
+ */
 @Composable
-private fun Hoja(estado: DibujoEstado, vm: DibujoViewModel, modifier: Modifier = Modifier) {
+private fun AreaDibujo(
+    estadoState: State<DibujoEstado>,
+    vm: DibujoViewModel,
+    modifier: Modifier = Modifier,
+) {
+    val estado = estadoState.value
     var dimension by remember { mutableStateOf(IntSize.Zero) }
+    val usarGpu = estado.gpuDisponible && !estado.gpuFallo && vm.handleMotor() != 0L
 
+    Box(
+        modifier.onSizeChanged { tamano ->
+            if (tamano != dimension) dimension = tamano
+            vm.inicializar(tamano.width, tamano.height)
+        },
+    ) {
+        if (usarGpu) {
+            // Recrear al cambiar de backend: un renderizador OpenGL no sirve
+            // para Vulkan y viceversa.
+            key(estado.backendEfectivo) {
+                SuperficieGpu(estadoState, vm, Modifier.fillMaxSize())
+            }
+        } else {
+            LienzoCpu(estadoState, vm, dimension, Modifier.fillMaxSize())
+        }
+        CapaGestos(estadoState, vm, Modifier.fillMaxSize())
+
+        // Mientras el motor/renderizador se crea (al abrir la app o al cambiar
+        // de backend) tapamos la superficie para no mostrar el cuadro en negro.
+        if (estado.motorNombre.isEmpty() || estado.gpuCargando) {
+            PantallaCarga(estado.backendEfectivo, Modifier.fillMaxSize())
+        }
+    }
+}
+
+/**
+ * Pantalla de carga del render GPU: cubre el área de dibujo mientras el
+ * renderizador nativo (OpenGL ES o Vulkan) se inicializa y publica su primer
+ * cuadro. Evita el destello negro de una superficie aún sin inicializar.
+ */
+@Composable
+private fun PantallaCarga(
+    backend: BackendRender,
+    modifier: Modifier = Modifier,
+) {
+    val descripcion = stringResource(R.string.cd_cargando_render)
+    Box(
+        modifier
+            .background(MaterialTheme.colorScheme.surface)
+            .semantics { contentDescription = descripcion },
+        contentAlignment = Alignment.Center,
+    ) {
+        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            CircularProgressIndicator()
+            Spacer(Modifier.size(16.dp))
+            Text(
+                stringResource(
+                    R.string.cargando_render,
+                    stringResource(backend.recursoNombre()),
+                ),
+                style = MaterialTheme.typography.bodyMedium,
+            )
+        }
+    }
+}
+
+/** Hoja rasterizada por CPU: reserva para equipos sin render GPU. */
+@Composable
+private fun LienzoCpu(
+    estadoState: State<DibujoEstado>,
+    vm: DibujoViewModel,
+    dimension: IntSize,
+    modifier: Modifier = Modifier,
+) {
     val buffer = remember(dimension) {
         IntArray((dimension.width * dimension.height).coerceAtLeast(1))
     }
@@ -158,64 +328,77 @@ private fun Hoja(estado: DibujoEstado, vm: DibujoViewModel, modifier: Modifier =
         }
     }
 
-    val trazo = estado.trazoEnCurso
-    val camara = estado.camara
-    val lapiz = estado.lapiz
-
-    // El borrador se previsualiza como lo rasteriza el motor: pinta con el
-    // fondo de la hoja y usa su grosor efectivo (grosor + 4), así la marca
-    // se ve "borrada" al instante mientras arrastrás el dedo.
-    val borran = lapiz.herramienta == Herramienta.BORRADOR
-    val colorTrazo = if (borran) Color(Colores.BLANCO) else Color(lapiz.color)
-    val grosorTrazo = lapiz.grosorEfectivo()
-
-    Canvas(
-        modifier
-            .fillMaxSize()
-            .onSizeChanged { tamano ->
-                if (tamano != dimension) dimension = tamano
-                vm.inicializar(tamano.width, tamano.height)
-            }
-            // EDICION: un dedo dibuja; MOVER: pan y pinch de la cámara.
-            .pointerInput(estado.modo) {
-                if (estado.modo == Modo.MOVER) {
-                    detectTransformGestures { foco, pan, zoom, _ ->
-                        if (zoom != 1f) vm.zoomear(zoom, foco.x, foco.y)
-                        if (pan != Offset.Zero) vm.panear(pan.x, pan.y)
-                    }
-                } else {
-                    detectDragGestures(
-                        onDragStart = { vm.iniciarTrazo(it.x, it.y) },
-                        onDragEnd = { vm.soltarTrazo() },
-                        onDragCancel = { vm.cancelarTrazo() },
-                        onDrag = { cambio, _ ->
-                            vm.continuarTrazo(cambio.position.x, cambio.position.y)
-                            cambio.consume()
-                        },
-                    )
-                }
-            },
-    ) {
+    Canvas(modifier) {
+        // Leer el State dentro del draw suscribe el repintado a *todo* cambio
+        // del estado. Sin esto, undo/redo/limpiar (que sólo tocan `marco`)
+        // cambiaban el motor pero el Canvas no se volvía a pintar: el famoso
+        // "se unde y no hace nada".
+        val fotograma = estadoState.value.marco
         val bmp = bitmap ?: return@Canvas
         val vw = size.width.toInt().coerceAtLeast(1)
         val vh = size.height.toInt().coerceAtLeast(1)
-        vm.renderizar(buffer, vw, vh)
-        bmp.setPixels(buffer, 0, vw, 0, 0, vw, vh)
+        if (fotograma >= 0) {
+            vm.renderizar(buffer, vw, vh)
+            bmp.setPixels(buffer, 0, vw, 0, 0, vw, vh)
+        }
         drawImage(bmp.asImageBitmap())
+    }
+}
 
-        // Vista previa del trazo en curso (el motor la rasteriza al soltar).
-        val puntos = trazo
-        if (puntos != null && puntos.size >= 2) {
+/**
+ * Capa transparente de entrada: captura los gestos y dibuja la vista previa
+ * del trazo en curso. Va encima de la hoja (GPU o CPU) para que la marca se
+ * vea al instante sin esperar a que el motor la rasterice.
+ */
+@Composable
+private fun CapaGestos(
+    estadoState: State<DibujoEstado>,
+    vm: DibujoViewModel,
+    modifier: Modifier = Modifier,
+) {
+    // EDICION: un dedo dibuja; MOVER: pan y pinch de la cámara.
+    val modo = estadoState.value.modo
+    Canvas(
+        modifier.pointerInput(modo) {
+            if (modo == Modo.MOVER) {
+                detectTransformGestures { foco, pan, zoom, _ ->
+                    if (zoom != 1f) vm.zoomear(zoom, foco.x, foco.y)
+                    if (pan != Offset.Zero) vm.panear(pan.x, pan.y)
+                }
+            } else {
+                detectDragGestures(
+                    onDragStart = { vm.iniciarTrazo(it.x, it.y) },
+                    onDragEnd = { vm.soltarTrazo() },
+                    onDragCancel = { vm.cancelarTrazo() },
+                    onDrag = { cambio, _ ->
+                        vm.continuarTrazo(cambio.position.x, cambio.position.y)
+                        cambio.consume()
+                    },
+                )
+            }
+        },
+    ) {
+        val estado = estadoState.value
+        val trazo = estado.trazoEnCurso
+        val camara = estado.camara
+        val lapiz = estado.lapiz
+        // El borrador se previsualiza como lo rasteriza el motor: pinta con el
+        // fondo de la hoja y usa su grosor efectivo, así la marca se ve
+        // "borrada" al instante mientras arrastrás el dedo.
+        val borran = lapiz.herramienta == Herramienta.BORRADOR
+        if (trazo != null && trazo.size >= 2) {
+            val colorTrazo = if (borran) Color(Colores.BLANCO) else Color(lapiz.color)
+            val grosorTrazo = lapiz.grosorEfectivo()
             val path = Path()
             path.moveTo(
-                puntos[0] * camara.zoom - camara.panX,
-                puntos[1] * camara.zoom - camara.panY,
+                trazo[0] * camara.zoom - camara.panX,
+                trazo[1] * camara.zoom - camara.panY,
             )
             var i = 2
-            while (i + 1 < puntos.size) {
+            while (i + 1 < trazo.size) {
                 path.lineTo(
-                    puntos[i] * camara.zoom - camara.panX,
-                    puntos[i + 1] * camara.zoom - camara.panY,
+                    trazo[i] * camara.zoom - camara.panX,
+                    trazo[i + 1] * camara.zoom - camara.panY,
                 )
                 i += 2
             }
@@ -231,8 +414,14 @@ private fun Hoja(estado: DibujoEstado, vm: DibujoViewModel, modifier: Modifier =
 /** Barra inferior: herramientas + modo + grosor (fila 1) y paleta (fila 2). */
 @Composable
 private fun BarraHerramientas(estado: DibujoEstado, vm: DibujoViewModel) {
-    Surface(tonalElevation = 3.dp) {
-        Column(Modifier.fillMaxWidth()) {
+    Surface(modifier = Modifier.absorberToque(), tonalElevation = 3.dp) {
+        Column(
+            Modifier
+                .fillMaxWidth()
+                // Deja libre la barra de navegación (gestos o botones): sin
+                // esto la paleta quedaba debajo y no se podía tocar.
+                .windowInsetsPadding(WindowInsets.navigationBars),
+        ) {
             // Fila 1: modo, herramientas y grosor.
             Row(
                 Modifier
@@ -289,6 +478,132 @@ private fun BarraHerramientas(estado: DibujoEstado, vm: DibujoViewModel) {
                     )
                 }
             }
+        }
+    }
+}
+
+@Composable
+private fun DialogoConfiguracion(
+    estado: DibujoEstado,
+    alElegirBackend: (BackendRender) -> Unit,
+    alCerrar: () -> Unit,
+) {
+    AlertDialog(
+        onDismissRequest = alCerrar,
+        title = { Text(stringResource(R.string.config_titulo)) },
+        text = {
+            Column {
+                Text(
+                    stringResource(R.string.config_backend),
+                    style = MaterialTheme.typography.titleSmall,
+                )
+                Column(Modifier.selectableGroup()) {
+                    BackendRender.entries.forEach { backend ->
+                        OpcionBackend(
+                            backend = backend,
+                            seleccionado = estado.backendSeleccionado == backend,
+                            habilitado = backend.disponible(estado.vulkanSoportado),
+                            alElegir = { alElegirBackend(backend) },
+                        )
+                    }
+                }
+                Spacer(Modifier.size(8.dp))
+                Text(
+                    stringResource(
+                        R.string.config_backend_efectivo,
+                        stringResource(estado.backendEfectivo.recursoNombre()),
+                    ),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Text(
+                    stringResource(R.string.config_opengl_version, estado.openglEsVersion),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Text(
+                    stringResource(
+                        when {
+                            estado.gpuActivo -> R.string.config_render_gpu
+                            estado.gpuFallo -> R.string.config_render_cpu_fallo
+                            else -> R.string.config_render_cpu
+                        },
+                        estado.gpuDescripcion,
+                    ),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                if (!estado.vulkanSoportado) {
+                    Text(
+                        stringResource(R.string.config_vulkan_no_soportado),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = alCerrar) {
+                Text(stringResource(R.string.cerrar))
+            }
+        },
+    )
+}
+
+@Composable
+private fun OpcionBackend(
+    backend: BackendRender,
+    seleccionado: Boolean,
+    habilitado: Boolean,
+    alElegir: () -> Unit,
+) {
+    val etiqueta = stringResource(backend.recursoNombre())
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .selectable(
+                selected = seleccionado,
+                enabled = habilitado,
+                role = Role.RadioButton,
+                onClick = alElegir,
+            )
+            .padding(vertical = 4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        RadioButton(
+            selected = seleccionado,
+            onClick = null,
+            enabled = habilitado,
+        )
+        Spacer(Modifier.width(8.dp))
+        Text(
+            etiqueta,
+            style = MaterialTheme.typography.bodyMedium,
+            color = if (habilitado) {
+                MaterialTheme.colorScheme.onSurface
+            } else {
+                MaterialTheme.colorScheme.onSurfaceVariant
+            },
+        )
+    }
+}
+
+private fun BackendRender.recursoNombre(): Int = when (this) {
+    BackendRender.AUTOMATICO -> R.string.backend_automatico
+    BackendRender.OPENGL -> R.string.backend_opengl
+    BackendRender.VULKAN -> R.string.backend_vulkan
+}
+
+/**
+ * Absorbe el toque dentro de la vista. La hoja ocupa toda la ventana (detrás de
+ * las barras): sin esto, un toque sobre una zona vacía de una barra caería a la
+ * capa de dibujo de atrás y dejaría una marca. Los hijos de la barra (botones,
+ * chips, scroll) siguen funcionando: se recorren primero.
+ */
+private fun Modifier.absorberToque(): Modifier = pointerInput(Unit) {
+    awaitPointerEventScope {
+        while (true) {
+            awaitPointerEvent().changes.forEach { it.consume() }
         }
     }
 }

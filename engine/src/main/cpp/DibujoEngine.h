@@ -1,6 +1,8 @@
 #pragma once
 
+#include <cstddef>
 #include <cstdint>
+#include <mutex>
 #include <vector>
 
 #include "Types.h"
@@ -62,9 +64,27 @@ public:
 
     // Color del píxel de la hoja en coordenadas de hoja (sin cámara).
     uint32_t pixelHoja(int x, int y) const {
+        std::lock_guard<std::mutex> bloqueo(mutex_);
         if (x < 0 || y < 0 || x >= ancho_ || y >= alto_) return fondo_;
         return hoja_[y * ancho_ + x];
     }
+
+    // --- Render GPU ---
+    // La hoja es compartida con el hilo de render GPU (OpenGL/Vulkan). Para no
+    // exponer `hoja_` a carreras de datos, el render lee siempre a través de
+    // estas operaciones, que toman un bloqueo. Las mutaciones de la hoja
+    // (trazo, deshacer, rehacer, limpiar) también lo toman.
+
+    // Revisión de la hoja: sube con cada cambio de contenido. El render GPU la
+    // usa para subir la textura solo cuando hace falta.
+    uint64_t revision() const;
+
+    // Copia la hoja completa a `destino` (debe tener ancho*alto celdas) bajo
+    // bloqueo. Devuelve la revisión copiada, o 0 si el destino no alcanza.
+    uint64_t copiarHoja(uint32_t* destino, std::size_t capacidad) const;
+
+    // Lee la cámara de forma consistente con la revisión.
+    void leerCamara(float& panX, float& panY, float& zoom) const;
 
 private:
     void rasterizarTrazo(const std::vector<float>& puntos, uint32_t color,
@@ -95,6 +115,10 @@ private:
     std::vector<std::vector<uint32_t>> futuro_;
     // Igual que el límite de Historial en Kotlin: hojas grandes por snapshot.
     static constexpr std::size_t kMaxHistorial = 30;
+
+    // Protege `hoja_` frente al hilo de render GPU y cuenta las revisiones.
+    mutable std::mutex mutex_;
+    uint64_t revision_ = 0;
 };
 
 } // namespace dibujo

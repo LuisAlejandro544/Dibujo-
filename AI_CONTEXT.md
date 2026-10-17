@@ -35,7 +35,8 @@ paridad, para poder ser nativo (C++) donde exista y puro Kotlin donde no:
         ┌──────────────────────────────────┐
         │  com.dibujo.core (domino puro)   │
         │  Lienzo, Lapiz, Colores, Modo,   │
-        │  Historial, MotorDibujo, Camara  │
+        │  Historial, MotorDibujo, Camara, │
+        │  BackendRender                   │
         └──────────────────────────────────┘
 ```
 
@@ -51,6 +52,11 @@ grosor efectivo por herramienta, cámara, render) debe hacerse en las DOS
 implementaciones y pasar `MotorTest` (paridad píxel a píxel). Las diferencias:
 - `grosorEfectivo`: PORTAMINA `grosor/2`, CARBONCILLO `grosor+2`, BORRADOR `grosor+4`
   (la fórmula vive en `Lapiz.grosorEfectivo()`; el C++ la replica).
+- **Antialiasing**: `disco()` calcula la cobertura de cada píxel como
+  `0.5 + radio − distancia` (distancia en `Double` y `sqrt` correctamente
+  redondeado en ambos lados) y mezcla con el fondo con `pintarMezcla` /
+  `pintarMezcla()` (aritmética entera idéntica). Por eso los trazos tienen
+  borde suave y `Lienzo.pintarMezcla` no debe "optimizarse" en un solo lado.
 - BORRADOR pinta con el color de fondo de la hoja; la vista previa de Compose
   lo imita (fondo + grosor efectivo) para que el borrado se vea al instante.
 - FUERA de hoja en render = gris `0xFFECECEC`.
@@ -73,7 +79,10 @@ vive en el `ViewModel` (la hoja sobrevive cambios de configuración).
 Undo/redo por snapshots completos de la hoja. Límite de pasos: **30**
 (`Historial` en Kotlin y `kMaxHistorial` en C++ tienen que coincidir). El
 estado Compose expone `puedeDeshacer`/`puedeRehacer` (leídos del motor
-después de cada operación) y habilita/deshabilita los botones.
+después de cada operación) y habilita/deshabilita los botones. Importante:
+el `Canvas` lee el `State` dentro del `draw` (`estadoState.value`), no sólo
+durante la composición; si no, undo/redo cambian el motor pero no repintan
+(era el bug "se unde y no hace nada").
 
 ## 4. Build
 
@@ -106,20 +115,92 @@ Particularidades:
 - **Gestos**: `detectDragGestures` (EDICION) y `detectTransformGestures`
   con foco (MOVER), en `pointerInput(estado.modo)`.
 - **Edge-to-edge** desde la Activity (`enableEdgeToEdge()`), `Scaffold` con
-  `TopAppBar` (título + motor + deshacer/rehacer/centrar/limpiar) y barra
-  inferior con herramientas/chips de modo/grosor y la paleta.
+  `TopAppBar` (título + motor + deshacer/rehacer/centrar/limpiar/configuración)
+  y barra inferior con herramientas/chips de modo/grosor y la paleta.
+  Particularidades que costaron bugs reales:
+  - Las barras del sistema usan `SystemBarStyle.light(...)`: el tema es claro
+    y, con el teléfono en modo oscuro, `auto()` dejaba hora/batería blancas
+    sobre fondo claro (invisibles).
+  - La barra inferior lleva `windowInsetsPadding(WindowInsets.navigationBars)`;
+    sin eso la paleta quedaba debajo de la barra de navegación y no se tocaba.
+  - `TemaDibujo` fija `fontScale = 1` en `LocalDensity`: el tamaño de letra
+    no depende de la configuración de Android del usuario.
 - **Material Icons**: `androidx.compose.material:material-icons-extended`
   (BOM, iconos Rounded; deshacer/rehacer vía `Icons.AutoMirrored`). Sin
   símbolos de texto: cada icono lleva `contentDescription` desde strings.xml.
 - **Cero texto duro**: todo por `stringResource`.
 - Icono de app: adaptive icon XML (sin PNG) con `monochrome`.
 
+### Backend gráfico (OpenGL ES / Vulkan)
+`BackendRender` (`:core`) es el enum elegible: `AUTOMATICO`, `OPENGL`,
+`VULKAN`. `CapacidadesGraficas` (`:app`) detecta el soporte real (Vulkan 1.1
+vía `FEATURE_VULKAN_HARDWARE_VERSION`; OpenGL ES vía
+`ActivityManager.deviceConfigurationInfo.glEsVersion`). El diálogo de
+configuración (icono de engranaje en la barra superior) permite elegir el
+backend; **Vulkan queda bloqueado si el equipo no lo soporta** y el menú
+sigue existiendo. La elección se persiste en `SharedPreferences`
+(`dibujo_config/backend_render`) y `resolver()` cae a OpenGL cuando
+corresponde.
+
+**Render GPU real (en `engine/src/main/cpp/gpu/`, sólo Android):**
+- `RenderizadorGpu` es la interfaz + fábrica `crear(Backend, ANativeWindow*,
+  DibujoEngine*)`; devuelve `nullptr` si el backend no arranca.
+- `RenderizadorGL` monta EGL + contexto OpenGL ES 3.x y presenta con
+  `glBindVertexArray` (por eso se enlaza `libGLESv3`, no `libGLESv2`, que sólo
+  expone VAOs con sufijo `OES`).
+- `RenderizadorVulkan` monta instancia/dispositivo/swapchain/render pass y
+  presenta; recrea la cadena ante `VK_ERROR_OUT_OF_DATE_KHR`.
+- Los shaders presentan la hoja como textura y resuelven la cámara en la GPU:
+  `hoja = (pantalla + pan) / zoom` con `texelFetch`; el color se lee del
+  `0xAARRGGBB` en bytes B,G,R,A y se reordena a RGBA. Parámetros en un bloque
+  std430 de 48 bytes (`ParametrosPresentacion.h`). El rasterizado del trazo
+  sigue en CPU (paridad `MotorTest` intacta); la GPU sólo presenta.
+- `GpuJni.cpp` expone `nativoGpuCrear/Render/Redimensionar/Nombre/Destruir` y
+  guarda el `ANativeWindow` (`ANativeWindow_fromSurface`).
+- Vulkan GLSL se compila a SPIR-V en configure (glslc del NDK) e incrusta en
+  `shaders_vk_generado.h`; el CMake lo hace sólo bajo `if(ANDROID)`.
+
+**Lado Kotlin:** `SuperficieGpu` (`:app`) es un `SurfaceView` + hilo de render
+(`HiloRenderGpu`, `ReentrantLock`/`Condition`) que crea el renderizador y pide
+cuadros on-demand. El hilo presenta un primer cuadro **antes** de avisar
+`gpuListo`: así la pantalla de carga se retira con la hoja ya pintada y no se
+ve un destello negro. `DibujoEngine` expone `revision()`/`copiarHoja()`/
+`leerCamara()` con mutex para que el hilo GPU lea un snapshot coherente.
+`PantallaDibujo` separa `AreaDibujo` en: hoja (`SuperficieGpu` si hay GPU, si
+no `LienzoCpu`) + `CapaGestos` encima (gestos y vista previa del trazo). El
+`Scaffold` y el `windowBackground` son transparentes para que se vea la
+superficie GPU, que queda en una capa detrás de la ventana. Si el render GPU
+falla en runtime, `gpuFracaso()` cae a `LienzoCpu` (CPU).
+
+**Alineación de coordenadas (crítico).** El contenido del `Scaffold` NO aplica
+`margenes`: la hoja ocupa **toda la ventana** (las barras se pintan encima, con
+la barra superior/inferior después del contenido, así siguen dibujándose y
+recibiendo toque). De este modo la superficie GPU, la capa de gestos y el motor
+comparten el mismo origen y tamaño (pantalla completa), y el trazo cae justo
+donde se dibuja. Aplicar `margenes` al área de dibujo desincronizaba el
+`SurfaceView` (capa aparte) de la capa Compose y el trazo aparecía desplazado.
+
+**Pantalla de carga.** `DibujoEstado.gpuCargando` se enciende al crear el motor
+con GPU disponible y al cambiar de backend, y se apaga en `gpuListo()` o
+`gpuFracaso()`. Mientras `motorNombre` está vacío o `gpuCargando` es true,
+`AreaDibujo` muestra `PantallaCarga` (indicador + texto) sobre la superficie,
+evitando el cuadro en negro durante la inicialización de OpenGL/Vulkan.
+
+**Primera subida de la hoja.** La revisión 0 es válida (hoja recién creada) y
+la textura/imagen debe subirse igualmente: `subirHoja` en `RenderizadorGL` y
+`RenderizadorVulkan` no descartan `rev == 0`. Si se descarta, el lienzo queda
+negro hasta el primer cambio de contenido (el "negro hasta tocar la pantalla",
+sobre todo en Vulkan).
+
+
 ## 6. Riesgos conocidos / no resueltos
 
 - El trazo en curso se previsualiza con Path sin rasterizar por el motor: al
   soltar, el resultado exacto (disco/bloque/línea gruesa) puede diferir levemente del overlay.
-- `MotorKotlin.renderizar` es O(vw*vh) por frame en CPU; en pantallas grandes
-  conviene eventualmente mover el render a textura (ver ROADMAP).
+- `MotorKotlin.renderizar` es O(vw*vh) por frame en CPU; con el render GPU ya
+  implementado, la app presenta la hoja como textura en GPU y sólo cae a CPU
+  si el backend falla. Sin dispositivo Android en el runner, la corrección en
+  runtime del render GPU (sobre todo Vulkan) sólo se valida compilando/enlazando.
 - No hay persistencia de la hoja (guardar PNG/deshacer entre sesiones): es la
   tarea #1 del ROADMAP.
 - Release de `:app` no está firmado para distribución (solo debug).
@@ -129,6 +210,6 @@ Particularidades:
 ## 7. Datos útiles para agentes
 
 - Horario del usuario: America/Caracas; respondé en español nativo, fixeáte en `opencode.json`.
-- Tests: JUnit Platform; paridad en `engine/src/test/kotlin/com/dibujo/engine/MotorTest.kt` (incluye paridad de undo/redo con `historialParidad`).
+- Tests: JUnit Platform; paridad en `engine/src/test/kotlin/com/dibujo/engine/MotorTest.kt` (incluye paridad de undo/redo con `historialParidad`). El antialiasing entra en esa paridad: si tocás `disco`/`pintarMezcla` en un lado, corré `:engine:test`.
 - El workflow `android-apk.yml` corre manual (`workflow_dispatch`) y en cada PR contra main; el workflow falso `build-debug-apk.yml` (APK placeholder aapt2/d8) fue eliminado.
 - Commits: esperar orden explícita del usuario (nunca commit proactivo).

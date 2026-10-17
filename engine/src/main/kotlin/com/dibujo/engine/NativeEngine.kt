@@ -31,6 +31,26 @@ object NativeEngine {
     external fun nativoRenderizar(handle: Long, destino: IntArray, vw: Int, vh: Int)
     external fun nativoVersion(): String
 
+    // --- Render GPU (Android) ---
+    // El peer GPU lee la hoja y la cámara del motor `motorHandle`. Se crea con
+    // la `Surface` del `SurfaceView` y el backend pedido (ordinal de
+    // `BackendRender`); devuelve 0 si el backend no está disponible.
+
+    /** Crea el renderizador GPU; devuelve su peer o 0 si no fue posible. */
+    external fun nativoGpuCrear(motorHandle: Long, surface: Any, backend: Int): Long
+
+    /** Dibuja y presenta un cuadro; false si el contexto se perdió. */
+    external fun nativoGpuRender(gpu: Long): Boolean
+
+    /** Notifica un cambio de tamaño del backbuffer en px. */
+    external fun nativoGpuRedimensionar(gpu: Long, ancho: Int, alto: Int)
+
+    /** Descripción del renderizador y del equipo (diagnóstico). */
+    external fun nativoGpuNombre(gpu: Long): String
+
+    /** Libera el renderizador GPU y la referencia a la ventana nativa. */
+    external fun nativoGpuDestruir(gpu: Long)
+
     private fun intentarCargar(): Boolean {
         try {
             System.loadLibrary("dibujo_engine")

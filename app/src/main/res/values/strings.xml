@@ -24,6 +24,7 @@
     <string name="cd_modo_editar">Modo edición: tocar para cambiar a mover</string>
     <string name="cd_modo_mover">Modo mover: tocar para cambiar a edición</string>
     <string name="cd_configuracion">Abrir configuración</string>
+    <string name="cd_mas_opciones">Más opciones</string>
     <string name="cd_cargando_render">Preparando el motor gráfico</string>
     <string name="cd_calco">Imagen de calco</string>
     <string name="cd_calco_elegir">Elegir imagen para calcar</string>
@@ -76,13 +77,19 @@
     <string name="calco_ocultar">Ocultar</string>
     <string name="calco_quitar">Quitar</string>
 
-    <!-- IA local (herramientas sin red neuronal: adelgazado y k-medias) -->
+    <!-- IA local (modelo chico empaquetado y algoritmos clásicos; todo en el equipo) -->
     <string name="ia_titulo">Herramientas con IA local</string>
-    <string name="ia_descripcion">Corren en el teléfono, sin internet ni modelos que descargar.</string>
+    <string name="ia_descripcion">Corren en el teléfono, sin internet: un modelo chico empaquetado y algoritmos clásicos.</string>
     <string name="ia_limpiar_titulo">Limpiar trazos repasados</string>
     <string name="ia_limpiar_descripcion">Adelgaza la tinta de la hoja a una línea pareja; ideal cuando repasas el mismo trazo y queda grueso o tembloroso.</string>
     <string name="ia_limpiar_boton">Limpiar trazos</string>
+    <string name="ia_limpiar_modelo_boton">Limpiar con modelo (IA)</string>
     <string name="ia_limpiando">Limpiando los trazos…</string>
+
+    <!-- Confirmación de borrado de la hoja -->
+    <string name="limpiar_titulo">Limpiar la hoja</string>
+    <string name="limpiar_confirmacion">Se borrará todo el dibujo. Podés deshacerlo después.</string>
+    <string name="limpiar_confirmar">Limpiar</string>
 
     <!-- Paleta del calco (IA local: k-medias sobre la imagen de calco) -->
     <string name="paleta_calco_titulo">Paleta del calco</string>

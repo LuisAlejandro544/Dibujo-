@@ -57,6 +57,7 @@ import androidx.compose.material.icons.rounded.FormatColorFill
 import androidx.compose.material.icons.rounded.Gesture
 import androidx.compose.material.icons.rounded.Layers
 import androidx.compose.material.icons.rounded.Mode
+import androidx.compose.material.icons.rounded.MoreVert
 import androidx.compose.material.icons.rounded.OpenInFull
 import androidx.compose.material.icons.rounded.PanTool
 import androidx.compose.material.icons.rounded.Remove
@@ -66,7 +67,10 @@ import androidx.compose.material.icons.rounded.Settings
 import androidx.compose.material.icons.rounded.Visibility
 import androidx.compose.material.icons.rounded.VisibilityOff
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilterChipDefaults
@@ -115,6 +119,7 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.dibujo.core.BackendRender
 import com.dibujo.core.Camara
@@ -184,6 +189,9 @@ fun PantallaDibujo(vm: DibujoViewModel = viewModel()) {
     var mostrarExpandir by remember { mutableStateOf(false) }
     var mostrarCalco by remember { mutableStateOf(false) }
     var mostrarIa by remember { mutableStateOf(false) }
+    // Limpiar la hoja borra todo y es irreversible si no se deshace: se pide
+    // confirmación (ahora vive dentro del menú de la barra superior).
+    var mostrarLimpiar by remember { mutableStateOf(false) }
 
     // Selector de imagen del sistema (Photo Picker): no requiere permisos.
     val elegirImagen = rememberLauncherForActivityResult(
@@ -273,7 +281,7 @@ fun PantallaDibujo(vm: DibujoViewModel = viewModel()) {
                 alRehacer = vm::rehacer,
                 alCentrar = vm::centrar,
                 alEnderezar = vm::enderezar,
-                alLimpiar = vm::limpiar,
+                alLimpiar = { mostrarLimpiar = true },
                 alExportar = alExportar,
                 exportando = exportando,
                 alAbrirConfig = { mostrarConfig = true },
@@ -350,14 +358,32 @@ fun PantallaDibujo(vm: DibujoViewModel = viewModel()) {
         DialogoIa(
             estado = estado,
             alLimpiarTrazos = vm::limpiarTrazos,
+            alLimpiarTrazosIa = vm::limpiarTrazosConModelo,
             alAnalizar = vm::analizarCalco,
             alElegir = vm::usarColorCalco,
             alCerrar = { mostrarIa = false },
         )
     }
+
+    if (mostrarLimpiar) {
+        DialogoLimpiar(
+            alConfirmar = {
+                vm.limpiar()
+                mostrarLimpiar = false
+            },
+            alCerrar = { mostrarLimpiar = false },
+        )
+    }
 }
 
-/** Barra superior: título + motor + deshacer/rehacer/centrar/limpiar/config. */
+/**
+ * Barra superior: título + motor, las acciones de historial/vista y un menú
+ * "más opciones". Antes las siete acciones iban sueltas y, en pantallas
+ * angostas, no dejaban ancho para el título: se dibujaba en vertical (el bug
+ * de diseño). Ahora deshacer/rehacer/centrar/enderezar quedan a la vista y lo
+ * de uso menos frecuente (limpiar, exportar, configuración) va en el menú. El
+ * título se acota a una línea con elipsis por si igual falta espacio.
+ */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun BarraSuperior(
@@ -371,15 +397,22 @@ private fun BarraSuperior(
     exportando: Boolean,
     alAbrirConfig: () -> Unit,
 ) {
+    var menuAbierto by remember { mutableStateOf(false) }
     TopAppBar(
         modifier = Modifier.absorberToque(),
         title = {
             Column {
-                Text(stringResource(R.string.app_name))
+                Text(
+                    stringResource(R.string.app_name),
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
                 Text(
                     stringResource(R.string.estado_motor, estado.motorNombre),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
                 )
             }
         },
@@ -407,26 +440,76 @@ private fun BarraSuperior(
                 habilitado = estado.camara.rotacion != 0f,
                 alPulsar = alEnderezar,
             )
-            BotonIcono(
-                icono = Icons.Rounded.Delete,
-                descripcion = stringResource(R.string.cd_limpiar),
-                alPulsar = alLimpiar,
-            )
-            BotonIcono(
-                icono = Icons.Rounded.SaveAlt,
-                descripcion = stringResource(R.string.cd_exportar),
-                habilitado = !exportando,
-                alPulsar = alExportar,
-            )
-            BotonIcono(
-                icono = Icons.Rounded.Settings,
-                descripcion = stringResource(R.string.cd_configuracion),
-                alPulsar = alAbrirConfig,
-            )
+            Box {
+                BotonIcono(
+                    icono = Icons.Rounded.MoreVert,
+                    descripcion = stringResource(R.string.cd_mas_opciones),
+                    alPulsar = { menuAbierto = true },
+                )
+                DropdownMenu(
+                    expanded = menuAbierto,
+                    onDismissRequest = { menuAbierto = false },
+                ) {
+                    DropdownMenuItem(
+                        text = { Text(stringResource(R.string.cd_limpiar)) },
+                        leadingIcon = {
+                            Icon(Icons.Rounded.Delete, contentDescription = null)
+                        },
+                        onClick = {
+                            menuAbierto = false
+                            alLimpiar()
+                        },
+                    )
+                    DropdownMenuItem(
+                        text = { Text(stringResource(R.string.cd_exportar)) },
+                        leadingIcon = {
+                            Icon(Icons.Rounded.SaveAlt, contentDescription = null)
+                        },
+                        enabled = !exportando,
+                        onClick = {
+                            menuAbierto = false
+                            alExportar()
+                        },
+                    )
+                    DropdownMenuItem(
+                        text = { Text(stringResource(R.string.config_titulo)) },
+                        leadingIcon = {
+                            Icon(Icons.Rounded.Settings, contentDescription = null)
+                        },
+                        onClick = {
+                            menuAbierto = false
+                            alAbrirConfig()
+                        },
+                    )
+                }
+            }
         },
         colors = TopAppBarDefaults.topAppBarColors(
             containerColor = MaterialTheme.colorScheme.surface,
         ),
+    )
+}
+
+/** Confirmación antes de borrar toda la hoja (acción destructiva). */
+@Composable
+private fun DialogoLimpiar(
+    alConfirmar: () -> Unit,
+    alCerrar: () -> Unit,
+) {
+    AlertDialog(
+        onDismissRequest = alCerrar,
+        title = { Text(stringResource(R.string.limpiar_titulo)) },
+        text = { Text(stringResource(R.string.limpiar_confirmacion)) },
+        confirmButton = {
+            TextButton(onClick = alConfirmar) {
+                Text(stringResource(R.string.limpiar_confirmar))
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = alCerrar) {
+                Text(stringResource(R.string.cancelar))
+            }
+        },
     )
 }
 
@@ -564,7 +647,12 @@ private fun CapaGestos(
                 // Pan + pinch de zoom + rotación de dos dedos, todos anclados
                 // al foco (el punto bajo los dedos). La rotación llega en
                 // grados y el motor la usa en radianes.
-                detectTransformGestures { foco, pan, zoom, rotacion ->
+                //
+                // `panZoomLock = true`: la rotación sólo se activa si el gesto
+                // EMPIEZA girando. Con el pellizco (sólo zoom/pan) la hoja no
+                // se gira por el temblor natural de los dedos, que era el bug
+                // "hago zoom y se gira".
+                detectTransformGestures(panZoomLock = true) { foco, pan, zoom, rotacion ->
                     if (zoom != 1f) vm.zoomear(zoom, foco.x, foco.y)
                     if (rotacion != 0f) {
                         vm.rotar(Math.toRadians(rotacion.toDouble()).toFloat(), foco.x, foco.y)
@@ -956,8 +1044,10 @@ private fun DialogoCalco(
 }
 
 /**
- * Diálogo "IA local": reúne las dos herramientas locales (sin red neuronal):
- *  - Limpiar trazos: adelgaza los trazos repasados a una línea pareja.
+ * Diálogo "IA local": reúne las herramientas que corren en el equipo:
+ *  - Limpiar trazos: adelgaza los trazos repasados a una línea pareja. Ofrece
+ *    el modelo chico (LiteRT, si está empaquetado) o el adelgazado algorítmico
+ *    (Zhang-Suen), que también es el respaldo del modelo.
  *  - Paleta del calco: saca los colores dominantes de la imagen que calcas
  *    (k-medias) para terminar de colorear; al tocar un color se activa PINTAR.
  */
@@ -965,6 +1055,7 @@ private fun DialogoCalco(
 private fun DialogoIa(
     estado: DibujoEstado,
     alLimpiarTrazos: () -> Unit,
+    alLimpiarTrazosIa: () -> Unit,
     alAnalizar: () -> Unit,
     alElegir: (Int) -> Unit,
     alCerrar: () -> Unit,
@@ -998,8 +1089,15 @@ private fun DialogoIa(
                         Text(stringResource(R.string.ia_limpiando))
                     }
                 } else {
-                    TextButton(onClick = alLimpiarTrazos) {
-                        Text(stringResource(R.string.ia_limpiar_boton))
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        if (estado.modeloIaDisponible) {
+                            Button(onClick = alLimpiarTrazosIa) {
+                                Text(stringResource(R.string.ia_limpiar_modelo_boton))
+                            }
+                        }
+                        TextButton(onClick = alLimpiarTrazos) {
+                            Text(stringResource(R.string.ia_limpiar_boton))
+                        }
                     }
                 }
 

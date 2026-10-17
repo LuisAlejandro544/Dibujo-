@@ -96,6 +96,9 @@ class MotorNativo(
     override fun copiarHoja(destino: IntArray): Boolean =
         NativeEngine.nativoCopiarHoja(handle, destino)
 
+    override fun reemplazarHoja(pixeles: IntArray): Boolean =
+        NativeEngine.nativoReemplazarHoja(handle, pixeles)
+
     override fun close() {
         NativeEngine.nativoDestruir(handle)
     }

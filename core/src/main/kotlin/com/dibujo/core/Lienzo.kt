@@ -103,6 +103,15 @@ class Lienzo(
     }
 
     /**
+     * Reemplaza el contenido de la hoja por [desde] (ancho * alto ARGB). El
+     * llamador es responsable de haberlo validado; acá sólo se exige el tamaño.
+     */
+    fun reemplazar(desde: IntArray) {
+        require(desde.size == pixeles.size) { "tamaño distinto: ${desde.size}" }
+        System.arraycopy(desde, 0, pixeles, 0, pixeles.size)
+    }
+
+    /**
      * Disco relleno y suavizado (punta redonda del lápiz). La cobertura de
      * cada píxel se calcula analíticamente (`0.5 + radio − distancia`) y se
      * mezcla con el fondo, así los bordes del trazo quedan con antialiasing

@@ -184,6 +184,22 @@ Java_com_dibujo_engine_NativeEngine_nativoCopiarHoja(
     return JNI_TRUE;
 }
 
+JNIEXPORT jboolean JNICALL
+Java_com_dibujo_engine_NativeEngine_nativoReemplazarHoja(
+        JNIEnv* env, jobject, jlong handle, jintArray pixeles) {
+    auto* e = peer(handle);
+    if (e == nullptr || pixeles == nullptr) return JNI_FALSE;
+    const jsize n = env->GetArrayLength(pixeles);
+    if (n != e->ancho() * e->alto()) return JNI_FALSE;
+    jint* px = env->GetIntArrayElements(pixeles, nullptr);
+    if (px == nullptr) return JNI_FALSE;
+    const bool ok = e->reemplazarHoja(
+        reinterpret_cast<uint32_t*>(px), static_cast<std::size_t>(n));
+    // Sólo leímos el buffer; no hace falta copiarlo de vuelta al array de Java.
+    env->ReleaseIntArrayElements(pixeles, px, JNI_ABORT);
+    return ok ? JNI_TRUE : JNI_FALSE;
+}
+
 JNIEXPORT jstring JNICALL
 Java_com_dibujo_engine_NativeEngine_nativoVersion(JNIEnv* env, jobject) {
     return env->NewStringUTF("dibujo-engine-c++/1.0");

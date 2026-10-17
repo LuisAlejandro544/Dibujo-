@@ -40,6 +40,9 @@ object NativeEngine {
 
     /** Copia la hoja completa (ancho*alto) a [destino]; false si no alcanza. */
     external fun nativoCopiarHoja(handle: Long, destino: IntArray): Boolean
+
+    /** Reemplaza la hoja completa por [pixeles] (ancho*alto); false si el tamaño difiere. */
+    external fun nativoReemplazarHoja(handle: Long, pixeles: IntArray): Boolean
     external fun nativoVersion(): String
 
     // --- Render GPU (Android) ---

@@ -74,6 +74,16 @@ interface MotorDibujo : AutoCloseable {
     fun copiarHoja(destino: IntArray): Boolean
 
     /**
+     * Reemplaza la hoja COMPLETA por [pixeles] (ancho * alto ARGB) y deja el
+     * estado anterior en el historial (se puede deshacer). La usan las
+     * herramientas que procesan la hoja fuera del motor, como el limpiador de
+     * trazos con modelo IA de `:app`. Devuelve `false` si [pixeles] no tiene el
+     * tamaño exacto de la hoja (no toca nada en ese caso). El C++ y el respaldo
+     * Kotlin lo implementan igual.
+     */
+    fun reemplazarHoja(pixeles: IntArray): Boolean
+
+    /**
      * Handle nativo opaco del motor para el render GPU (Android). Es `0` en
      * motores que no exponen memoria nativa compartible (p. ej. `MotorKotlin`),
      * caso en el que la app cae al render por CPU.

@@ -194,6 +194,13 @@ class MotorKotlin(
         return true
     }
 
+    override fun reemplazarHoja(pixeles: IntArray): Boolean {
+        if (pixeles.size != hoja.ancho * hoja.alto) return false
+        historial.guardar(hoja)
+        hoja.reemplazar(pixeles)
+        return true
+    }
+
     /** Color de un píxel de la hoja (para tests). */
     fun pixelHoja(x: Int, y: Int): Int = hoja.pixel(x, y)
 

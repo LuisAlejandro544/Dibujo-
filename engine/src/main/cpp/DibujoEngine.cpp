@@ -392,6 +392,17 @@ bool DibujoEngine::limpiarTrazos(float radio) {
     return true;
 }
 
+bool DibujoEngine::reemplazarHoja(const uint32_t* datos, std::size_t n) {
+    std::lock_guard<std::mutex> bloqueo(mutex_);
+    if (datos == nullptr || n != hoja_.size()) return false;
+    pasado_.push_back(hoja_);
+    if (pasado_.size() > kMaxHistorial) pasado_.erase(pasado_.begin());
+    futuro_.clear();
+    std::copy(datos, datos + n, hoja_.begin());
+    ++revision_;
+    return true;
+}
+
 void DibujoEngine::expandir(int izquierda, int arriba, int derecha, int abajo) {
     const int izq = std::max(0, izquierda);
     const int arr = std::max(0, arriba);

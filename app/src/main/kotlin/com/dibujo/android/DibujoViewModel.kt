@@ -8,6 +8,7 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.dibujo.core.BackendRender
 import com.dibujo.core.Camara
+import com.dibujo.core.Colores
 import com.dibujo.core.Cuantizador
 import com.dibujo.core.Herramienta
 import com.dibujo.core.Lapiz
@@ -66,6 +67,8 @@ data class DibujoEstado(
     val gpuFallo: Boolean = false,
     /** Se está limpiando los trazos repasados (operación pesada). */
     val limpiando: Boolean = false,
+    /** El modelo IA de limpieza (LiteRT) está empaquetado y disponible. */
+    val modeloIaDisponible: Boolean = false,
     /** Colores dominantes extraídos de la imagen de calco (paleta sugerida). */
     val coloresCalco: List<Int> = emptyList(),
     /** Se está analizando la imagen de calco para sacar su paleta. */
@@ -117,6 +120,7 @@ class DibujoViewModel(app: Application) : AndroidViewModel(app) {
                 motorNombre = m.nombre,
                 hojaAncho = m.ancho,
                 hojaAlto = m.alto,
+                modeloIaDisponible = LimpiadorTrazosIa.disponible(aplicacion),
                 gpuDisponible = hayGpu,
                 // Con GPU disponible arranca la pantalla de carga hasta que el
                 // renderizador nativo confirme (`gpuListo`) o falle (`gpuFracaso`).
@@ -349,6 +353,46 @@ class DibujoViewModel(app: Application) : AndroidViewModel(app) {
         _estado.update { it.copy(limpiando = true) }
         viewModelScope.launch {
             val cambio = withContext(Dispatchers.Default) { m.limpiarTrazos() }
+            _estado.update {
+                it.copy(
+                    limpiando = false,
+                    puedeDeshacer = m.puedeDeshacer(),
+                    puedeRehacer = m.puedeRehacer(),
+                    marco = if (cambio) it.marco + 1 else it.marco,
+                )
+            }
+        }
+    }
+
+    /**
+     * "Limpiar trazos" con el modelo IA (LiteRT): copia la hoja, la limpia con
+     * la red chica fuera del hilo principal, la reemplaza (queda en el
+     * historial para deshacer) y refresca el marco. Si el modelo no está
+     * disponible o falla, cae al adelgazado algorítmico (`limpiarTrazos`).
+     */
+    fun limpiarTrazosConModelo() {
+        val m = motor ?: return
+        if (_estado.value.limpiando) return
+        _estado.update { it.copy(limpiando = true) }
+        viewModelScope.launch {
+            val ancho = m.ancho
+            val alto = m.alto
+            val hoja = IntArray(ancho * alto)
+            val leida = withContext(Dispatchers.Default) { m.copiarHoja(hoja) }
+            val resultado = if (leida) {
+                withContext(Dispatchers.Default) {
+                    LimpiadorTrazosIa.limpiar(aplicacion, ancho, alto, Colores.BLANCO, hoja)
+                }
+            } else {
+                null
+            }
+            // Sin resultado válido se usa el algoritmo determinista. El reemplazo
+            // de la hoja se hace en el hilo del ViewModel (mutación del motor).
+            val cambio = if (resultado != null) {
+                m.reemplazarHoja(resultado)
+            } else {
+                withContext(Dispatchers.Default) { m.limpiarTrazos() }
+            }
             _estado.update {
                 it.copy(
                     limpiando = false,

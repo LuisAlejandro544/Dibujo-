@@ -72,6 +72,9 @@ dependencies {
     implementation(libs.androidx.lifecycle.viewmodel.compose)
     implementation(libs.androidx.lifecycle.runtime.compose)
 
+    // LiteRT: corre el modelo chico de limpieza de trazos en el equipo (CPU).
+    implementation(libs.litert)
+
     // Panel de depuración + LeakCanary: SOLO en el variant debug. En release
     // no se incluye nada de esto (ni código, ni permiso, ni icono).
     debugImplementation(libs.leakcanary.android)

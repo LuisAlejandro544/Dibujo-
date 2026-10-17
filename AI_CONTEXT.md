@@ -127,6 +127,33 @@ tinta). El algoritmo es puramente entero/booleano, así que el C++ y Kotlin dan
 exactamente el mismo resultado; `MotorTest.limpiarTrazosParidadNativoKotlin` lo
 verifica. Si la hoja está vacía devuelve `false` y no ensucia el historial.
 
+### Limpiar trazos con modelo (IA local, LiteRT)
+Además del adelgazado algorítmico, `:app` trae un **modelo chico propio** que
+limpia los repases con una red: `app/src/main/assets/modelos/limpiar_trazos.tflite`
+(~105 KB, float16). Es una U-Net mínima (entrada `[1,64,64,1]`: máscara binaria
+de tinta; salida `[1,64,64,1]`: esqueleto limpio) entrenada en el repo con datos
+sintéticos (curvas Bezier gruesas + repases → esqueleto fino). El modelo pesa
+poco y la inferencia va por CPU, así que no hace falta GPU ni descargar nada.
+
+- `LimpiadorTrazosIa` (`:app`) carga el modelo con **LiteRT**
+  (`com.google.ai.edge.litert:litert`, patrón `CompiledModel.create(assets,
+  ruta, Options(Accelerator.CPU))` + `createInputBuffers`/`createOutputBuffers`/
+  `writeFloat`/`run`/`readFloat`), lo corre por parches 64×64 con paso 48
+  (solape 16 px) recomponiendo por máximo, y redibuja el esqueleto con
+  `Lienzo.RADIO_LIMPIEZA`. Cada píxel limpio toma el color de la tinta original
+  más cercana (búsqueda en un radio de 6 px) para conservar el color del trazo.
+- El resultado se aplica con `MotorDibujo.reemplazarHoja(pixeles)`: reemplaza la
+  hoja completa (validando el tamaño) y deja el estado anterior en el historial.
+  Existe en **los dos motores** (`MotorKotlin` y `DibujoEngine` vía
+  `nativoReemplazarHoja`) y su paridad la cubre
+  `MotorTest.reemplazarHojaParidadNativoKotlin`.
+- Si el modelo no está empaquetado o falla, `LimpiadorTrazosIa.limpiar` devuelve
+  `null` y `DibujoViewModel.limpiarTrazosConModelo` cae al adelgazado algorítmico.
+  `DibujoEstado.modeloIaDisponible` decide si se ofrece el botón en el diálogo.
+- Reproducir el modelo: `tools/entrenar_limpiar_trazos.py` (requiere
+  `tensorflow-cpu` + `numpy`; escribe el `.tflite` en assets). No se ejecuta en
+  el build; el binario ya va versionado.
+
 ### Paleta del calco (color local, sin red neuronal)
 `Cuantizador` (`:core`) implementa k-medias (k-means++ con semilla fija, por eso
 es determinista) para sacar los colores dominantes de una imagen. La app
@@ -153,6 +180,7 @@ durante la composición; si no, undo/redo cambian el motor pero no repintan
 | AGP | 9.4.1 (con *built-in Kotlin*: NO aplicar `org.jetbrains.kotlin.android` en `:app`) |
 | Compose | BOM 2026.09.00 + `kotlin.plugin.compose` 2.4.21 |
 | LeakCanary | 2.14 (solo `debugImplementation` en `:app`) |
+| LiteRT | `com.google.ai.edge.litert:litert` 2.3.0 (Google Maven; runtime del modelo IA de `:app`; trae `&lt;abi&gt;/libLiteRt.so` + `liblitert_jni.so`) |
 | SDK | compileSdk 37, minSdk 26, targetSdk 37, ABIs arm64-v8a + x86_64 |
 | NDK en `:app` | `externalNativeBuild` → `engine/src/main/cpp/CMakeLists.txt` (versión CMake 3.31.5, `ndkVersion 27.3.13750724`) |
 | Motor escritorio | tareas `configureNative`/`buildNative` de `:engine` (requiere cmake + g++; si no hay, tests y app usan el respaldo) |
@@ -180,8 +208,9 @@ Particularidades:
   se transforma con `withTransform { translate(-pan); rotate(rot, Offset.Zero);
   scale(zoom, Offset.Zero) }` para quedar alineada con la hoja.
 - **Edge-to-edge** desde la Activity (`enableEdgeToEdge()`), `Scaffold` con
-  `TopAppBar` (título + motor + deshacer/rehacer/centrar/enderezar/limpiar/configuración;
-  "enderezar" queda habilitado sólo si hay rotación) y barra inferior con
+  `TopAppBar` (título + motor; acciones deshacer/rehacer/centrar/enderezar y un
+  menú **"más opciones"** con limpiar/exportar/configuración; "enderezar" queda
+  habilitado sólo si hay rotación) y barra inferior con
   herramientas/chips de modo/grosor y la paleta. Las herramientas son seis
   (…+ DOBLE), con botones compactos (`IconoToggle(tamano = 34.dp)`) para que
   entren en una fila sin scroll.
@@ -193,6 +222,16 @@ Particularidades:
     sin eso la paleta quedaba debajo de la barra de navegación y no se tocaba.
   - `TemaDibujo` fija `fontScale = 1` en `LocalDensity`: el tamaño de letra
     no depende de la configuración de Android del usuario.
+  - **Título en vertical (bug de diseño)**: las siete acciones iban sueltas en
+    el `TopAppBar` y en pantallas angostas no dejaban ancho para el título, que
+    se dibujaba carácter por carácter. Se movió lo poco frecuente
+    (limpiar/exportar/configuración) a un `DropdownMenu` ("más opciones") y el
+    título quedó con `maxLines = 1` + `TextOverflow.Ellipsis`.
+  - **Giro accidental en el pinch**: el gesto de dos dedos usaba
+    `detectTransformGestures` sin `panZoomLock`, así que un pellizco de zoom
+    también rotaba la hoja. Se pasó `panZoomLock = true`: la rotación sólo se
+    activa si el gesto EMPIEZA girando (el umbral de rotación se compara con el
+    touch slop).
 - **Material Icons**: `androidx.compose.material:material-icons-extended`
   (BOM, iconos Rounded; deshacer/rehacer vía `Icons.AutoMirrored`). Sin
   símbolos de texto: cada icono lleva `contentDescription` desde strings.xml.
@@ -350,6 +389,7 @@ Es clave para trabajar desde el móvil, sin adb ni PC.
 ## 7. Datos útiles para agentes
 
 - Horario del usuario: America/Caracas; respondé en español nativo, fixeáte en `opencode.json`.
-- Tests: JUnit Platform; paridad en `engine/src/test/kotlin/com/dibujo/engine/MotorTest.kt` (incluye paridad de undo/redo con `historialParidad`). El antialiasing entra en esa paridad: si tocás `disco`/`pintarMezcla` en un lado, corré `:engine:test`.
+- Tests: JUnit Platform; paridad en `engine/src/test/kotlin/com/dibujo/engine/MotorTest.kt` (incluye paridad de undo/redo con `historialParidad` y de `reemplazarHoja`). El antialiasing entra en esa paridad: si tocás `disco`/`pintarMezcla` en un lado, corré `:engine:test`.
+- Modelo IA: el `.tflite` se regenera con `tools/entrenar_limpiar_trazos.py` (Python + `tensorflow-cpu` + `numpy`); el resultado va a `app/src/main/assets/modelos/`. El build NO lo entrena, sólo empaqueta el binario versionado.
 - El workflow `android-apk.yml` corre manual (`workflow_dispatch`) y en cada PR contra main; el workflow falso `build-debug-apk.yml` (APK placeholder aapt2/d8) fue eliminado.
 - Commits: esperar orden explícita del usuario (nunca commit proactivo).

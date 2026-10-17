@@ -8,6 +8,7 @@
     <string name="herramienta_portamina">Porta</string>
     <string name="herramienta_carboncillo">Carbón</string>
     <string name="herramienta_borrador">Borrador</string>
+    <string name="herramienta_pintar">Pintar</string>
 
     <!-- Accesibilidad (contentDescription) -->
     <string name="cd_deshacer">Deshacer</string>
@@ -21,6 +22,11 @@
     <string name="cd_modo_mover">Modo mover: tocar para cambiar a edición</string>
     <string name="cd_configuracion">Abrir configuración</string>
     <string name="cd_cargando_render">Preparando el motor gráfico</string>
+    <string name="cd_calco">Imagen de calco</string>
+    <string name="cd_calco_elegir">Elegir imagen para calcar</string>
+    <string name="cd_calco_alternar">Mostrar u ocultar la imagen de calco</string>
+    <string name="cd_calco_opciones">Opciones de calco</string>
+    <string name="cd_expandir">Expandir la hoja</string>
 
     <!-- Estado -->
     <string name="estado_motor">Motor: %1$s</string>
@@ -40,4 +46,24 @@
     <string name="backend_opengl">OpenGL ES</string>
     <string name="backend_vulkan">Vulkan</string>
     <string name="cerrar">Cerrar</string>
+    <string name="cancelar">Cancelar</string>
+
+    <!-- Expandir hoja -->
+    <string name="expandir_titulo">Expandir hoja</string>
+    <string name="expandir_actual">Hoja actual: %1$d × %2$d px</string>
+    <string name="expandir_ancho">Ancho a añadir: %1$d px</string>
+    <string name="expandir_alto">Alto a añadir: %1$d px</string>
+    <string name="expandir_aplicar">Expandir</string>
+    <string name="expandir_maximo">La hoja ya alcanzó el tamaño máximo (4096 px por lado).</string>
+
+    <!-- Imagen de calco -->
+    <string name="calco_titulo">Imagen de calco</string>
+    <string name="calco_descripcion">Elige una imagen y colócala debajo del trazo para calcar. Puedes mostrarla u ocultarla cuando quieras.</string>
+    <string name="calco_sin_imagen">Sin imagen de calco</string>
+    <string name="calco_cargada">Imagen de calco cargada</string>
+    <string name="calco_opacidad">Opacidad: %1$d%%</string>
+    <string name="calco_elegir">Elegir imagen</string>
+    <string name="calco_mostrar">Mostrar</string>
+    <string name="calco_ocultar">Ocultar</string>
+    <string name="calco_quitar">Quitar</string>
 </resources>

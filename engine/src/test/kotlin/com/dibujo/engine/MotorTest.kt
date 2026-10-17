@@ -2,6 +2,7 @@ package com.dibujo.engine
 
 import com.dibujo.core.Camara
 import com.dibujo.core.Colores
+import com.dibujo.core.Herramienta
 import com.dibujo.core.Lapiz
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -43,6 +44,40 @@ class MotorKotlinTest {
     private fun MotorKotlin.deshacerRehacerOK(): Boolean {
         val ok = rehacer()
         return ok
+    }
+
+    @Test
+    fun pintarRellenaRegionDelimitada() {
+        val m = MotorKotlin(9, 9)
+        // Borde formado por un lazo (pluma continua).
+        m.configurarLapiz(Lapiz(color = Colores.NEGRO, grosor = 1))
+        m.iniciarTrazo(1f, 1f)
+        m.continuarTrazo(7f, 1f)
+        m.continuarTrazo(7f, 7f)
+        m.continuarTrazo(1f, 7f)
+        m.continuarTrazo(1f, 1f)
+        assertTrue(m.terminarTrazo())
+
+        m.configurarLapiz(Lapiz(color = Colores.AMARILLO, grosor = 1, herramienta = Herramienta.PINTAR))
+        m.iniciarTrazo(4f, 4f)
+        assertTrue(m.terminarTrazo())
+        assertEquals(Colores.AMARILLO, m.pixelHoja(4, 4))
+        // El borde no se pinta con el balde (mismo color exacto del borde).
+        assertEquals(Colores.NEGRO, m.pixelHoja(1, 1))
+    }
+
+    @Test
+    fun expandirConservaElDibujo() {
+        val m = MotorKotlin(8, 8)
+        m.configurarLapiz(Lapiz(color = Colores.ROJO, grosor = 1))
+        m.iniciarTrazo(2f, 3f)
+        m.terminarTrazo()
+        m.expandir(0, 0, 4, 2)
+        assertEquals(12, m.ancho)
+        assertEquals(10, m.alto)
+        assertEquals(Colores.ROJO, m.pixelHoja(2, 3))
+        assertEquals(Colores.BLANCO, m.pixelHoja(10, 8))
+        assertTrue(!m.puedeDeshacer())
     }
 }
 
@@ -136,5 +171,75 @@ class MotorNativoTest {
     fun nativoVersionExponeString() {
         if (!NativeEngine.disponible()) return
         assertTrue(MotorNativo(4, 4).version().isNotEmpty())
+    }
+
+    @Test
+    fun pintarParidadNativoKotlin() {
+        if (!NativeEngine.disponible()) return
+        val nativo = MotorNativo(14, 14)
+        val kotlin = MotorKotlin(14, 14)
+        for (m in listOf(nativo, kotlin)) {
+            m.configurarLapiz(Lapiz(color = Colores.AZUL, grosor = 3))
+            m.iniciarTrazo(3f, 3f)
+            m.continuarTrazo(11f, 3f)
+            m.continuarTrazo(11f, 11f)
+            m.continuarTrazo(3f, 11f)
+            m.continuarTrazo(3f, 3f)
+            assertTrue(m.terminarTrazo())
+            m.configurarLapiz(Lapiz(color = Colores.AMARILLO, grosor = 1, herramienta = Herramienta.PINTAR))
+            m.iniciarTrazo(7f, 7f)
+            assertTrue(m.terminarTrazo())
+        }
+        val a = IntArray(14 * 14)
+        val b = IntArray(14 * 14)
+        nativo.renderizar(a, 14, 14)
+        kotlin.renderizar(b, 14, 14)
+        for (i in a.indices) {
+            assertEquals(b[i], a[i], "relleno: discrepancia en píxel $i")
+        }
+        nativo.close()
+        kotlin.close()
+    }
+
+    @Test
+    fun expandirParidadNativoKotlin() {
+        if (!NativeEngine.disponible()) return
+        val nativo = MotorNativo(8, 6)
+        val kotlin = MotorKotlin(8, 6)
+        for (m in listOf(nativo, kotlin)) {
+            m.configurarLapiz(Lapiz(color = Colores.ROJO, grosor = 3))
+            m.iniciarTrazo(1f, 1f)
+            m.continuarTrazo(6f, 4f)
+            assertTrue(m.terminarTrazo())
+            m.expandir(0, 0, 4, 3)
+            assertEquals(12, m.ancho, "${m.nombre}: ancho")
+            assertEquals(9, m.alto, "${m.nombre}: alto")
+        }
+        val a = IntArray(12 * 9)
+        val b = IntArray(12 * 9)
+        nativo.renderizar(a, 12, 9)
+        kotlin.renderizar(b, 12, 9)
+        for (i in a.indices) {
+            assertEquals(b[i], a[i], "expandir: discrepancia en píxel $i")
+        }
+        nativo.close()
+        kotlin.close()
+    }
+
+    @Test
+    fun fueraDeHojaParidadNativoKotlin() {
+        if (!NativeEngine.disponible()) return
+        val nativo = MotorNativo(4, 4)
+        val kotlin = MotorKotlin(4, 4)
+        // Un viewport más grande que la hoja revela el color exterior.
+        val a = IntArray(8 * 8)
+        val b = IntArray(8 * 8)
+        nativo.renderizar(a, 8, 8)
+        kotlin.renderizar(b, 8, 8)
+        for (i in a.indices) {
+            assertEquals(b[i], a[i], "exterior: discrepancia en píxel $i")
+        }
+        nativo.close()
+        kotlin.close()
     }
 }

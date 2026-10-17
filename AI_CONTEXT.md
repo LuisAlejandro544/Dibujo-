@@ -75,6 +75,21 @@ En Android el ViewModel crea el motor con el tamaño físico de la pantalla
 (px), acotado a `MAX_LADO = 4096`. El motor NO se recrea ante rotaciones:
 vive en el `ViewModel` (la hoja sobrevive cambios de configuración).
 
+La hoja se puede **expandir** en cualquier momento (`MotorDibujo.expandir`):
+agrega píxeles nuevos (fondo) por cada lado sin mover el contenido, acotado a
+`Lienzo.MAX_LADO`. Los dos motores limpian el historial al expandir (los
+snapshots viejos tienen otras dimensiones). En Android el render GPU se recrea
+al cambiar el tamaño (la textura se asigna con las dimensiones del motor), así
+que `hojaAncho`/`hojaAlto` forman parte de la `key` de `SuperficieGpu`.
+
+### Herramienta PINTAR (balde)
+`Herramienta.PINTAR` (ordinal 4, mismo orden que `Tool::PINTAR` en C++) no
+traza: rellena por inundación (4 vecinos, igualdad exacta de color) desde el
+punto tocado con el color del lápiz. `Lienzo.rellenar` y la función `rellenar`
+del C++ deben mantener la paridad del conjunto rellenado. No usa grosor ni
+punta. En la app, un toque sin arrastre dispara `DibujoViewModel.tocarHoja`
+(punto con el lápiz, relleno con PINTAR).
+
 ### Historial
 Undo/redo por snapshots completos de la hoja. Límite de pasos: **30**
 (`Historial` en Kotlin y `kMaxHistorial` en C++ tienen que coincidir). El
@@ -130,6 +145,21 @@ Particularidades:
   (BOM, iconos Rounded; deshacer/rehacer vía `Icons.AutoMirrored`). Sin
   símbolos de texto: cada icono lleva `contentDescription` desde strings.xml.
 - **Cero texto duro**: todo por `stringResource`.
+- **Barra inferior sin scroll incómodo** (issue 18): se pasó de chips de texto
+  en una fila deslizable a tres filas fijas → modo + acciones (calco/expandir)
+  + grosor de herramientas (iconos compactos `IconoToggle`, sin scroll) +
+  paleta deslizable. La paleta creció a 29 colores (`Colores.PALETA`); los
+  primeros 12 conservan su índice (la consola y sus tests los eligen por
+  número), los nuevos van al final.
+- **Imagen de calco** (issue 18): `CapaCalco` es una capa Compose translúcida
+  sobre la hoja (GPU o CPU) y debajo del trazo; la imagen se ajusta dentro de
+  la hoja y sigue la cámara. Se elige con el Photo Picker (sin permisos), se
+  muestra/oculta al instante (`calcoVisible`) y tiene opacidad ajustable. El
+  `calcoUri` vive en el `ViewModel` (sobrevive rotaciones) y el `Bitmap` se
+  decodifica reducido (`MAX_CALCO = 2048`) al componer.
+- **Expandir hoja** (issue 18): diálogo con sliders de ancho/alto a añadir
+  (hasta 4096 por lado); `DibujoViewModel.expandirHoja` llama a
+  `MotorDibujo.expandir(0, 0, ancho, alto)`.
 - Icono de app: adaptive icon XML (sin PNG) con `monochrome`.
 
 ### Backend gráfico (OpenGL ES / Vulkan)

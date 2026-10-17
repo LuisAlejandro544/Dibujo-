@@ -29,6 +29,16 @@ data class DibujoEstado(
     /** Hay pasos que rehacer (habilita el botón de rehacer). */
     val puedeRehacer: Boolean = false,
     val motorNombre: String = "",
+    /** Ancho actual de la hoja en píxeles (cambia al expandir). */
+    val hojaAncho: Int = 0,
+    /** Alto actual de la hoja en píxeles (cambia al expandir). */
+    val hojaAlto: Int = 0,
+    /** Imagen de calco (para calcar debajo del trazo); null si no hay. */
+    val calcoUri: String? = null,
+    /** La imagen de calco se muestra (se puede alternar en cualquier momento). */
+    val calcoVisible: Boolean = false,
+    /** Opacidad de la imagen de calco (0..1). */
+    val calcoAlfa: Float = 0.45f,
     /** Backend gráfico elegido por el usuario (persistido). */
     val backendSeleccionado: BackendRender = BackendRender.AUTOMATICO,
     /** Backend que realmente corre según la selección y el soporte del equipo. */
@@ -86,6 +96,8 @@ class DibujoViewModel(app: Application) : AndroidViewModel(app) {
         _estado.update {
             it.copy(
                 motorNombre = m.nombre,
+                hojaAncho = m.ancho,
+                hojaAlto = m.alto,
                 gpuDisponible = hayGpu,
                 // Con GPU disponible arranca la pantalla de carga hasta que el
                 // renderizador nativo confirme (`gpuListo`) o falle (`gpuFracaso`).
@@ -274,6 +286,71 @@ class DibujoViewModel(app: Application) : AndroidViewModel(app) {
         val m = motor ?: return
         m.centrarVista()
         _estado.update { it.copy(camara = m.camara(), marco = it.marco + 1) }
+    }
+
+    /**
+     * Expande la hoja agregando [extraAncho] px a la derecha y [extraAlto] px
+     * abajo (el contenido no se mueve). Al cambiar el tamaño, los motores
+     * limpian el historial. Si hay render GPU, se recrea para reasignar la
+     * textura al nuevo tamaño (por eso se enciende `gpuCargando`).
+     */
+    fun expandirHoja(extraAncho: Int, extraAlto: Int) {
+        val m = motor ?: return
+        val dAncho = extraAncho.coerceAtLeast(0)
+        val dAlto = extraAlto.coerceAtLeast(0)
+        if (dAncho == 0 && dAlto == 0) return
+        m.expandir(0, 0, dAncho, dAlto)
+        _estado.update {
+            it.copy(
+                hojaAncho = m.ancho,
+                hojaAlto = m.alto,
+                puedeDeshacer = m.puedeDeshacer(),
+                puedeRehacer = m.puedeRehacer(),
+                // Sólo se muestra la pantalla de carga si el render GPU se va a
+                // recrear (si falló, se sigue por CPU y no hay nada que esperar).
+                gpuCargando = it.gpuDisponible && !it.gpuFallo,
+                marco = it.marco + 1,
+            )
+        }
+    }
+
+    /**
+     * Toque sin arrastre: pinta un punto con el lápiz o rellena una región con
+     * la herramienta PINTAR. Un arrastre (trazo) lo maneja la capa de gestos.
+     */
+    fun tocarHoja(px: Float, py: Float) {
+        val m = motor ?: return
+        if (_estado.value.modo != Modo.EDICION) return
+        val (hx, hy) = aHoja(m, px, py)
+        m.iniciarTrazo(hx, hy)
+        m.terminarTrazo()
+        _estado.update {
+            it.copy(
+                puedeDeshacer = m.puedeDeshacer(),
+                puedeRehacer = m.puedeRehacer(),
+                marco = it.marco + 1,
+            )
+        }
+    }
+
+    /** Fija (o quita con null) la imagen de calco y la muestra al elegirla. */
+    fun elegirCalco(uri: String?) {
+        _estado.update {
+            it.copy(
+                calcoUri = uri,
+                calcoVisible = uri != null,
+            )
+        }
+    }
+
+    /** Muestra u oculta la imagen de calco en cualquier momento. */
+    fun alternarCalco() {
+        if (_estado.value.calcoUri == null) return
+        _estado.update { it.copy(calcoVisible = !it.calcoVisible) }
+    }
+
+    fun cambiarCalcoAlfa(alfa: Float) {
+        _estado.update { it.copy(calcoAlfa = alfa.coerceIn(0f, 1f)) }
     }
 
     /** Rasteriza la vista (vw x vh px) con la cámara aplicada, para el lienzo. */

@@ -86,6 +86,7 @@ class VistaHoja(
         com.dibujo.core.Herramienta.PORTAMINA -> "portamina"
         com.dibujo.core.Herramienta.CARBONCILLO -> "carboncillo"
         com.dibujo.core.Herramienta.BORRADOR -> "borrador"
+        com.dibujo.core.Herramienta.PINTAR -> "pintar"
     }
 }
 

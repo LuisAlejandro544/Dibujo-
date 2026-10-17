@@ -88,6 +88,34 @@ class LienzoTest {
         l.pintarMezcla(1, 1, Colores.ROJO, 0)
         assertEquals(Colores.BLANCO, l.pixel(1, 1))
     }
+
+    @Test
+    fun expandirConservaElContenidoYAgregaFondo() {
+        val l = Lienzo(4, 3)
+        l.pintar(0, 0, Colores.ROJO)
+        l.pintar(3, 2, Colores.AZUL)
+        l.expandir(0, 0, 2, 1)
+        assertEquals(6, l.ancho)
+        assertEquals(4, l.alto)
+        // El contenido conserva sus coordenadas.
+        assertEquals(Colores.ROJO, l.pixel(0, 0))
+        assertEquals(Colores.AZUL, l.pixel(3, 2))
+        // La franja nueva es fondo.
+        assertEquals(Colores.BLANCO, l.pixel(5, 3))
+        assertEquals(Colores.BLANCO, l.pixel(0, 3))
+    }
+
+    @Test
+    fun expandirPorIzquierdaYArribaDesplazaElContenido() {
+        val l = Lienzo(3, 3)
+        l.pintar(0, 0, Colores.ROJO)
+        l.expandir(2, 1, 0, 0)
+        assertEquals(5, l.ancho)
+        assertEquals(4, l.alto)
+        // El dibujo se desplaza con la hoja para no moverse de lugar.
+        assertEquals(Colores.ROJO, l.pixel(2, 1))
+        assertEquals(Colores.BLANCO, l.pixel(0, 0))
+    }
 }
 
 class BackendRenderTest {
@@ -161,6 +189,8 @@ class LapizTest {
         assertEquals(1, Lapiz(herramienta = Herramienta.PORTAMINA, grosor = 1).grosorEfectivo())
         assertEquals(6, Lapiz(herramienta = Herramienta.CARBONCILLO, grosor = 4).grosorEfectivo())
         assertEquals(6, Lapiz(herramienta = Herramienta.BORRADOR, grosor = 2).grosorEfectivo())
+        // PINTAR no ajusta el grosor (rellena, no traza).
+        assertEquals(5, Lapiz(herramienta = Herramienta.PINTAR, grosor = 5).grosorEfectivo())
     }
 }
 

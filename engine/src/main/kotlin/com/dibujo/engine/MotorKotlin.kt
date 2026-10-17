@@ -143,6 +143,13 @@ class MotorKotlin(
         }
     }
 
+    override fun copiarHoja(destino: IntArray): Boolean {
+        val origen = hoja.pixeles
+        if (destino.size < origen.size) return false
+        System.arraycopy(origen, 0, destino, 0, origen.size)
+        return true
+    }
+
     /** Color de un píxel de la hoja (para tests). */
     fun pixelHoja(x: Int, y: Int): Int = hoja.pixel(x, y)
 

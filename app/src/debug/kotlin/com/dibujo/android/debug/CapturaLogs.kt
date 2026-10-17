@@ -59,10 +59,16 @@ class CapturaLogs(private val alEntrada: (EntradaLog) -> Unit) {
         return EntradaLog(System.currentTimeMillis(), nivel, tag, mensaje)
     }
 
-    /** Conserva W/E/F siempre; de V/D/I solo los tags que nos importan. */
+    /**
+     * Conserva W/E/F siempre; de V/D/I solo los tags que nos importan. Antes se
+     * descartan los tags de ruido de proveedor (firmware TECNO/Transsion y
+     * similares): son warnings/errores del framework del equipo, no de la app,
+     * y llenaban el reporte con volcados irrelevantes.
+     */
     private fun interesa(nivel: NivelLog, tag: String): Boolean {
-        if (nivel.ordinal >= NivelLog.WARN.ordinal) return true
         val t = tag.lowercase()
+        if (t in TAGS_RUIDO) return false
+        if (nivel.ordinal >= NivelLog.WARN.ordinal) return true
         return TAGS_INTERES.any { t.contains(it) }
     }
 
@@ -80,6 +86,16 @@ class CapturaLogs(private val alEntrada: (EntradaLog) -> Unit) {
             "gpu",
             "hwui",
             "graphics",
+        )
+        // Ruido conocido de firmware de proveedor (TECNO/Transsion, etc.):
+        // aparecen en el proceso de la app pero no son de la app. Se comparan
+        // en minúsculas y por igualdad exacta para no ocultar tags parecidos.
+        val TAGS_RUIDO = setOf(
+            "tranclassinfo",
+            "tranchoreographerimpl",
+            "appresolutiontuner",
+            "fbi",
+            "qt",
         )
     }
 }

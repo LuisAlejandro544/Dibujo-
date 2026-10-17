@@ -32,6 +32,9 @@ object NativeEngine {
     external fun nativoZoom(handle: Long, factor: Float)
     external fun nativoCentrarVista(handle: Long)
     external fun nativoRenderizar(handle: Long, destino: IntArray, vw: Int, vh: Int)
+
+    /** Copia la hoja completa (ancho*alto) a [destino]; false si no alcanza. */
+    external fun nativoCopiarHoja(handle: Long, destino: IntArray): Boolean
     external fun nativoVersion(): String
 
     // --- Render GPU (Android) ---

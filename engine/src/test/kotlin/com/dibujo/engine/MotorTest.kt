@@ -242,4 +242,32 @@ class MotorNativoTest {
         nativo.close()
         kotlin.close()
     }
+
+    @Test
+    fun copiarHojaParidadNativoKotlin() {
+        if (!NativeEngine.disponible()) return
+        val nativo = MotorNativo(20, 10)
+        val kotlin = MotorKotlin(20, 10)
+        for (m in listOf(nativo, kotlin)) {
+            m.configurarLapiz(Lapiz(color = Colores.VERDE, grosor = 3))
+            m.iniciarTrazo(2f, 5f)
+            m.continuarTrazo(17f, 5f)
+            assertTrue(m.terminarTrazo())
+            m.configurarLapiz(Lapiz(color = Colores.AZUL, grosor = 2, herramienta = Herramienta.PINTAR))
+            m.iniciarTrazo(9f, 9f)
+            assertTrue(m.terminarTrazo())
+        }
+        val a = IntArray(20 * 10)
+        val b = IntArray(20 * 10)
+        assertTrue(nativo.copiarHoja(a), "nativo: copiarHoja")
+        assertTrue(kotlin.copiarHoja(b), "kotlin: copiarHoja")
+        for (i in a.indices) {
+            assertEquals(b[i], a[i], "copiarHoja: discrepancia en píxel $i")
+        }
+        // Un destino más chico que la hoja se rechaza sin copiar.
+        assertTrue(!nativo.copiarHoja(IntArray(3)), "nativo: destino corto rechazado")
+        assertTrue(!kotlin.copiarHoja(IntArray(3)), "kotlin: destino corto rechazado")
+        nativo.close()
+        kotlin.close()
+    }
 }

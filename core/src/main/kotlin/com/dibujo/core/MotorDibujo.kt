@@ -48,6 +48,15 @@ interface MotorDibujo : AutoCloseable {
     fun renderizar(destino: IntArray, vw: Int, vh: Int)
 
     /**
+     * Copia la hoja COMPLETA (ancho * alto píxeles ARGB, sin cámara) a
+     * [destino], para exportarla a imagen. [destino] debe tener al menos
+     * `ancho * alto` celdas. Devuelve `true` si se copió. El C++ y el respaldo
+     * Kotlin copian exactamente el mismo buffer (la hoja es la fuente de
+     * verdad), así que no hay diferencias de rasterizado entre motores.
+     */
+    fun copiarHoja(destino: IntArray): Boolean
+
+    /**
      * Handle nativo opaco del motor para el render GPU (Android). Es `0` en
      * motores que no exponen memoria nativa compartible (p. ej. `MotorKotlin`),
      * caso en el que la app cae al render por CPU.

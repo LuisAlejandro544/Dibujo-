@@ -1,6 +1,13 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
+    <!-- Exportar a la galería: en Android 10+ se usa MediaStore, que no pide
+         permisos. En equipos API 26–28 (minSdk) hace falta este permiso, que
+         la app solicita en tiempo de ejecución solo en esas versiones. -->
+    <uses-permission
+        android:name="android.permission.WRITE_EXTERNAL_STORAGE"
+        android:maxSdkVersion="28" />
+
     <application
         android:allowBackup="true"
         android:icon="@mipmap/ic_launcher"
@@ -9,9 +16,16 @@
         android:supportsRtl="true"
         android:theme="@style/TemaDibujo">
 
+        <!-- La ventana de depuración (source set debug) es un icono de launcher
+             aparte. Para que cada icono abra SIEMPRE su propia pantalla (y no
+             que el launcher reanude la última Activity de la tarea, que era el
+             bug de "abro Dibujo y me sale Debug"), cada Activity vive en su
+             propia tarea: afinidad distinta + singleTask. -->
         <activity
             android:name=".MainActivity"
             android:exported="true"
+            android:launchMode="singleTask"
+            android:taskAffinity="com.dibujo.android"
             android:configChanges="orientation|screenSize|screenLayout|keyboardHidden|uiMode"
             android:windowSoftInputMode="adjustResize">
             <intent-filter>

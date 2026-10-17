@@ -1,11 +1,15 @@
 package com.dibujo.android
 
+import android.Manifest
 import android.content.Context
+import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.Color as ColorAndroid
 import android.net.Uri
+import android.os.Build
 import android.os.Bundle
+import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.SystemBarStyle
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -56,6 +60,7 @@ import androidx.compose.material.icons.rounded.Mode
 import androidx.compose.material.icons.rounded.OpenInFull
 import androidx.compose.material.icons.rounded.PanTool
 import androidx.compose.material.icons.rounded.Remove
+import androidx.compose.material.icons.rounded.SaveAlt
 import androidx.compose.material.icons.rounded.Settings
 import androidx.compose.material.icons.rounded.Visibility
 import androidx.compose.material.icons.rounded.VisibilityOff
@@ -84,6 +89,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -112,6 +118,12 @@ import com.dibujo.core.Colores
 import com.dibujo.core.Herramienta
 import com.dibujo.core.Lapiz
 import com.dibujo.core.Modo
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 import kotlin.math.roundToInt
 
 
@@ -171,6 +183,81 @@ fun PantallaDibujo(vm: DibujoViewModel = viewModel()) {
         ActivityResultContracts.PickVisualMedia(),
     ) { uri: Uri? -> vm.elegirCalco(uri?.toString()) }
 
+    // --- Exportar el dibujo a la galería ---------------------------------
+    val contexto = LocalContext.current
+    val alcance = rememberCoroutineScope()
+    var exportando by remember { mutableStateOf(false) }
+    // Los textos se leen en composición (no con `context.getString` dentro de
+    // la corrutina) para que respeten cambios de configuración.
+    val textoExportadoOk = stringResource(R.string.exportado_ok)
+    val textoExportadoError = stringResource(R.string.exportado_error)
+    val textoExportadoSinPermiso = stringResource(R.string.exportado_sin_permiso)
+
+    // Copia la hoja a un Bitmap y la guarda en la galería. El copiado y la
+    // compresión van fuera del hilo principal (hojas grandes = varios MB).
+    fun exportarAhora() {
+        if (exportando) return
+        val ancho = estadoState.value.hojaAncho
+        val alto = estadoState.value.hojaAlto
+        if (ancho <= 0 || alto <= 0) return
+        exportando = true
+        alcance.launch {
+            val bitmap = withContext(Dispatchers.Default) {
+                runCatching {
+                    val pixeles = IntArray(ancho * alto)
+                    if (!vm.copiarHoja(pixeles)) {
+                        null
+                    } else {
+                        Bitmap.createBitmap(pixeles, ancho, alto, Bitmap.Config.ARGB_8888)
+                    }
+                }.getOrNull()
+            }
+            val guardado = if (bitmap != null) {
+                val marca = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date())
+                val ok = withContext(Dispatchers.IO) {
+                    ExportadorGaleria.guardar(contexto, bitmap, "dibujo_$marca")
+                }
+                bitmap.recycle()
+                ok
+            } else {
+                false
+            }
+            exportando = false
+            Toast.makeText(
+                contexto,
+                if (guardado) textoExportadoOk else textoExportadoError,
+                Toast.LENGTH_SHORT,
+            ).show()
+        }
+    }
+
+    // En API < 29 hace falta WRITE_EXTERNAL_STORAGE; desde Android 10 (Q) el
+    // guardado por MediaStore no pide permisos.
+    val permisoEscritura = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission(),
+    ) { concedido ->
+        if (concedido) {
+            exportarAhora()
+        } else {
+            Toast.makeText(
+                contexto,
+                textoExportadoSinPermiso,
+                Toast.LENGTH_SHORT,
+            ).show()
+        }
+    }
+
+    val alExportar = {
+        val faltaPermiso = Build.VERSION.SDK_INT < Build.VERSION_CODES.Q &&
+            contexto.checkSelfPermission(Manifest.permission.WRITE_EXTERNAL_STORAGE) !=
+            PackageManager.PERMISSION_GRANTED
+        if (faltaPermiso) {
+            permisoEscritura.launch(Manifest.permission.WRITE_EXTERNAL_STORAGE)
+        } else {
+            exportarAhora()
+        }
+    }
+
     Scaffold(
         topBar = {
             BarraSuperior(
@@ -179,6 +266,8 @@ fun PantallaDibujo(vm: DibujoViewModel = viewModel()) {
                 alRehacer = vm::rehacer,
                 alCentrar = vm::centrar,
                 alLimpiar = vm::limpiar,
+                alExportar = alExportar,
+                exportando = exportando,
                 alAbrirConfig = { mostrarConfig = true },
             )
         },
@@ -253,6 +342,8 @@ private fun BarraSuperior(
     alRehacer: () -> Unit,
     alCentrar: () -> Unit,
     alLimpiar: () -> Unit,
+    alExportar: () -> Unit,
+    exportando: Boolean,
     alAbrirConfig: () -> Unit,
 ) {
     TopAppBar(
@@ -289,6 +380,12 @@ private fun BarraSuperior(
                 icono = Icons.Rounded.Delete,
                 descripcion = stringResource(R.string.cd_limpiar),
                 alPulsar = alLimpiar,
+            )
+            BotonIcono(
+                icono = Icons.Rounded.SaveAlt,
+                descripcion = stringResource(R.string.cd_exportar),
+                habilitado = !exportando,
+                alPulsar = alExportar,
             )
             BotonIcono(
                 icono = Icons.Rounded.Settings,

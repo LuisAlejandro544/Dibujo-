@@ -27,6 +27,12 @@
     <string name="cd_calco_alternar">Mostrar u ocultar la imagen de calco</string>
     <string name="cd_calco_opciones">Opciones de calco</string>
     <string name="cd_expandir">Expandir la hoja</string>
+    <string name="cd_exportar">Exportar el dibujo a la galería</string>
+
+    <!-- Exportar a la galería -->
+    <string name="exportado_ok">Dibujo guardado en la galería</string>
+    <string name="exportado_error">No se pudo guardar el dibujo</string>
+    <string name="exportado_sin_permiso">Hace falta permiso para guardar en la galería</string>
 
     <!-- Estado -->
     <string name="estado_motor">Motor: %1$s</string>

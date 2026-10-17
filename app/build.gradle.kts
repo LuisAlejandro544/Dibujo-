@@ -71,4 +71,8 @@ dependencies {
     implementation(libs.androidx.compose.material.icons.extended)
     implementation(libs.androidx.lifecycle.viewmodel.compose)
     implementation(libs.androidx.lifecycle.runtime.compose)
+
+    // Panel de depuración + LeakCanary: SOLO en el variant debug. En release
+    // no se incluye nada de esto (ni código, ni permiso, ni icono).
+    debugImplementation(libs.leakcanary.android)
 }

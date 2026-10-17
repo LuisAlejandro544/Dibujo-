@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Tema propio del panel: fondo opaco (a diferencia de la app, que usa una
+     ventana transparente para la superficie GPU). -->
+<resources>
+    <style name="TemaDebug" parent="@android:style/Theme.Material.Light.NoActionBar">
+        <item name="android:windowBackground">@android:color/white</item>
+    </style>
+</resources>

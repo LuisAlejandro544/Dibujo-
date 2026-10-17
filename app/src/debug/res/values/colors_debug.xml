@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Colores del icono del panel de depuración (solo debug). -->
+<resources>
+    <color name="debug_launcher_fondo">#FF004D40</color>
+</resources>

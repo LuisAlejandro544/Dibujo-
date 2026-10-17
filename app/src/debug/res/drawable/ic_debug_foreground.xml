@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Icono del panel de depuración: un "bicho" con antenas y patas. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- Cabeza -->
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M54,27 A7,7 0 1 0 54,41 A7,7 0 1 0 54,27 Z" />
+    <!-- Cuerpo -->
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M54,42 C44,42 39,49 39,58 C39,70 46,77 54,77 C62,77 69,70 69,58 C69,49 64,42 54,42 Z" />
+    <!-- Antenas -->
+    <path
+        android:strokeColor="#FFFFFFFF"
+        android:strokeWidth="3"
+        android:strokeLineCap="round"
+        android:pathData="M50,32 L43,23 M58,32 L65,23" />
+    <!-- Patas -->
+    <path
+        android:strokeColor="#FFFFD54F"
+        android:strokeWidth="3"
+        android:strokeLineCap="round"
+        android:pathData="M40,52 L27,45 M40,60 L26,60 M40,68 L27,75 M68,52 L81,45 M68,60 L82,60 M68,68 L81,75" />
+</vector>

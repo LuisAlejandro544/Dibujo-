@@ -20,6 +20,7 @@ mencionarla en el PR.
 - [x] **Selección de backend gráfico (issue 16)**: `BackendRender` + detección de Vulkan 1.1 / OpenGL ES + diálogo de configuración (Vulkan bloqueado sin soporte) y persistencia en `SharedPreferences`. La preferencia queda cableada; el render GPU es el paso siguiente.
 - [x] **Render GPU de presentación (OpenGL ES / Vulkan)**: `engine/src/main/cpp/gpu/` presenta la hoja como textura con la cámara resuelta en el shader (`RenderizadorGL` con EGL+GLES3 y `RenderizadorVulkan`); `SuperficieGpu` (`SurfaceView` + hilo de render) la muestra en `:app` con caída automática a `LienzoCpu` si el backend falla. El rasterizado del trazo sigue en CPU (paridad `MotorTest` intacta).
 - [x] **Arreglos del render GPU (issue 16, ronda 2)**: el lienzo ya no queda negro hasta tocar (la primera hoja se sube con revisión 0 en GL y Vulkan); pantalla de carga mientras el renderizador inicia o se cambia de backend; y la hoja ocupa toda la ventana (barras encima) para que superficie GPU, gestos y motor compartan origen y el trazo caiga donde se dibuja. Pendiente: verificar en dispositivo real.
+- [x] **Herramientas de depuración (issue 19)**: panel propio en el source set `debug` con icono en el launcher (`PanelDebugActivity`), monitor siempre activo (`MonitorDibujo` + `MonitorProvider`) de RAM por categoría, hilos activos/cambios, acciones, logs W/E/F y crashes; reporte copiable/compartible y LeakCanary 2.14 (icono propio desactivado, se entra desde el panel). Nada de esto entra en release.
 
 ## En curso
 

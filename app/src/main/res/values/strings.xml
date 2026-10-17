@@ -1,0 +1,33 @@
+<resources>
+    <string name="app_name">Dibujo</string>
+
+    <!-- Barra de herramientas -->
+    <string name="modo_editar">Edit</string>
+    <string name="modo_mover">Mover</string>
+    <string name="herramienta_lapiz">Lápiz</string>
+    <string name="herramienta_portamina">Porta</string>
+    <string name="herramienta_carboncillo">Carbón</string>
+    <string name="herramienta_borrador">Borrador</string>
+    <string name="accion_deshacer" translatable="false">↶</string>
+    <string name="accion_rehacer" translatable="false">↷</string>
+    <string name="accion_limpiar">✕</string>
+    <string name="accion_centrar" translatable="false">◎</string>
+    <string name="grosor_mas" translatable="false">+</string>
+    <string name="grosor_menos" translatable="false">–</string>
+
+    <!-- Accesibilidad (contentDescription) -->
+    <string name="cd_deshacer">Deshacer</string>
+    <string name="cd_rehacer">Rehacer</string>
+    <string name="cd_limpiar">Limpiar hoja</string>
+    <string name="cd_centrar">Centrar la vista</string>
+    <string name="cd_grosor_mas">Aumentar grosor</string>
+    <string name="cd_grosor_menos">Reducir grosor</string>
+    <string name="cd_color">Color %1$s</string>
+    <string name="cd_modo_editar">Modo edición: tocar para cambiar a mover</string>
+    <string name="cd_modo_mover">Modo mover: tocar para cambiar a edición</string>
+
+    <!-- Estado -->
+    <string name="estado_motor">Motor: %1$s</string>
+    <string name="estado_grosor">Grosor %1$d</string>
+    <string name="mensaje_limpiada">Hoja limpia</string>
+</resources>

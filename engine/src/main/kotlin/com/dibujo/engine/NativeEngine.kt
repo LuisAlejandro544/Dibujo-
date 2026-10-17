@@ -25,6 +25,7 @@ object NativeEngine {
     external fun nativoPuedeDeshacer(handle: Long): Boolean
     external fun nativoPuedeRehacer(handle: Long): Boolean
     external fun nativoLimpiarHoja(handle: Long)
+    external fun nativoLimpiarTrazos(handle: Long): Boolean
     external fun nativoExpandir(handle: Long, izquierda: Int, arriba: Int, derecha: Int, abajo: Int)
     external fun nativoAncho(handle: Long): Int
     external fun nativoAlto(handle: Long): Int
@@ -39,6 +40,9 @@ object NativeEngine {
 
     /** Copia la hoja completa (ancho*alto) a [destino]; false si no alcanza. */
     external fun nativoCopiarHoja(handle: Long, destino: IntArray): Boolean
+
+    /** Reemplaza la hoja completa por [pixeles] (ancho*alto); false si el tamaño difiere. */
+    external fun nativoReemplazarHoja(handle: Long, pixeles: IntArray): Boolean
     external fun nativoVersion(): String
 
     // --- Render GPU (Android) ---

@@ -13,11 +13,11 @@ garantizada por tests). Dos front-ends: consola JVM (`:ui`) y Android Compose
 
 | Ruta | Contenido |
 |---|---|
-| `core/src/main/kotlin/com/dibujo/core/` | Dominio: `Lienzo` (hoja ARGB ≤4096×4096, disco con antialiasing), `MotorDibujo` (fachada: trazado, cámara con rotación, expandir, copiarHoja), `Lapiz` (herramientas LAPIZ/PORTAMINA/CARBONCILLO/BORRADOR/PINTAR/DOBLE), `Colores`, `Modo`, `Historial`, `BackendRender`, `ComandoLinea` (parser). |
+| `core/src/main/kotlin/com/dibujo/core/` | Dominio: `Lienzo` (hoja ARGB ≤4096×4096, disco con antialiasing, `limpiarTrazos` con Zhang-Suen), `MotorDibujo` (fachada: trazado, cámara con rotación, expandir, copiarHoja, reemplazarHoja, limpiarTrazos), `Lapiz` (herramientas LAPIZ/PORTAMINA/CARBONCILLO/BORRADOR/PINTAR/DOBLE), `Colores` (58 colores, con neón/metálicos), `Cuantizador` (k-medias para la paleta del calco), `Modo`, `Historial`, `BackendRender`, `ComandoLinea` (parser). |
 | `engine/src/main/kotlin/com/dibujo/engine/` | `Motores.crear()` → `MotorNativo` (JNI) o `MotorKotlin` (respaldo); `NativeEngine` declara los `external`. |
 | `engine/src/main/cpp/` | C++17: `DibujoEngine` (núcleo, disco antialiased), `dibujo_engine.cpp` (JNI), `gpu/` (`RenderizadorGL`, `RenderizadorVulkan`, `GpuJni.cpp`, shaders; sólo Android), `CMakeLists.txt` (JDK en escritorio, NDK en Android). |
 | `ui/` | Consola ANSI: `Main.kt`, `ControladorConsola` (`r`/`,` giran la hoja), `VistaHoja`, `Menu`. |
-| `app/` | Android: `MainActivity`, `PantallaDibujo` (Compose M3, edge-to-edge + fuente fija), `SuperficieGpu` (SurfaceView + hilo de render GPU), `DibujoViewModel`, `CapacidadesGraficas` (detección Vulkan 1.1 / OpenGL ES), `ExportadorGaleria` (guardar PNG en la galería vía MediaStore), manifest, recursos e adaptive icon. |
+| `app/` | Android: `MainActivity`, `PantallaDibujo` (Compose M3, edge-to-edge + fuente fija), `SuperficieGpu` (SurfaceView + hilo de render GPU), `DibujoViewModel` (incluye `limpiarTrazos`, `limpiarTrazosConModelo` y `analizarCalco`), `LimpiadorTrazosIa` (modelo chico `.tflite` con LiteRT en `app/src/main/assets/modelos/`), `CapacidadesGraficas` (detección Vulkan 1.1 / OpenGL ES), `ExportadorGaleria` (guardar PNG en la galería vía MediaStore), `ImagenCalco` (decodificación del calco), manifest, recursos e adaptive icon. |
 | `app/src/debug/` | Solo variant debug: `PanelDebugActivity` (icono propio en el launcher), `MonitorDibujo` (RAM/hilos/crashes), `CapturaLogs`, `MonitorProvider` y LeakCanary 2.14. No existe en release. |
 | `.github/workflows/` | `android-apk.yml` (assembleDebug manual y en PRs contra main). |
 
@@ -45,8 +45,8 @@ motores y el test de paridad juntos.
 ```
 
 Toolchain: JDK 17, Gradle 9.8.1 (wrapper), Kotlin 2.4.21, AGP 9.4.1,
-Compose BOM 2026.09.00, compileSdk 37 / minSdk 26 / targetSdk 37,
-nDevice ABIs: arm64-v8a + x86_64.
+Compose BOM 2026.09.00, LiteRT (`com.google.ai.edge.litert:litert`) 2.3.0,
+compileSdk 37 / minSdk 26 / targetSdk 37, ABIs: arm64-v8a + x86_64.
 
 ## Backend gráfico
 

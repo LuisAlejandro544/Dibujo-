@@ -78,6 +78,66 @@ void rellenar(std::vector<uint32_t>& hoja, int ancho, int alto,
     }
 }
 
+// Condiciones comunes del adelgazado de Zhang-Suen: 2 <= B <= 6 y exactamente
+// un cruce 0->1 (A == 1). Replica `Lienzo.condicionesZhangSuen` de Kotlin.
+inline bool condicionesZhangSuen(int p2, int p3, int p4, int p5,
+                                 int p6, int p7, int p8, int p9) {
+    const int b = p2 + p3 + p4 + p5 + p6 + p7 + p8 + p9;
+    if (b < 2 || b > 6) return false;
+    int a = 0;
+    if (!p2 && p3) ++a;
+    if (!p3 && p4) ++a;
+    if (!p4 && p5) ++a;
+    if (!p5 && p6) ++a;
+    if (!p6 && p7) ++a;
+    if (!p7 && p8) ++a;
+    if (!p8 && p9) ++a;
+    if (!p9 && p2) ++a;
+    return a == 1;
+}
+
+// Adelgazado morfológico de Zhang-Suen: deja cada región de tinta reducida a
+// una línea de 1 px. Sólo usa enteros 0/1, por eso replica exactamente
+// `Lienzo.adelgazar` de Kotlin (paridad píxel a píxel).
+void adelgazar(std::vector<uint8_t>& img, int w, int h) {
+    if (w < 3 || h < 3) return;
+    std::vector<int> borrar;
+    bool cambio = true;
+    while (cambio) {
+        cambio = false;
+        // Sub-iteración 0 (borde norte/este) y 1 (borde sur/oeste).
+        for (int sub = 0; sub < 2; ++sub) {
+            borrar.clear();
+            for (int y = 1; y < h - 1; ++y) {
+                const int fila = y * w;
+                for (int x = 1; x < w - 1; ++x) {
+                    const int i = fila + x;
+                    if (!img[static_cast<std::size_t>(i)]) continue;
+                    const int p2 = img[static_cast<std::size_t>(i - w)];
+                    const int p3 = img[static_cast<std::size_t>(i - w + 1)];
+                    const int p4 = img[static_cast<std::size_t>(i + 1)];
+                    const int p5 = img[static_cast<std::size_t>(i + w + 1)];
+                    const int p6 = img[static_cast<std::size_t>(i + w)];
+                    const int p7 = img[static_cast<std::size_t>(i + w - 1)];
+                    const int p8 = img[static_cast<std::size_t>(i - 1)];
+                    const int p9 = img[static_cast<std::size_t>(i - w - 1)];
+                    if (!condicionesZhangSuen(p2, p3, p4, p5, p6, p7, p8, p9)) continue;
+                    if (sub == 0) {
+                        if (p2 && p4 && p6) continue;
+                        if (p4 && p6 && p8) continue;
+                    } else {
+                        if (p2 && p4 && p8) continue;
+                        if (p2 && p6 && p8) continue;
+                    }
+                    borrar.push_back(i);
+                }
+            }
+            for (int i : borrar) img[static_cast<std::size_t>(i)] = 0;
+            if (!borrar.empty()) cambio = true;
+        }
+    }
+}
+
 // Mezcla `color` sobre el píxel (x, y) con cobertura `alpha` (0..255).
 // Misma aritmética entera que `Lienzo.pintarMezcla` en Kotlin para no romper
 // la paridad píxel a píxel.
@@ -294,6 +354,53 @@ void DibujoEngine::limpiarHoja() {
     futuro_.clear();
     std::fill(hoja_.begin(), hoja_.end(), fondo_);
     ++revision_;
+}
+
+bool DibujoEngine::limpiarTrazos(float radio) {
+    std::lock_guard<std::mutex> bloqueo(mutex_);
+    const std::size_t n = hoja_.size();
+    std::vector<uint8_t> tinta(n, 0);
+    bool hay = false;
+    for (std::size_t i = 0; i < n; ++i) {
+        if (hoja_[i] != fondo_) {
+            tinta[i] = 1;
+            hay = true;
+        }
+    }
+    if (!hay) return false;
+
+    // Snapshot para undo y copia de colores: el esqueleto es un subconjunto de
+    // la tinta, así que cada píxel conserva el color que tenía (`origen`).
+    std::vector<uint32_t> origen = hoja_;
+    pasado_.push_back(hoja_);
+    if (pasado_.size() > kMaxHistorial) pasado_.erase(pasado_.begin());
+    futuro_.clear();
+
+    adelgazar(tinta, ancho_, alto_);
+    std::fill(hoja_.begin(), hoja_.end(), fondo_);
+    for (int y = 0; y < alto_; ++y) {
+        for (int x = 0; x < ancho_; ++x) {
+            const std::size_t i = static_cast<std::size_t>(y) * ancho_ + x;
+            if (tinta[i]) {
+                pintarDisco(hoja_, ancho_, alto_,
+                            static_cast<float>(x), static_cast<float>(y), radio,
+                            origen[i]);
+            }
+        }
+    }
+    ++revision_;
+    return true;
+}
+
+bool DibujoEngine::reemplazarHoja(const uint32_t* datos, std::size_t n) {
+    std::lock_guard<std::mutex> bloqueo(mutex_);
+    if (datos == nullptr || n != hoja_.size()) return false;
+    pasado_.push_back(hoja_);
+    if (pasado_.size() > kMaxHistorial) pasado_.erase(pasado_.begin());
+    futuro_.clear();
+    std::copy(datos, datos + n, hoja_.begin());
+    ++revision_;
+    return true;
 }
 
 void DibujoEngine::expandir(int izquierda, int arriba, int derecha, int abajo) {

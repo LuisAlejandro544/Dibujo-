@@ -61,6 +61,8 @@ class MotorNativo(
     override fun puedeRehacer(): Boolean = NativeEngine.nativoPuedeRehacer(handle)
     override fun limpiarHoja() = NativeEngine.nativoLimpiarHoja(handle)
 
+    override fun limpiarTrazos(): Boolean = NativeEngine.nativoLimpiarTrazos(handle)
+
     override fun expandir(izquierda: Int, arriba: Int, derecha: Int, abajo: Int) {
         NativeEngine.nativoExpandir(handle, izquierda, arriba, derecha, abajo)
         ancho = NativeEngine.nativoAncho(handle)
@@ -93,6 +95,9 @@ class MotorNativo(
 
     override fun copiarHoja(destino: IntArray): Boolean =
         NativeEngine.nativoCopiarHoja(handle, destino)
+
+    override fun reemplazarHoja(pixeles: IntArray): Boolean =
+        NativeEngine.nativoReemplazarHoja(handle, pixeles)
 
     override fun close() {
         NativeEngine.nativoDestruir(handle)

@@ -103,6 +103,15 @@ class Lienzo(
     }
 
     /**
+     * Reemplaza el contenido de la hoja por [desde] (ancho * alto ARGB). El
+     * llamador es responsable de haberlo validado; acá sólo se exige el tamaño.
+     */
+    fun reemplazar(desde: IntArray) {
+        require(desde.size == pixeles.size) { "tamaño distinto: ${desde.size}" }
+        System.arraycopy(desde, 0, pixeles, 0, pixeles.size)
+    }
+
+    /**
      * Disco relleno y suavizado (punta redonda del lápiz). La cobertura de
      * cada píxel se calcula analíticamente (`0.5 + radio − distancia`) y se
      * mezcla con el fondo, así los bordes del trazo quedan con antialiasing
@@ -223,8 +232,135 @@ class Lienzo(
         }
     }
 
+    /**
+     * "Limpiar trazos": adelgaza toda la tinta de la hoja a un esqueleto de
+     * 1 px (Zhang-Suen) y la vuelve a dibujar con un ancho uniforme [radio].
+     *
+     * Sirve cuando el usuario repasa el mismo trazo muchas veces y la línea
+     * queda gruesa e irregular: el resultado es una línea pareja. Cada píxel
+     * del esqueleto conserva el color que tenía en la hoja original (el
+     * esqueleto es un subconjunto de la tinta). Devuelve `false` si la hoja
+     * está vacía (no hay nada que limpiar).
+     *
+     * Es visión por computadora con aritmética entera, así que el C++ replica
+     * idéntico el algoritmo para mantener la paridad píxel a píxel.
+     */
+    fun limpiarTrazos(radio: Float = RADIO_LIMPIEZA): Boolean {
+        val w = ancho
+        val h = alto
+        val origen = pixeles.copyOf()
+        val tinta = BooleanArray(w * h)
+        var hay = false
+        for (i in origen.indices) {
+            val esTinta = origen[i] != fondo
+            tinta[i] = esTinta
+            if (esTinta) hay = true
+        }
+        if (!hay) return false
+        adelgazar(tinta, w, h)
+        pixeles.fill(fondo)
+        for (y in 0 until h) {
+            for (x in 0 until w) {
+                if (tinta[y * w + x]) {
+                    disco(x.toFloat(), y.toFloat(), radio, origen[y * w + x])
+                }
+            }
+        }
+        return true
+    }
+
+    /**
+     * Adelgazado morfológico de Zhang-Suen sobre una máscara binaria. Deja cada
+     * región de tinta reducida a una línea de 1 píxel. Sólo usa booleanos, por
+     * eso el C++ puede replicar exactamente el mismo resultado.
+     */
+    private fun adelgazar(img: BooleanArray, w: Int, h: Int) {
+        if (w < 3 || h < 3) return
+        val borrar = ArrayList<Int>()
+        var cambio = true
+        while (cambio) {
+            cambio = false
+            // Sub-iteración 1: elimina el borde norte/este.
+            borrar.clear()
+            for (y in 1 until h - 1) {
+                val fila = y * w
+                for (x in 1 until w - 1) {
+                    val i = fila + x
+                    if (!img[i]) continue
+                    val p2 = img[i - w]
+                    val p3 = img[i - w + 1]
+                    val p4 = img[i + 1]
+                    val p5 = img[i + w + 1]
+                    val p6 = img[i + w]
+                    val p7 = img[i + w - 1]
+                    val p8 = img[i - 1]
+                    val p9 = img[i - w - 1]
+                    if (!condicionesZhangSuen(p2, p3, p4, p5, p6, p7, p8, p9)) continue
+                    if (p2 && p4 && p6) continue
+                    if (p4 && p6 && p8) continue
+                    borrar.add(i)
+                }
+            }
+            for (i in borrar) img[i] = false
+            if (borrar.isNotEmpty()) cambio = true
+            // Sub-iteración 2: elimina el borde sur/oeste.
+            borrar.clear()
+            for (y in 1 until h - 1) {
+                val fila = y * w
+                for (x in 1 until w - 1) {
+                    val i = fila + x
+                    if (!img[i]) continue
+                    val p2 = img[i - w]
+                    val p3 = img[i - w + 1]
+                    val p4 = img[i + 1]
+                    val p5 = img[i + w + 1]
+                    val p6 = img[i + w]
+                    val p7 = img[i + w - 1]
+                    val p8 = img[i - 1]
+                    val p9 = img[i - w - 1]
+                    if (!condicionesZhangSuen(p2, p3, p4, p5, p6, p7, p8, p9)) continue
+                    if (p2 && p4 && p8) continue
+                    if (p2 && p6 && p8) continue
+                    borrar.add(i)
+                }
+            }
+            for (i in borrar) img[i] = false
+            if (borrar.isNotEmpty()) cambio = true
+        }
+    }
+
+    /** Condiciones comunes: 2 <= B <= 6 y exactamente un cruce 0→1 (A == 1). */
+    private fun condicionesZhangSuen(
+        p2: Boolean, p3: Boolean, p4: Boolean, p5: Boolean,
+        p6: Boolean, p7: Boolean, p8: Boolean, p9: Boolean,
+    ): Boolean {
+        var b = 0
+        if (p2) b++
+        if (p3) b++
+        if (p4) b++
+        if (p5) b++
+        if (p6) b++
+        if (p7) b++
+        if (p8) b++
+        if (p9) b++
+        if (b < 2 || b > 6) return false
+        var a = 0
+        if (!p2 && p3) a++
+        if (!p3 && p4) a++
+        if (!p4 && p5) a++
+        if (!p5 && p6) a++
+        if (!p6 && p7) a++
+        if (!p7 && p8) a++
+        if (!p8 && p9) a++
+        if (!p9 && p2) a++
+        return a == 1
+    }
+
     companion object {
         /** Lado máximo de la hoja (coincide con el C++ y con `DibujoViewModel`). */
         const val MAX_LADO = 4096
+
+        /** Radio (px) con que se redibuja la línea limpia (coincide con el C++). */
+        const val RADIO_LIMPIEZA = 1.0f
     }
 }

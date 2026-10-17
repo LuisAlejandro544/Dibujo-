@@ -1,10 +1,8 @@
 package com.dibujo.android
 
 import android.Manifest
-import android.content.Context
 import android.content.pm.PackageManager
 import android.graphics.Bitmap
-import android.graphics.BitmapFactory
 import android.graphics.Color as ColorAndroid
 import android.net.Uri
 import android.os.Build
@@ -48,6 +46,7 @@ import androidx.compose.material.icons.automirrored.rounded.Redo
 import androidx.compose.material.icons.automirrored.rounded.Undo
 import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material.icons.rounded.AddPhotoAlternate
+import androidx.compose.material.icons.rounded.AutoFixHigh
 import androidx.compose.material.icons.rounded.Brush
 import androidx.compose.material.icons.rounded.CenterFocusWeak
 import androidx.compose.material.icons.rounded.CleaningServices
@@ -58,6 +57,7 @@ import androidx.compose.material.icons.rounded.FormatColorFill
 import androidx.compose.material.icons.rounded.Gesture
 import androidx.compose.material.icons.rounded.Layers
 import androidx.compose.material.icons.rounded.Mode
+import androidx.compose.material.icons.rounded.MoreVert
 import androidx.compose.material.icons.rounded.OpenInFull
 import androidx.compose.material.icons.rounded.PanTool
 import androidx.compose.material.icons.rounded.Remove
@@ -67,7 +67,10 @@ import androidx.compose.material.icons.rounded.Settings
 import androidx.compose.material.icons.rounded.Visibility
 import androidx.compose.material.icons.rounded.VisibilityOff
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilterChipDefaults
@@ -116,6 +119,7 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.dibujo.core.BackendRender
 import com.dibujo.core.Camara
@@ -184,6 +188,10 @@ fun PantallaDibujo(vm: DibujoViewModel = viewModel()) {
     var mostrarConfig by remember { mutableStateOf(false) }
     var mostrarExpandir by remember { mutableStateOf(false) }
     var mostrarCalco by remember { mutableStateOf(false) }
+    var mostrarIa by remember { mutableStateOf(false) }
+    // Limpiar la hoja borra todo y es irreversible si no se deshace: se pide
+    // confirmación (ahora vive dentro del menú de la barra superior).
+    var mostrarLimpiar by remember { mutableStateOf(false) }
 
     // Selector de imagen del sistema (Photo Picker): no requiere permisos.
     val elegirImagen = rememberLauncherForActivityResult(
@@ -273,7 +281,7 @@ fun PantallaDibujo(vm: DibujoViewModel = viewModel()) {
                 alRehacer = vm::rehacer,
                 alCentrar = vm::centrar,
                 alEnderezar = vm::enderezar,
-                alLimpiar = vm::limpiar,
+                alLimpiar = { mostrarLimpiar = true },
                 alExportar = alExportar,
                 exportando = exportando,
                 alAbrirConfig = { mostrarConfig = true },
@@ -291,6 +299,12 @@ fun PantallaDibujo(vm: DibujoViewModel = viewModel()) {
                 },
                 alAlternarCalco = vm::alternarCalco,
                 alAbrirCalco = { mostrarCalco = true },
+                alAbrirIa = {
+                    mostrarIa = true
+                    if (estado.calcoUri != null && estado.coloresCalco.isEmpty()) {
+                        vm.analizarCalco()
+                    }
+                },
             )
         },
         // Transparente: deja ver la superficie GPU que va en una capa detrás
@@ -339,9 +353,37 @@ fun PantallaDibujo(vm: DibujoViewModel = viewModel()) {
             alCerrar = { mostrarCalco = false },
         )
     }
+
+    if (mostrarIa) {
+        DialogoIa(
+            estado = estado,
+            alLimpiarTrazos = vm::limpiarTrazos,
+            alLimpiarTrazosIa = vm::limpiarTrazosConModelo,
+            alAnalizar = vm::analizarCalco,
+            alElegir = vm::usarColorCalco,
+            alCerrar = { mostrarIa = false },
+        )
+    }
+
+    if (mostrarLimpiar) {
+        DialogoLimpiar(
+            alConfirmar = {
+                vm.limpiar()
+                mostrarLimpiar = false
+            },
+            alCerrar = { mostrarLimpiar = false },
+        )
+    }
 }
 
-/** Barra superior: título + motor + deshacer/rehacer/centrar/limpiar/config. */
+/**
+ * Barra superior: título + motor, las acciones de historial/vista y un menú
+ * "más opciones". Antes las siete acciones iban sueltas y, en pantallas
+ * angostas, no dejaban ancho para el título: se dibujaba en vertical (el bug
+ * de diseño). Ahora deshacer/rehacer/centrar/enderezar quedan a la vista y lo
+ * de uso menos frecuente (limpiar, exportar, configuración) va en el menú. El
+ * título se acota a una línea con elipsis por si igual falta espacio.
+ */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun BarraSuperior(
@@ -355,15 +397,22 @@ private fun BarraSuperior(
     exportando: Boolean,
     alAbrirConfig: () -> Unit,
 ) {
+    var menuAbierto by remember { mutableStateOf(false) }
     TopAppBar(
         modifier = Modifier.absorberToque(),
         title = {
             Column {
-                Text(stringResource(R.string.app_name))
+                Text(
+                    stringResource(R.string.app_name),
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
                 Text(
                     stringResource(R.string.estado_motor, estado.motorNombre),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
                 )
             }
         },
@@ -391,26 +440,76 @@ private fun BarraSuperior(
                 habilitado = estado.camara.rotacion != 0f,
                 alPulsar = alEnderezar,
             )
-            BotonIcono(
-                icono = Icons.Rounded.Delete,
-                descripcion = stringResource(R.string.cd_limpiar),
-                alPulsar = alLimpiar,
-            )
-            BotonIcono(
-                icono = Icons.Rounded.SaveAlt,
-                descripcion = stringResource(R.string.cd_exportar),
-                habilitado = !exportando,
-                alPulsar = alExportar,
-            )
-            BotonIcono(
-                icono = Icons.Rounded.Settings,
-                descripcion = stringResource(R.string.cd_configuracion),
-                alPulsar = alAbrirConfig,
-            )
+            Box {
+                BotonIcono(
+                    icono = Icons.Rounded.MoreVert,
+                    descripcion = stringResource(R.string.cd_mas_opciones),
+                    alPulsar = { menuAbierto = true },
+                )
+                DropdownMenu(
+                    expanded = menuAbierto,
+                    onDismissRequest = { menuAbierto = false },
+                ) {
+                    DropdownMenuItem(
+                        text = { Text(stringResource(R.string.cd_limpiar)) },
+                        leadingIcon = {
+                            Icon(Icons.Rounded.Delete, contentDescription = null)
+                        },
+                        onClick = {
+                            menuAbierto = false
+                            alLimpiar()
+                        },
+                    )
+                    DropdownMenuItem(
+                        text = { Text(stringResource(R.string.cd_exportar)) },
+                        leadingIcon = {
+                            Icon(Icons.Rounded.SaveAlt, contentDescription = null)
+                        },
+                        enabled = !exportando,
+                        onClick = {
+                            menuAbierto = false
+                            alExportar()
+                        },
+                    )
+                    DropdownMenuItem(
+                        text = { Text(stringResource(R.string.config_titulo)) },
+                        leadingIcon = {
+                            Icon(Icons.Rounded.Settings, contentDescription = null)
+                        },
+                        onClick = {
+                            menuAbierto = false
+                            alAbrirConfig()
+                        },
+                    )
+                }
+            }
         },
         colors = TopAppBarDefaults.topAppBarColors(
             containerColor = MaterialTheme.colorScheme.surface,
         ),
+    )
+}
+
+/** Confirmación antes de borrar toda la hoja (acción destructiva). */
+@Composable
+private fun DialogoLimpiar(
+    alConfirmar: () -> Unit,
+    alCerrar: () -> Unit,
+) {
+    AlertDialog(
+        onDismissRequest = alCerrar,
+        title = { Text(stringResource(R.string.limpiar_titulo)) },
+        text = { Text(stringResource(R.string.limpiar_confirmacion)) },
+        confirmButton = {
+            TextButton(onClick = alConfirmar) {
+                Text(stringResource(R.string.limpiar_confirmar))
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = alCerrar) {
+                Text(stringResource(R.string.cancelar))
+            }
+        },
     )
 }
 
@@ -548,7 +647,12 @@ private fun CapaGestos(
                 // Pan + pinch de zoom + rotación de dos dedos, todos anclados
                 // al foco (el punto bajo los dedos). La rotación llega en
                 // grados y el motor la usa en radianes.
-                detectTransformGestures { foco, pan, zoom, rotacion ->
+                //
+                // `panZoomLock = true`: la rotación sólo se activa si el gesto
+                // EMPIEZA girando. Con el pellizco (sólo zoom/pan) la hoja no
+                // se gira por el temblor natural de los dedos, que era el bug
+                // "hago zoom y se gira".
+                detectTransformGestures(panZoomLock = true) { foco, pan, zoom, rotacion ->
                     if (zoom != 1f) vm.zoomear(zoom, foco.x, foco.y)
                     if (rotacion != 0f) {
                         vm.rotar(Math.toRadians(rotacion.toDouble()).toFloat(), foco.x, foco.y)
@@ -671,26 +775,6 @@ private fun CapaCalco(
     }
 }
 
-/** Lado máximo al que se reduce la imagen de calco al decodificarla. */
-private const val MAX_CALCO = 2048
-
-/**
- * Decodifica la imagen elegida reduciéndola si es muy grande ([MAX_CALCO] por
- * lado). Devuelve null si no se puede leer. El muestreo se calcula en potencias
- * de dos (`inSampleSize`) para no agotar la memoria con fotos enormes.
- */
-private fun cargarBitmap(contexto: Context, uri: Uri): Bitmap? = runCatching {
-    val resolver = contexto.contentResolver
-    val limites = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-    resolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, limites) }
-    var escala = 1
-    while (limites.outWidth / escala > MAX_CALCO || limites.outHeight / escala > MAX_CALCO) {
-        escala *= 2
-    }
-    val opciones = BitmapFactory.Options().apply { inSampleSize = escala }
-    resolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, opciones) }
-}.getOrNull()
-
 /**
  * Barra inferior. Tres filas para no depender del scroll horizontal (que era
  * incómodo): modo + acciones de hoja/calco, herramientas + grosor, y paleta.
@@ -703,6 +787,7 @@ private fun BarraHerramientas(
     alElegirImagen: () -> Unit,
     alAlternarCalco: () -> Unit,
     alAbrirCalco: () -> Unit,
+    alAbrirIa: () -> Unit,
 ) {
     Surface(modifier = Modifier.absorberToque(), tonalElevation = 3.dp) {
         Column(
@@ -754,6 +839,12 @@ private fun BarraHerramientas(
                     descripcion = stringResource(R.string.cd_calco_opciones),
                     seleccionado = false,
                     alPulsar = alAbrirCalco,
+                )
+                IconoToggle(
+                    icono = Icons.Rounded.AutoFixHigh,
+                    descripcion = stringResource(R.string.cd_ia_local),
+                    seleccionado = false,
+                    alPulsar = alAbrirIa,
                 )
                 IconoToggle(
                     icono = Icons.Rounded.OpenInFull,
@@ -947,6 +1038,128 @@ private fun DialogoCalco(
                 TextButton(onClick = alCerrar) {
                     Text(stringResource(R.string.cerrar))
                 }
+            }
+        },
+    )
+}
+
+/**
+ * Diálogo "IA local": reúne las herramientas que corren en el equipo:
+ *  - Limpiar trazos: adelgaza los trazos repasados a una línea pareja. Ofrece
+ *    el modelo chico (LiteRT, si está empaquetado) o el adelgazado algorítmico
+ *    (Zhang-Suen), que también es el respaldo del modelo.
+ *  - Paleta del calco: saca los colores dominantes de la imagen que calcas
+ *    (k-medias) para terminar de colorear; al tocar un color se activa PINTAR.
+ */
+@Composable
+private fun DialogoIa(
+    estado: DibujoEstado,
+    alLimpiarTrazos: () -> Unit,
+    alLimpiarTrazosIa: () -> Unit,
+    alAnalizar: () -> Unit,
+    alElegir: (Int) -> Unit,
+    alCerrar: () -> Unit,
+) {
+    AlertDialog(
+        onDismissRequest = alCerrar,
+        title = { Text(stringResource(R.string.ia_titulo)) },
+        text = {
+            Column {
+                Text(
+                    stringResource(R.string.ia_descripcion),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Spacer(Modifier.height(12.dp))
+
+                Text(
+                    stringResource(R.string.ia_limpiar_titulo),
+                    style = MaterialTheme.typography.titleSmall,
+                )
+                Text(
+                    stringResource(R.string.ia_limpiar_descripcion),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Spacer(Modifier.height(4.dp))
+                if (estado.limpiando) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        CircularProgressIndicator(Modifier.size(20.dp))
+                        Spacer(Modifier.width(8.dp))
+                        Text(stringResource(R.string.ia_limpiando))
+                    }
+                } else {
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        if (estado.modeloIaDisponible) {
+                            Button(onClick = alLimpiarTrazosIa) {
+                                Text(stringResource(R.string.ia_limpiar_modelo_boton))
+                            }
+                        }
+                        TextButton(onClick = alLimpiarTrazos) {
+                            Text(stringResource(R.string.ia_limpiar_boton))
+                        }
+                    }
+                }
+
+                Spacer(Modifier.height(12.dp))
+                Text(
+                    stringResource(R.string.paleta_calco_titulo),
+                    style = MaterialTheme.typography.titleSmall,
+                )
+                Text(
+                    stringResource(R.string.paleta_calco_descripcion),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Spacer(Modifier.height(8.dp))
+                when {
+                    estado.calcoUri == null -> Text(
+                        stringResource(R.string.paleta_calco_sin_calco),
+                        style = MaterialTheme.typography.bodyMedium,
+                    )
+                    estado.analizandoCalco -> Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        CircularProgressIndicator(Modifier.size(20.dp))
+                        Spacer(Modifier.width(8.dp))
+                        Text(stringResource(R.string.paleta_calco_analizando))
+                    }
+                    estado.coloresCalco.isEmpty() -> TextButton(onClick = alAnalizar) {
+                        Text(stringResource(R.string.paleta_calco_analizar))
+                    }
+                    else -> {
+                        Text(
+                            stringResource(R.string.paleta_calco_toca),
+                            style = MaterialTheme.typography.labelLarge,
+                        )
+                        Spacer(Modifier.height(8.dp))
+                        Row(
+                            Modifier
+                                .fillMaxWidth()
+                                .horizontalScroll(rememberScrollState()),
+                            horizontalArrangement = Arrangement.spacedBy(10.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            estado.coloresCalco.forEach { argb ->
+                                CabezaColor(
+                                    color = com.dibujo.core.Color(
+                                        com.dibujo.core.Colores.PALETA
+                                            .firstOrNull { it.argb == argb }?.nombre
+                                            ?: "#%06X".format(argb and 0xFFFFFF),
+                                        argb,
+                                    ),
+                                    seleccionado = estado.lapiz.color == argb,
+                                    onElegir = { alElegir(argb) },
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = alCerrar) {
+                Text(stringResource(R.string.cerrar))
             }
         },
     )

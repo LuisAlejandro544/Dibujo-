@@ -31,6 +31,15 @@ interface MotorDibujo : AutoCloseable {
     fun limpiarHoja()
 
     /**
+     * "Limpiar trazos": adelgaza la tinta de la hoja a un esqueleto de 1 px
+     * (Zhang-Suen) y la vuelve a dibujar con ancho uniforme. Sirve cuando el
+     * usuario repasa el mismo trazo muchas veces y la línea queda gruesa e
+     * irregular. Devuelve `true` si cambió algo (queda en el historial para
+     * poder deshacer). El C++ y Kotlin lo implementan idéntico (paridad).
+     */
+    fun limpiarTrazos(): Boolean
+
+    /**
      * Expande la hoja agregando píxeles nuevos (rellenos con el fondo) en cada
      * lado. El contenido existente conserva sus coordenadas de hoja. El tamaño
      * resultante se acota a `Lienzo.MAX_LADO` por lado. El historial se limpia
@@ -63,6 +72,16 @@ interface MotorDibujo : AutoCloseable {
      * verdad), así que no hay diferencias de rasterizado entre motores.
      */
     fun copiarHoja(destino: IntArray): Boolean
+
+    /**
+     * Reemplaza la hoja COMPLETA por [pixeles] (ancho * alto ARGB) y deja el
+     * estado anterior en el historial (se puede deshacer). La usan las
+     * herramientas que procesan la hoja fuera del motor, como el limpiador de
+     * trazos con modelo IA de `:app`. Devuelve `false` si [pixeles] no tiene el
+     * tamaño exacto de la hoja (no toca nada en ese caso). El C++ y el respaldo
+     * Kotlin lo implementan igual.
+     */
+    fun reemplazarHoja(pixeles: IntArray): Boolean
 
     /**
      * Handle nativo opaco del motor para el render GPU (Android). Es `0` en

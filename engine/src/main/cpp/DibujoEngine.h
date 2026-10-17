@@ -44,6 +44,11 @@ public:
     bool puedeRehacer() const { return !futuro_.empty(); }
     void limpiarHoja();  // borra todo (queda en el historial)
 
+    // "Limpiar trazos": adelgaza toda la tinta a un esqueleto de 1 px
+    // (Zhang-Suen) y la redibuja con ancho uniforme `radio`. Devuelve false si
+    // la hoja está vacía. Replica `Lienzo.limpiarTrazos` de Kotlin (paridad).
+    bool limpiarTrazos(float radio = 1.0f);
+
     // --- Tamaño de la hoja ---
     // Expande la hoja agregando píxeles nuevos (rellenos con `fondo_`) en cada
     // lado; el contenido conserva sus coordenadas. Acota a kMaxLado por lado y
@@ -90,6 +95,13 @@ public:
     // Copia la hoja completa a `destino` (debe tener ancho*alto celdas) bajo
     // bloqueo. Devuelve la revisión copiada, o 0 si el destino no alcanza.
     uint64_t copiarHoja(uint32_t* destino, std::size_t capacidad) const;
+
+    // Reemplaza la hoja completa por `datos` (ancho*alto ARGB) y guarda el
+    // estado anterior en el historial (deshacer). `n` debe ser exactamente
+    // ancho*alto; si no, no toca nada y devuelve false. La usa el limpiador de
+    // trazos con modelo IA (LiteRT) del lado Android. Replica
+    // `MotorKotlin.reemplazarHoja` (paridad).
+    bool reemplazarHoja(const uint32_t* datos, std::size_t n);
 
     // Lee la cámara de forma consistente con la revisión.
     void leerCamara(float& panX, float& panY, float& zoom, float& rotacion) const;

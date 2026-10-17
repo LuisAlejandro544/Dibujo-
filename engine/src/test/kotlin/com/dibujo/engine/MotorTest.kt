@@ -321,6 +321,41 @@ class MotorNativoTest {
     }
 
     @Test
+    fun reemplazarHojaParidadNativoKotlin() {
+        val motores = mutableListOf<com.dibujo.core.MotorDibujo>(MotorKotlin(6, 4))
+        if (NativeEngine.disponible()) motores.add(MotorNativo(6, 4))
+        val nueva = IntArray(6 * 4) { i -> if (i % 3 == 0) Colores.ROJO else Colores.BLANCO }
+        for (m in motores) {
+            m.configurarLapiz(Lapiz(color = Colores.AZUL, grosor = 2))
+            m.iniciarTrazo(0f, 0f)
+            m.continuarTrazo(5f, 3f)
+            assertTrue(m.terminarTrazo(), "${m.nombre}: trazo")
+            val antes = IntArray(6 * 4)
+            assertTrue(m.copiarHoja(antes))
+
+            assertTrue(m.reemplazarHoja(nueva), "${m.nombre}: reemplazarHoja")
+            val tras = IntArray(6 * 4)
+            assertTrue(m.copiarHoja(tras))
+            for (i in tras.indices) assertEquals(nueva[i], tras[i], "${m.nombre}: píxel $i")
+
+            // Un tamaño distinto se rechaza sin tocar la hoja.
+            assertTrue(!m.reemplazarHoja(IntArray(3)), "${m.nombre}: tamaño corto rechazado")
+            val sinCambios = IntArray(6 * 4)
+            assertTrue(m.copiarHoja(sinCambios))
+            for (i in sinCambios.indices) {
+                assertEquals(nueva[i], sinCambios[i], "${m.nombre}: rechazo no debe tocar")
+            }
+
+            // Queda en el historial: deshacer vuelve al estado previo.
+            assertTrue(m.deshacer(), "${m.nombre}: deshacer")
+            val vuelta = IntArray(6 * 4)
+            assertTrue(m.copiarHoja(vuelta))
+            for (i in vuelta.indices) assertEquals(antes[i], vuelta[i], "${m.nombre}: deshacer $i")
+            m.close()
+        }
+    }
+
+    @Test
     fun zoomPermiteAcercarMucho() {
         // Antes el máximo era 8x; las apps profesionales permiten mucho más zoom.
         val motores = mutableListOf<com.dibujo.core.MotorDibujo>(MotorKotlin(20, 20))
@@ -397,5 +432,44 @@ class MotorNativoTest {
         }
         nativo.close()
         kotlin.close()
+    }
+
+    @Test
+    fun limpiarTrazosParidadNativoKotlin() {
+        if (!NativeEngine.disponible()) return
+        val ancho = 28
+        val alto = 20
+        val nativo = MotorNativo(ancho, alto)
+        val kotlin = MotorKotlin(ancho, alto)
+        for (m in listOf(nativo, kotlin)) {
+            m.configurarLapiz(Lapiz(color = Colores.NEGRO, grosor = 5))
+            // El mismo trazo repasado tres veces queda grueso.
+            repeat(3) {
+                m.iniciarTrazo(4f, 6f)
+                m.continuarTrazo(23f, 8f)
+                m.continuarTrazo(10f, 15f)
+                assertTrue(m.terminarTrazo(), "${m.nombre}: trazo")
+            }
+            assertTrue(m.limpiarTrazos(), "${m.nombre}: limpiar trazos")
+        }
+        val a = IntArray(ancho * alto)
+        val b = IntArray(ancho * alto)
+        assertTrue(nativo.copiarHoja(a), "nativo: copiarHoja")
+        assertTrue(kotlin.copiarHoja(b), "kotlin: copiarHoja")
+        for (i in a.indices) {
+            assertEquals(b[i], a[i], "limpiar: discrepancia en píxel $i")
+        }
+        nativo.close()
+        kotlin.close()
+    }
+
+    @Test
+    fun limpiarTrazosHojaVacia() {
+        val motores = mutableListOf<com.dibujo.core.MotorDibujo>(MotorKotlin(10, 10))
+        if (NativeEngine.disponible()) motores.add(MotorNativo(10, 10))
+        for (m in motores) {
+            assertTrue(!m.limpiarTrazos(), "${m.nombre}: hoja vacía no cambia")
+            m.close()
+        }
     }
 }

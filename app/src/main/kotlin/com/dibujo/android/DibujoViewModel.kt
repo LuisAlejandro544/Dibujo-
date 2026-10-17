@@ -2,18 +2,26 @@ package com.dibujo.android
 
 import android.app.Application
 import android.content.Context
+import android.graphics.Bitmap
+import android.net.Uri
 import androidx.lifecycle.AndroidViewModel
+import androidx.lifecycle.viewModelScope
 import com.dibujo.core.BackendRender
 import com.dibujo.core.Camara
+import com.dibujo.core.Colores
+import com.dibujo.core.Cuantizador
 import com.dibujo.core.Herramienta
 import com.dibujo.core.Lapiz
 import com.dibujo.core.Modo
 import com.dibujo.core.MotorDibujo
 import com.dibujo.engine.Motores
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 /** Estado de la pantalla de dibujo (inmutable, se actualiza con copy). */
 data class DibujoEstado(
@@ -57,6 +65,14 @@ data class DibujoEstado(
     val gpuDescripcion: String = "",
     /** El intento de GPU falló: se cae al render por CPU. */
     val gpuFallo: Boolean = false,
+    /** Se está limpiando los trazos repasados (operación pesada). */
+    val limpiando: Boolean = false,
+    /** El modelo IA de limpieza (LiteRT) está empaquetado y disponible. */
+    val modeloIaDisponible: Boolean = false,
+    /** Colores dominantes extraídos de la imagen de calco (paleta sugerida). */
+    val coloresCalco: List<Int> = emptyList(),
+    /** Se está analizando la imagen de calco para sacar su paleta. */
+    val analizandoCalco: Boolean = false,
 )
 
 /**
@@ -71,6 +87,7 @@ data class DibujoEstado(
 class DibujoViewModel(app: Application) : AndroidViewModel(app) {
 
     private val capacidades = CapacidadesGraficas(app)
+    private val aplicacion: Application = app
     private val preferencias =
         app.getSharedPreferences(PREFERENCIAS, Context.MODE_PRIVATE)
 
@@ -103,6 +120,7 @@ class DibujoViewModel(app: Application) : AndroidViewModel(app) {
                 motorNombre = m.nombre,
                 hojaAncho = m.ancho,
                 hojaAlto = m.alto,
+                modeloIaDisponible = LimpiadorTrazosIa.disponible(aplicacion),
                 gpuDisponible = hayGpu,
                 // Con GPU disponible arranca la pantalla de carga hasta que el
                 // renderizador nativo confirme (`gpuListo`) o falle (`gpuFracaso`).
@@ -325,6 +343,126 @@ class DibujoViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     /**
+     * "Limpiar trazos": adelgaza los trazos repasados a una línea pareja.
+     * Recorre la hoja entera, así que corre fuera del hilo principal y deja el
+     * resultado en el historial (se puede deshacer).
+     */
+    fun limpiarTrazos() {
+        val m = motor ?: return
+        if (_estado.value.limpiando) return
+        _estado.update { it.copy(limpiando = true) }
+        viewModelScope.launch {
+            val cambio = withContext(Dispatchers.Default) { m.limpiarTrazos() }
+            _estado.update {
+                it.copy(
+                    limpiando = false,
+                    puedeDeshacer = m.puedeDeshacer(),
+                    puedeRehacer = m.puedeRehacer(),
+                    marco = if (cambio) it.marco + 1 else it.marco,
+                )
+            }
+        }
+    }
+
+    /**
+     * "Limpiar trazos" con el modelo IA (LiteRT): copia la hoja, la limpia con
+     * la red chica fuera del hilo principal, la reemplaza (queda en el
+     * historial para deshacer) y refresca el marco. Si el modelo no está
+     * disponible o falla, cae al adelgazado algorítmico (`limpiarTrazos`).
+     */
+    fun limpiarTrazosConModelo() {
+        val m = motor ?: return
+        if (_estado.value.limpiando) return
+        _estado.update { it.copy(limpiando = true) }
+        viewModelScope.launch {
+            val ancho = m.ancho
+            val alto = m.alto
+            val hoja = IntArray(ancho * alto)
+            val leida = withContext(Dispatchers.Default) { m.copiarHoja(hoja) }
+            val resultado = if (leida) {
+                withContext(Dispatchers.Default) {
+                    LimpiadorTrazosIa.limpiar(aplicacion, ancho, alto, Colores.BLANCO, hoja)
+                }
+            } else {
+                null
+            }
+            // Sin resultado válido se usa el algoritmo determinista. El reemplazo
+            // de la hoja se hace en el hilo del ViewModel (mutación del motor).
+            val cambio = if (resultado != null) {
+                m.reemplazarHoja(resultado)
+            } else {
+                withContext(Dispatchers.Default) { m.limpiarTrazos() }
+            }
+            _estado.update {
+                it.copy(
+                    limpiando = false,
+                    puedeDeshacer = m.puedeDeshacer(),
+                    puedeRehacer = m.puedeRehacer(),
+                    marco = if (cambio) it.marco + 1 else it.marco,
+                )
+            }
+        }
+    }
+
+    /**
+     * Analiza la imagen de calco y extrae sus colores dominantes con k-medias
+     * local (sin red neuronal ni dependencias). Los colores quedan en el estado
+     * para que el usuario los use al colorear.
+     */
+    fun analizarCalco() {
+        val ruta = _estado.value.calcoUri ?: return
+        if (_estado.value.analizandoCalco) return
+        _estado.update { it.copy(analizandoCalco = true) }
+        viewModelScope.launch {
+            val colores = withContext(Dispatchers.Default) {
+                runCatching {
+                    val bmp = cargarBitmap(aplicacion, Uri.parse(ruta))
+                        ?: return@runCatching emptyList<Int>()
+                    val muestras = muestrearCalco(bmp)
+                    bmp.recycle()
+                    Cuantizador.paleta(muestras, K_COLORES_CALCO)
+                }.getOrDefault(emptyList())
+            }
+            _estado.update { it.copy(coloresCalco = colores, analizandoCalco = false) }
+        }
+    }
+
+    /** Usa un color sugerido del calco y cambia a la herramienta PINTAR. */
+    fun usarColorCalco(argb: Int) {
+        actualizarLapiz { it.copy(color = argb, herramienta = Herramienta.PINTAR) }
+    }
+
+    /** Toma una grilla de muestras del bitmap del calco, sin fondo ni alfa. */
+    private fun muestrearCalco(bmp: Bitmap): IntArray {
+        val ancho = bmp.width
+        val alto = bmp.height
+        if (ancho <= 0 || alto <= 0) return IntArray(0)
+        val pasoX = (ancho / MUESTRAS_LADO).coerceAtLeast(1)
+        val pasoY = (alto / MUESTRAS_LADO).coerceAtLeast(1)
+        val salida = ArrayList<Int>(MUESTRAS_LADO * MUESTRAS_LADO)
+        var y = 0
+        while (y < alto) {
+            var x = 0
+            while (x < ancho) {
+                val c = bmp.getPixel(x, y)
+                val alfa = c ushr 24
+                // Descarta transparencias y el fondo casi blanco del calco.
+                if (alfa >= 16 && luminancia(c) < 245) salida.add(c)
+                x += pasoX
+            }
+            y += pasoY
+        }
+        return salida.toIntArray()
+    }
+
+    private fun luminancia(c: Int): Int {
+        val r = (c ushr 16) and 0xFF
+        val g = (c ushr 8) and 0xFF
+        val b = c and 0xFF
+        return (r * 299 + g * 587 + b * 114) / 1000
+    }
+
+    /**
      * Expande la hoja agregando [extraAncho] px a la derecha y [extraAlto] px
      * abajo (el contenido no se mueve). Al cambiar el tamaño, los motores
      * limpian el historial. Si hay render GPU, se recrea para reasignar la
@@ -463,5 +601,11 @@ class DibujoViewModel(app: Application) : AndroidViewModel(app) {
         const val MAX_LADO = 4096
         const val PREFERENCIAS = "dibujo_config"
         const val CLAVE_BACKEND = "backend_render"
+
+        /** Colores que se sugieren al analizar el calco. */
+        const val K_COLORES_CALCO = 8
+
+        /** Lado de la grilla de muestras del calco (64×64 = 4096 muestras). */
+        const val MUESTRAS_LADO = 64
     }
 }

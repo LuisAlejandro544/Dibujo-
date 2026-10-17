@@ -118,6 +118,78 @@ class LienzoTest {
     }
 }
 
+class LimpiarTrazosTest {
+    @Test
+    fun hojaVaciaNoCambia() {
+        val l = Lienzo(8, 8)
+        assertTrue(!l.limpiarTrazos(), "una hoja vacía no tiene nada que limpiar")
+    }
+
+    @Test
+    fun adelgazaTrazoRepetido() {
+        val l = Lienzo(24, 24)
+        // El mismo trazo repasado tres veces: la línea queda gruesa e irregular.
+        repeat(3) {
+            l.lineaGruesa(3f, 12f, 21f, 12f, 7, redonda = true, color = Colores.NEGRO)
+        }
+        val grueso = contarTinta(l)
+        val altoAntes = (0 until 24).count { l.pixel(12, it) != Colores.BLANCO }
+        assertEquals(7, altoAntes, "el trazo grueso ocupa ~7 px de alto")
+        assertTrue(l.limpiarTrazos(), "debe limpiar")
+        val fino = contarTinta(l)
+        assertTrue(fino < grueso * 7 / 10, "grueso=$grueso fino=$fino")
+        // La línea sigue existiendo por el centro, ya fina (1 px + antialias).
+        assertTrue(l.pixel(12, 12) != Colores.BLANCO, "el centro conserva la tinta")
+        val altoDespues = (0 until 24).count { l.pixel(12, it) != Colores.BLANCO }
+        assertTrue(altoDespues <= 4, "ya no es gruesa: alto=$altoDespues")
+    }
+
+    private fun contarTinta(l: Lienzo): Int {
+        var n = 0
+        for (y in 0 until l.alto) {
+            for (x in 0 until l.ancho) if (l.pixel(x, y) != Colores.BLANCO) n++
+        }
+        return n
+    }
+}
+
+class CuantizadorTest {
+    @Test
+    fun extraeColoresDeGrupos() {
+        val muestras = IntArray(60) { i ->
+            when {
+                i < 20 -> Colores.ROJO
+                i < 40 -> Colores.VERDE
+                else -> Colores.AZUL
+            }
+        }
+        val p = Cuantizador.paleta(muestras, 3)
+        assertEquals(3, p.size)
+        assertTrue(cerca(p, Colores.ROJO), "rojo en $p")
+        assertTrue(cerca(p, Colores.VERDE), "verde en $p")
+        assertTrue(cerca(p, Colores.AZUL), "azul en $p")
+    }
+
+    @Test
+    fun sinMuestrasDevuelveVacio() {
+        assertEquals(emptyList(), Cuantizador.paleta(IntArray(0), 3))
+        assertEquals(emptyList(), Cuantizador.paleta(IntArray(5) { 0x00FFFFFF }, 3))
+    }
+
+    @Test
+    fun esDeterminista() {
+        val muestras = IntArray(50) { it * 0x010305 }
+        assertEquals(Cuantizador.paleta(muestras, 4), Cuantizador.paleta(muestras, 4))
+    }
+
+    private fun cerca(paleta: List<Int>, color: Int): Boolean = paleta.any { c ->
+        val dr = ((c ushr 16) and 0xFF) - ((color ushr 16) and 0xFF)
+        val dg = ((c ushr 8) and 0xFF) - ((color ushr 8) and 0xFF)
+        val db = (c and 0xFF) - (color and 0xFF)
+        dr * dr + dg * dg + db * db <= 9
+    }
+}
+
 class BackendRenderTest {
     @Test
     fun automaticoUsaVulkanSiHaySoporte() {

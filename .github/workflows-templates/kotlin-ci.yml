@@ -1,0 +1,37 @@
+name: Kotlin CI (build y tests)
+
+# IMPORTANTE: para activar este workflow hay que mover/copiar este archivo a
+# .github/workflows/ (git no deja a un GITHUB_TOKEN estándar escribir en esa
+# ruta). Requiere secret GH_PAT con scope 'workflow', o moverlo con un merge.
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build + Test (JDK 17)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup JDK 17 (Temurin)
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Setup Gradle (cache)
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Compilar y correr tests
+        run: ./gradlew build --no-daemon
+
+      - name: Verificar ejecutable
+        run: echo "h" | ./gradlew run --no-daemon --console=plain -q

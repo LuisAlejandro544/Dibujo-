@@ -15,8 +15,16 @@ inline int grosorHerramienta(Tool tool, int grosor) {
         case Tool::BORRADOR: return grosor + 4;
         case Tool::LAPIZ:
         case Tool::PINTAR:
+        case Tool::DOBLE:
         default: return grosor;
     }
+}
+
+// Separación entre las dos líneas paralelas de la herramienta DOBLE: crece con
+// el grosor para que el hueco entre ambas sea visible. La fórmula la replica
+// `MotorKotlin` (mantener en paridad).
+inline float separacionDoble(int grosor) {
+    return static_cast<float>(grosor + 2) * 0.5f;
 }
 
 // Color de los píxeles fuera de la hoja en `renderizar` (gris claro). Debe
@@ -149,6 +157,25 @@ void lineaGruesa(std::vector<uint32_t>& hoja, int ancho, int alto,
     }
 }
 
+// Línea gruesa doble: dibuja dos líneas paralelas separadas `separacion` px
+// respecto a la normal del segmento. La herramienta DOBLE usa esto para trazar
+// dos plumas a la vez. Misma aritmética que `Lienzo.lineaDoble` en Kotlin.
+void lineaDoble(std::vector<uint32_t>& hoja, int ancho, int alto,
+                float x0, float y0, float x1, float y1,
+                float radio, bool redonda, uint32_t color, float separacion) {
+    const float dx = x1 - x0;
+    const float dy = y1 - y0;
+    const double largo = std::sqrt(static_cast<double>(dx) * dx +
+                                   static_cast<double>(dy) * dy);
+    if (largo < 1e-6) return;
+    const float nx = static_cast<float>(-dy / largo);
+    const float ny = static_cast<float>(dx / largo);
+    const float ox = nx * separacion;
+    const float oy = ny * separacion;
+    lineaGruesa(hoja, ancho, alto, x0 + ox, y0 + oy, x1 + ox, y1 + oy, radio, redonda, color);
+    lineaGruesa(hoja, ancho, alto, x0 - ox, y0 - oy, x1 - ox, y1 - oy, radio, redonda, color);
+}
+
 } // namespace
 
 DibujoEngine::DibujoEngine(int ancho, int alto, uint32_t fondo)
@@ -197,9 +224,31 @@ bool DibujoEngine::terminarTrazo() {
         rellenar(hoja_, ancho_, alto_,
                  static_cast<int>(std::lround(trazo_[0])),
                  static_cast<int>(std::lround(trazo_[1])), color_);
+    } else if (herramienta_ == Tool::DOBLE) {
+        // Doble lápiz: dos líneas paralelas a la vez.
+        const float separacion = separacionDoble(grosor);
+        if (trazo_.size() == 2) {
+            if (puntaRedonda_) {
+                pintarDisco(hoja_, ancho_, alto_, trazo_[0], trazo_[1], radio, color);
+            } else {
+                lineaGruesa(hoja_, ancho_, alto_, trazo_[0], trazo_[1],
+                            trazo_[0], trazo_[1], radio, false, color);
+            }
+        } else {
+            for (std::size_t i = 0; i + 3 < trazo_.size(); i += 2) {
+                lineaDoble(hoja_, ancho_, alto_, trazo_[i], trazo_[i + 1],
+                           trazo_[i + 2], trazo_[i + 3], radio, puntaRedonda_,
+                           color, separacion);
+            }
+        }
     } else if (trazo_.size() == 2) {
         // Punto aislado.
-        pintarDisco(hoja_, ancho_, alto_, trazo_[0], trazo_[1], radio, color);
+        if (puntaRedonda_) {
+            pintarDisco(hoja_, ancho_, alto_, trazo_[0], trazo_[1], radio, color);
+        } else {
+            lineaGruesa(hoja_, ancho_, alto_, trazo_[0], trazo_[1],
+                        trazo_[0], trazo_[1], radio, false, color);
+        }
     } else {
         for (std::size_t i = 0; i + 3 < trazo_.size(); i += 2) {
             lineaGruesa(hoja_, ancho_, alto_, trazo_[i], trazo_[i + 1],
@@ -293,13 +342,23 @@ void DibujoEngine::pan(float dx, float dy) {
 
 void DibujoEngine::zoom(float factor) {
     if (factor <= 0.0f) return;
-    zoom_ = std::min(8.0f, std::max(0.25f, zoom_ * factor));
+    zoom_ = std::min(kZoomMax, std::max(kZoomMin, zoom_ * factor));
+}
+
+void DibujoEngine::rotar(float delta) {
+    rotacion_ += delta;
+    // Normaliza a (-pi, pi] para no acumular vueltas enteras (estabilidad de
+    // float en sesiones largas). Sumar 2pi con la misma fórmula que Kotlin.
+    constexpr float kDosPi = 6.283185307179586f;
+    while (rotacion_ > 3.141592653589793f) rotacion_ -= kDosPi;
+    while (rotacion_ <= -3.141592653589793f) rotacion_ += kDosPi;
 }
 
 void DibujoEngine::centrarVista() {
     panX_ = 0.0f;
     panY_ = 0.0f;
     zoom_ = 1.0f;
+    rotacion_ = 0.0f;
 }
 
 void DibujoEngine::renderizar(uint32_t* destino, int vw, int vh) const {
@@ -307,11 +366,16 @@ void DibujoEngine::renderizar(uint32_t* destino, int vw, int vh) const {
     // Este camino corre en el hilo de la UI (el mismo que muta la hoja), así
     // que no necesita bloqueo; lee `hoja_` directamente para no bloquear por
     // píxel. El hilo de render GPU usa `copiarHoja`, que sí bloquea.
+    const float c = static_cast<float>(std::cos(static_cast<double>(rotacion_)));
+    const float s = static_cast<float>(std::sin(static_cast<double>(rotacion_)));
     for (int y = 0; y < vh; ++y) {
         for (int x = 0; x < vw; ++x) {
-            // Coordenada de hoja que corresponde al píxel de pantalla.
-            const float hx = (static_cast<float>(x) + panX_) / zoom_;
-            const float hy = (static_cast<float>(y) + panY_) / zoom_;
+            // En coordenadas centradas en el pan: e = pantalla + pan.
+            const float ex = static_cast<float>(x) + panX_;
+            const float ey = static_cast<float>(y) + panY_;
+            // R(−rot) aplicado a e, luego des-escalado por el zoom.
+            const float hx = (c * ex + s * ey) / zoom_;
+            const float hy = (-s * ex + c * ey) / zoom_;
             const int ix = static_cast<int>(std::floor(hx));
             const int iy = static_cast<int>(std::floor(hy));
             destino[y * vw + x] =
@@ -335,11 +399,12 @@ uint64_t DibujoEngine::copiarHoja(uint32_t* destino, std::size_t capacidad) cons
     return revision_;
 }
 
-void DibujoEngine::leerCamara(float& panX, float& panY, float& zoom) const {
+void DibujoEngine::leerCamara(float& panX, float& panY, float& zoom, float& rotacion) const {
     std::lock_guard<std::mutex> bloqueo(mutex_);
     panX = panX_;
     panY = panY_;
     zoom = zoom_;
+    rotacion = rotacion_;
 }
 
 } // namespace dibujo

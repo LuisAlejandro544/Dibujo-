@@ -319,4 +319,83 @@ class MotorNativoTest {
         nativo.close()
         kotlin.close()
     }
+
+    @Test
+    fun zoomPermiteAcercarMucho() {
+        // Antes el máximo era 8x; las apps profesionales permiten mucho más zoom.
+        val motores = mutableListOf<com.dibujo.core.MotorDibujo>(MotorKotlin(20, 20))
+        if (NativeEngine.disponible()) motores.add(MotorNativo(20, 20))
+        for (m in motores) {
+            m.zoom(100f)
+            assertTrue(m.camara().zoom > 8f, "${m.nombre}: zoom=${m.camara().zoom}")
+            m.centrarVista()
+            assertEquals(1f, m.camara().zoom, "${m.nombre}: centrar resetea el zoom")
+            m.close()
+        }
+    }
+
+    @Test
+    fun camaraIncluyeRotacionYCentrarLaResetea() {
+        val motores = mutableListOf<com.dibujo.core.MotorDibujo>(MotorKotlin(40, 20))
+        if (NativeEngine.disponible()) motores.add(MotorNativo(40, 20))
+        for (m in motores) {
+            m.rotar(0.5f)
+            assertEquals(0.5f, m.camara().rotacion, "${m.nombre}: rotación")
+            m.centrarVista()
+            assertEquals(0f, m.camara().rotacion, "${m.nombre}: centrar resetea la rotación")
+            assertEquals(Camara(0f, 0f, 1f), m.camara(), "${m.nombre}: cámara centrada")
+            m.close()
+        }
+    }
+
+    @Test
+    fun rotacionParidadNativoKotlin() {
+        if (!NativeEngine.disponible()) return
+        // Ángulos con cos/sin idénticos en ambos lados (múltiplos de 90°): así
+        // la paridad píxel a píxel no depende de la última ulp de la libm.
+        for (angulo in listOf(0f, 1.5707964f, 3.1415927f)) {
+            val nativo = MotorNativo(20, 20)
+            val kotlin = MotorKotlin(20, 20)
+            for (m in listOf(nativo, kotlin)) {
+                m.configurarLapiz(Lapiz(color = Colores.ROJO, grosor = 3))
+                m.iniciarTrazo(4f, 4f)
+                m.continuarTrazo(15f, 12f)
+                assertTrue(m.terminarTrazo())
+                m.rotar(angulo)
+                m.pan(3f, -2f)
+            }
+            val a = IntArray(20 * 20)
+            val b = IntArray(20 * 20)
+            nativo.renderizar(a, 20, 20)
+            kotlin.renderizar(b, 20, 20)
+            for (i in a.indices) {
+                assertEquals(b[i], a[i], "rotación $angulo: discrepancia en píxel $i")
+            }
+            nativo.close()
+            kotlin.close()
+        }
+    }
+
+    @Test
+    fun dobleParidadNativoKotlin() {
+        if (!NativeEngine.disponible()) return
+        val nativo = MotorNativo(24, 24)
+        val kotlin = MotorKotlin(24, 24)
+        for (m in listOf(nativo, kotlin)) {
+            m.configurarLapiz(Lapiz(color = Colores.AZUL, grosor = 3, herramienta = Herramienta.DOBLE))
+            m.iniciarTrazo(4f, 6f)
+            m.continuarTrazo(18f, 6f)
+            m.continuarTrazo(18f, 18f)
+            assertTrue(m.terminarTrazo(), "${m.nombre}: trazo doble")
+        }
+        val a = IntArray(24 * 24)
+        val b = IntArray(24 * 24)
+        nativo.renderizar(a, 24, 24)
+        kotlin.renderizar(b, 24, 24)
+        for (i in a.indices) {
+            assertEquals(b[i], a[i], "doble: discrepancia en píxel $i")
+        }
+        nativo.close()
+        kotlin.close()
+    }
 }

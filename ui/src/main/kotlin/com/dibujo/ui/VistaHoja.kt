@@ -67,11 +67,15 @@ class VistaHoja(
         return "\u001B[48;2;${rojo(color)};${verde(color)};${azul(color)}m \u001B[0m"
     }
 
-    /** Convierte coordenadas de hoja a pantalla según la cámara. */
+    /** Convierte coordenadas de hoja a pantalla según la cámara (con rotación). */
     fun hojaAPantalla(p: Par, cam: Camara): Par {
-        val x = ((p.x + cam.panX) * cam.zoom).toInt()
-        val y = ((p.y + cam.panY) * cam.zoom).toInt()
-        return Par(x, y)
+        val zx = p.x * cam.zoom
+        val zy = p.y * cam.zoom
+        val c = kotlin.math.cos(cam.rotacion.toDouble()).toFloat()
+        val s = kotlin.math.sin(cam.rotacion.toDouble()).toFloat()
+        val x = c * zx - s * zy - cam.panX
+        val y = s * zx + c * zy - cam.panY
+        return Par(x.toInt(), y.toInt())
     }
 
     private fun rojo(c: Int) = (c shr 16) and 0xFF
@@ -87,6 +91,7 @@ class VistaHoja(
         com.dibujo.core.Herramienta.CARBONCILLO -> "carboncillo"
         com.dibujo.core.Herramienta.BORRADOR -> "borrador"
         com.dibujo.core.Herramienta.PINTAR -> "pintar"
+        com.dibujo.core.Herramienta.DOBLE -> "doble"
     }
 }
 

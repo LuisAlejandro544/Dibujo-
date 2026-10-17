@@ -69,6 +69,8 @@ class ControladorConsola(
             "x" -> limpiar()
             "+", "=" -> { motor.zoom(1.25f); REDIBUJAR() }
             "-" -> { motor.zoom(0.8f); REDIBUJAR() }
+            "r" -> { motor.rotar(PASO_GIRO); REDIBUJAR().conMensaje("giro: +15°") }
+            "," -> { motor.rotar(-PASO_GIRO); REDIBUJAR().conMensaje("giro: -15°") }
             "f" -> centrifugar()
             else -> err("no entiendo: '$cmd' (h para ayuda)")
         }
@@ -225,6 +227,9 @@ class ControladorConsola(
     companion object {
         private val MOVIMIENTO = setOf("w", "a", "s", "d")
 
+        /** Giro por tecla en radianes (15°). */
+        private const val PASO_GIRO = 0.2617994f
+
         val AYUDA = """
             Comandos:
               w/a/s/d [n]   mover cursor (EDICION) o panear vista (MOVER)
@@ -238,6 +243,7 @@ class ControladorConsola(
               t             alternar punta redonda/cuadrada
               m             alternar modo EDICION <-> MOVER
               + / -         zoom
+              r / ,         girar la hoja +15° / -15°
               f             centrar vista
               z / y         deshacer / rehacer
               x             limpiar hoja

@@ -30,6 +30,10 @@ object NativeEngine {
     external fun nativoAlto(handle: Long): Int
     external fun nativoPan(handle: Long, dx: Float, dy: Float)
     external fun nativoZoom(handle: Long, factor: Float)
+    external fun nativoRotar(handle: Long, delta: Float)
+
+    /** Escribe en [destino] (>= 4) la cámara: panX, panY, zoom, rotación. */
+    external fun nativoLeerCamara(handle: Long, destino: FloatArray)
     external fun nativoCentrarVista(handle: Long)
     external fun nativoRenderizar(handle: Long, destino: IntArray, vw: Int, vh: Int)
 

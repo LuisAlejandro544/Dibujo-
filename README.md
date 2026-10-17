@@ -2,7 +2,7 @@
 
 App de dibujo en Kotlin con motor nativo en C++ (JNI). Lienzo en blanco (la hoja),
 lápices con color, grosor y punta, y dos modos: **EDICION** (dibujar) y
-**MOVER** (recorrer la hoja libremente con pan/zoom).
+**MOVER** (recorrer la hoja libremente con pan/zoom/rotación).
 
 Compila en dos frentes con el mismo dominio:
 
@@ -65,17 +65,20 @@ Dentro de la app escribe `h` para la ayuda completa:
 - `1..9` elige color rápido; `c` abre el menú de colores; `l` el de lápices
 - `p` pinta un punto en el cursor; `.` baja/solta la pluma (trazo continuo)
 - `m` alterna modo EDICION <-> MOVER
-- `+`/`-` zoom, `f` centra la vista, `z`/`y` deshacer/rehacer, `x` limpia
+- `+`/`-` zoom, `r`/`,` giran la hoja +15°/-15°, `f` centra la vista,
+  `z`/`y` deshacer/rehacer, `x` limpia
 - `q` salir
 
 ## Uso (Android)
 
 - Tocá y arrastrá en la hoja para dibujar (chip **Dibujar**).
-- El chip alterna a **Mover**: arrastra la hoja y pinch para zoom.
+- El chip alterna a **Mover**: arrastra la hoja, pinch para zoom y gira con
+  dos dedos (la rotación se ancla al punto entre los dedos).
 - Barra superior: título + motor activo, deshacer/rehacer (se habilitan
-  según el historial), centrar y limpiar, todo con iconos Material.
-- Barra inferior: modo, herramientas (lápiz/portamina/carbón/borrador con
-  icono), grosor +/– y paleta de colores.
+  según el historial), centrar, enderezar (quita la rotación) y limpiar, todo
+  con iconos Material.
+- Barra inferior: modo, herramientas (lápiz/portamina/carbón/borrador/pintar/
+  doble lápiz con icono), grosor +/– y paleta de colores.
 
 ## Estructura del código nativo
 

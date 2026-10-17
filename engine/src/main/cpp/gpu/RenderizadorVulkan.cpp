@@ -725,7 +725,8 @@ bool RenderizadorVulkan::render() {
     float panX = 0.0f;
     float panY = 0.0f;
     float zoom = 1.0f;
-    motor_->leerCamara(panX, panY, zoom);
+    float rot = 0.0f;
+    motor_->leerCamara(panX, panY, zoom, rot);
 
     ParametrosPresentacion p{};
     p.fuera[0] = 236.0f / 255.0f;
@@ -740,6 +741,7 @@ bool RenderizadorVulkan::render() {
     p.pan[1] = panY;
     p.zoom = zoom;
     p.flipY = 0.0f; // Vulkan: origen arriba
+    p.rot = rot;
 
     vkResetCommandBuffer(comando_, 0);
     VkCommandBufferBeginInfo bi{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};

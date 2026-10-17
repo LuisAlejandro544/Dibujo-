@@ -34,7 +34,8 @@ class MotorNativo(
     /** Puntero crudo al `DibujoEngine`, compartido con el render GPU. */
     override val handleNativo: Long get() = handle
 
-    private var camaraInterna = Camara(0f, 0f, 1f)
+    // Buffer reutilizable para leer la cámara nativa (un solo hilo: la UI).
+    private val bufferCamara = FloatArray(4)
 
     override fun version(): String =
         try { NativeEngine.nativoVersion() } catch (_: UnsatisfiedLinkError) { nombre }
@@ -66,22 +67,25 @@ class MotorNativo(
         alto = NativeEngine.nativoAlto(handle)
     }
 
-    override fun pan(dx: Float, dy: Float) {
-        NativeEngine.nativoPan(handle, dx, dy)
-        camaraInterna = camaraInterna.copy(panX = camaraInterna.panX + dx, panY = camaraInterna.panY + dy)
-    }
+    override fun pan(dx: Float, dy: Float) = NativeEngine.nativoPan(handle, dx, dy)
 
-    override fun zoom(factor: Float) {
-        NativeEngine.nativoZoom(handle, factor)
-        camaraInterna = camaraInterna.copy(zoom = camaraInterna.zoom * factor)
-    }
+    override fun zoom(factor: Float) = NativeEngine.nativoZoom(handle, factor)
 
-    override fun centrarVista() {
-        NativeEngine.nativoCentrarVista(handle)
-        camaraInterna = Camara(0f, 0f, 1f)
-    }
+    override fun rotar(delta: Float) = NativeEngine.nativoRotar(handle, delta)
 
-    override fun camara(): Camara = camaraInterna
+    override fun centrarVista() = NativeEngine.nativoCentrarVista(handle)
+
+    /**
+     * Lee la cámara REAL del motor nativo (no una copia en Kotlin): antes se
+     * llevaba un espejo que no replicaba el acotado de pan/zoom del C++, así
+     * que se desincronizaba al hacer mucho zoom o al topar el pan y los trazos
+     * caían en otro lado. Leerla del nativo garantiza que la UI convierta
+     * pantalla↔hoja con exactamente la misma transformación que `renderizar`.
+     */
+    override fun camara(): Camara {
+        NativeEngine.nativoLeerCamara(handle, bufferCamara)
+        return Camara(bufferCamara[0], bufferCamara[1], bufferCamara[2], bufferCamara[3])
+    }
 
     override fun renderizar(destino: IntArray, vw: Int, vh: Int) {
         NativeEngine.nativoRenderizar(handle, destino, vw, vh)

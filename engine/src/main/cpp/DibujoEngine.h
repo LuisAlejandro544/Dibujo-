@@ -13,8 +13,8 @@ namespace dibujo {
 //
 // La hoja es un buffer ARGB (0xAARRGGBB) con fondo blanco. Los trazos se
 // rasterizan con Bresenham + disco grueso. El historial usa snapshots
-// limitados de la hoja. La cámara (pan/zoom) permite el "modo moverse
-// libremente" sin alterar el contenido de la hoja.
+// limitados de la hoja. La cámara (pan/zoom/rotación) permite el "modo
+// moverse libremente" sin alterar el contenido de la hoja.
 class DibujoEngine {
 public:
     DibujoEngine(int ancho, int alto, uint32_t fondo = argb(255, 255, 255, 255));
@@ -53,14 +53,16 @@ public:
     // --- Cámara (modo moverse libremente) ---
     void pan(float dx, float dy);       // desplaza la vista en px de hoja
     void zoom(float factor);            // >1 acercar, <1 alejar
+    void rotar(float delta);            // gira la hoja delta radianes
     void centrarVista();
     float panX() const { return panX_; }
     float panY() const { return panY_; }
     float zoomFactor() const { return zoom_; }
+    float rotacion() const { return rotacion_; }
 
     // --- Render ---
-    // Pinta el viewport (vw x vh px) aplicando cámara (zoom + pan) sobre la
-    // hoja. `destino` debe tener vw*vh píxeles.
+    // Pinta el viewport (vw x vh px) aplicando cámara (zoom + rotación + pan)
+    // sobre la hoja. `destino` debe tener vw*vh píxeles.
     void renderizar(uint32_t* destino, int vw, int vh) const;
 
     // Dimensiones de la hoja.
@@ -90,7 +92,7 @@ public:
     uint64_t copiarHoja(uint32_t* destino, std::size_t capacidad) const;
 
     // Lee la cámara de forma consistente con la revisión.
-    void leerCamara(float& panX, float& panY, float& zoom) const;
+    void leerCamara(float& panX, float& panY, float& zoom, float& rotacion) const;
 
 private:
     void rasterizarTrazo(const std::vector<float>& puntos, uint32_t color,
@@ -115,6 +117,12 @@ private:
     float panX_ = 0.0f;
     float panY_ = 0.0f;
     float zoom_ = 1.0f;
+    float rotacion_ = 0.0f;  // radianes
+
+    // Límites de zoom (coinciden con MotorKotlin): acercar mucho como en las
+    // apps profesionales sin perder precisión de float.
+    static constexpr float kZoomMin = 0.05f;
+    static constexpr float kZoomMax = 64.0f;
 
     // Historial (snapshots de la hoja completa).
     std::vector<std::vector<uint32_t>> pasado_;

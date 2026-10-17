@@ -34,11 +34,16 @@ uniform sampler2D uHoja;
 uniform vec2 uHojaTam;
 uniform vec2 uPan;
 uniform float uZoom;
+uniform float uRot;
 uniform vec4 uFuera;
 in vec2 vPantalla;
 out vec4 salida;
 void main() {
-    vec2 hoja = (vPantalla + uPan) / uZoom;
+    float c = cos(uRot);
+    float s = sin(uRot);
+    vec2 e = vPantalla + uPan;
+    // R(−rot) aplicado a e y des-escalado por el zoom.
+    vec2 hoja = vec2(c * e.x + s * e.y, -s * e.x + c * e.y) / uZoom;
     ivec2 p = ivec2(floor(hoja));
     if (p.x < 0 || p.y < 0 || p.x >= int(uHojaTam.x) || p.y >= int(uHojaTam.y)) {
         salida = uFuera;
@@ -47,8 +52,8 @@ void main() {
     // La hoja llega en ARGB (0xAARRGGBB): en memoria los bytes son B,G,R,A, así
     // que al leerla como RGBA hay que intercambiar R y B para que coincida con
     // el render por CPU (paridad píxel a píxel).
-    vec4 c = texelFetch(uHoja, p, 0);
-    salida = vec4(c.b, c.g, c.r, c.a);
+    vec4 c2 = texelFetch(uHoja, p, 0);
+    salida = vec4(c2.b, c2.g, c2.r, c2.a);
 }
 )";
 
@@ -209,6 +214,7 @@ bool RenderizadorGL::compilarPrograma() {
     uHojaTam_ = glGetUniformLocation(programa_, "uHojaTam");
     uPan_ = glGetUniformLocation(programa_, "uPan");
     uZoom_ = glGetUniformLocation(programa_, "uZoom");
+    uRot_ = glGetUniformLocation(programa_, "uRot");
     uFuera_ = glGetUniformLocation(programa_, "uFuera");
     uHoja_ = glGetUniformLocation(programa_, "uHoja");
     return true;
@@ -245,7 +251,8 @@ bool RenderizadorGL::render() {
     float panX = 0.0f;
     float panY = 0.0f;
     float zoom = 1.0f;
-    motor_->leerCamara(panX, panY, zoom);
+    float rot = 0.0f;
+    motor_->leerCamara(panX, panY, zoom, rot);
 
     ParametrosPresentacion p{};
     p.fuera[0] = 236.0f / 255.0f;
@@ -260,6 +267,7 @@ bool RenderizadorGL::render() {
     p.pan[1] = panY;
     p.zoom = zoom;
     p.flipY = 1.0f; // OpenGL: origen abajo
+    p.rot = rot;
 
     glViewport(0, 0, vw_, vh_);
     glClearColor(p.fuera[0], p.fuera[1], p.fuera[2], 1.0f);
@@ -271,6 +279,7 @@ bool RenderizadorGL::render() {
     if (uHojaTam_ >= 0) glUniform2f(uHojaTam_, p.hojaTam[0], p.hojaTam[1]);
     if (uPan_ >= 0) glUniform2f(uPan_, p.pan[0], p.pan[1]);
     if (uZoom_ >= 0) glUniform1f(uZoom_, p.zoom);
+    if (uRot_ >= 0) glUniform1f(uRot_, p.rot);
     if (uFuera_ >= 0) glUniform4f(uFuera_, p.fuera[0], p.fuera[1], p.fuera[2], p.fuera[3]);
 
     glActiveTexture(GL_TEXTURE0);

@@ -156,6 +156,28 @@ class Lienzo(
     }
 
     /**
+     * Línea gruesa doble (herramienta DOBLE): dibuja dos líneas paralelas
+     * separadas [separacion] px respecto a la normal del segmento. La
+     * aritmética es idéntica a `lineaDoble` del C++ para mantener la paridad
+     * píxel a píxel.
+     */
+    fun lineaDoble(
+        x0: Float, y0: Float, x1: Float, y1: Float,
+        grosor: Int, redonda: Boolean, color: Int, separacion: Float,
+    ) {
+        val dx = x1 - x0
+        val dy = y1 - y0
+        val largo = kotlin.math.sqrt((dx.toDouble() * dx + dy.toDouble() * dy))
+        if (largo < 1e-6) return
+        val nx = (-dy / largo).toFloat()
+        val ny = (dx / largo).toFloat()
+        val ox = nx * separacion
+        val oy = ny * separacion
+        lineaGruesa(x0 + ox, y0 + oy, x1 + ox, y1 + oy, grosor, redonda, color)
+        lineaGruesa(x0 - ox, y0 - oy, x1 - ox, y1 - oy, grosor, redonda, color)
+    }
+
+    /**
      * Relleno por inundación a partir de (x, y).
      *
      * En vez de apilar cada píxel vecino (lo que hacía millones de `push` y

@@ -29,6 +29,7 @@ class MotorKotlin(
     private var panX = 0f
     private var panY = 0f
     private var zoomF = 1.0f
+    private var rotacionF = 0f // radianes
 
     override val nombre: String = "Kotlin (respaldo)"
 
@@ -74,6 +75,25 @@ class MotorKotlin(
         val grosor = grosorEfectivo()
         val color = if (lapiz.herramienta == com.dibujo.core.Herramienta.BORRADOR) hoja.fondo else lapiz.color
         val radio = grosor / 2.0f
+        if (lapiz.herramienta == com.dibujo.core.Herramienta.DOBLE) {
+            // Doble lápiz: dos líneas paralelas separadas respecto a la normal
+            // del segmento. Misma aritmética que `lineaDoble` del C++.
+            val separacion = separacionDoble(grosor)
+            if (puntos == 1) {
+                if (lapiz.punta == com.dibujo.core.Punta.REDONDA) hoja.disco(trazo[0], trazo[1], radio, color)
+                else hoja.bloque(trazo[0], trazo[1], radio, color)
+            } else {
+                for (i in 0 until puntos - 1) {
+                    hoja.lineaDoble(
+                        trazo[i * 2], trazo[i * 2 + 1],
+                        trazo[(i + 1) * 2], trazo[(i + 1) * 2 + 1],
+                        grosor, lapiz.punta == com.dibujo.core.Punta.REDONDA, color, separacion,
+                    )
+                }
+            }
+            puntos = 0
+            return true
+        }
         if (puntos == 1) {
             if (lapiz.punta == com.dibujo.core.Punta.REDONDA) hoja.disco(trazo[0], trazo[1], radio, color)
             else hoja.bloque(trazo[0], trazo[1], radio, color)
@@ -118,24 +138,40 @@ class MotorKotlin(
 
     override fun zoom(factor: Float) {
         if (factor <= 0f) return
-        zoomF = (zoomF * factor).coerceIn(0.25f, 8.0f)
+        zoomF = (zoomF * factor).coerceIn(ZOOM_MIN, ZOOM_MAX)
+    }
+
+    override fun rotar(delta: Float) {
+        rotacionF += delta
+        // Normaliza a (-pi, pi] para no acumular vueltas (coincide con `rotar`
+        // del C++).
+        while (rotacionF > PI_F) rotacionF -= DOS_PI_F
+        while (rotacionF <= -PI_F) rotacionF += DOS_PI_F
     }
 
     override fun centrarVista() {
         panX = 0f
         panY = 0f
         zoomF = 1.0f
+        rotacionF = 0f
     }
 
-    override fun camara(): Camara = Camara(panX, panY, zoomF)
+    override fun camara(): Camara = Camara(panX, panY, zoomF, rotacionF)
 
     override fun renderizar(destino: IntArray, vw: Int, vh: Int) {
+        val c = kotlin.math.cos(rotacionF.toDouble()).toFloat()
+        val s = kotlin.math.sin(rotacionF.toDouble()).toFloat()
         for (y in 0 until vh) {
             for (x in 0 until vw) {
-                val hx = ((x + panX) / zoomF).toInt()
-                val hy = ((y + panY) / zoomF).toInt()
-                destino[y * vw + x] = if (hx in 0 until ancho && hy in 0 until alto) {
-                    hoja.pixeles[hy * ancho + hx]
+                // e = pantalla + pan; R(−rot) y des-escalado por el zoom.
+                val ex = x + panX
+                val ey = y + panY
+                val hx = (c * ex + s * ey) / zoomF
+                val hy = (-s * ex + c * ey) / zoomF
+                val ix = kotlin.math.floor(hx.toDouble()).toInt()
+                val iy = kotlin.math.floor(hy.toDouble()).toInt()
+                destino[y * vw + x] = if (ix in 0 until ancho && iy in 0 until alto) {
+                    hoja.pixeles[iy * ancho + ix]
                 } else {
                     FUERA
                 }
@@ -159,8 +195,15 @@ class MotorKotlin(
 
     private fun grosorEfectivo(): Int = lapiz.grosorEfectivo()
 
+    /** Separación entre las dos líneas de la herramienta DOBLE (paridad C++). */
+    private fun separacionDoble(grosor: Int): Float = (grosor + 2) * 0.5f
+
     companion object {
         const val MAX_PUNTOS = 4096
         const val FUERA = 0xFFECECEC.toInt() // gris claro fuera de la hoja
+        const val ZOOM_MIN = 0.05f
+        const val ZOOM_MAX = 64.0f
+        private const val PI_F = 3.141592653589793f
+        private const val DOS_PI_F = 6.283185307179586f
     }
 }

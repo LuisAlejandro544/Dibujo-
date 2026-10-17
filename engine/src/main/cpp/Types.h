@@ -12,6 +12,7 @@ enum class Tool : int {
     CARBONCILLO = 2,  // trazo grueso y suave
     BORRADOR = 3,     // borra hacia el color de la hoja
     PINTAR = 4,       // balde: rellena la región tocada
+    DOBLE = 5,        // doble lápiz: dos trazos paralelos a la vez
 };
 
 // Modos de interacción: editar (dibujar) o moverse libremente por la hoja.

@@ -22,19 +22,15 @@
     "question": "allow"
   },
   "mcp": {
-    "himalayas-jobs": {
+    "context7": {
       "type": "remote",
-      "url": "https://mcp.himalayas.app/mcp",
+      "url": "https://mcp.context7.com/mcp",
       "enabled": true
     },
-    "upwork": {
-      "type": "local",
-      "command": ["npx", "-y", "@furkankoykiran/upwork-mcp"],
-      "environment": {
-        "UPWORK_CLIENT_ID": "REEMPLAZAR_CON_TU_CLIENT_ID",
-        "UPWORK_CLIENT_SECRET": "REEMPLAZAR_CON_TU_CLIENT_SECRET"
-      },
-      "enabled": false
+    "gh_grep": {
+      "type": "remote",
+      "url": "https://mcp.grep.app",
+      "enabled": true
     }
   }
 }

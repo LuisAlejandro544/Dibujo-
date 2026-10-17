@@ -398,4 +398,43 @@ class MotorNativoTest {
         nativo.close()
         kotlin.close()
     }
+
+    @Test
+    fun limpiarTrazosParidadNativoKotlin() {
+        if (!NativeEngine.disponible()) return
+        val ancho = 28
+        val alto = 20
+        val nativo = MotorNativo(ancho, alto)
+        val kotlin = MotorKotlin(ancho, alto)
+        for (m in listOf(nativo, kotlin)) {
+            m.configurarLapiz(Lapiz(color = Colores.NEGRO, grosor = 5))
+            // El mismo trazo repasado tres veces queda grueso.
+            repeat(3) {
+                m.iniciarTrazo(4f, 6f)
+                m.continuarTrazo(23f, 8f)
+                m.continuarTrazo(10f, 15f)
+                assertTrue(m.terminarTrazo(), "${m.nombre}: trazo")
+            }
+            assertTrue(m.limpiarTrazos(), "${m.nombre}: limpiar trazos")
+        }
+        val a = IntArray(ancho * alto)
+        val b = IntArray(ancho * alto)
+        assertTrue(nativo.copiarHoja(a), "nativo: copiarHoja")
+        assertTrue(kotlin.copiarHoja(b), "kotlin: copiarHoja")
+        for (i in a.indices) {
+            assertEquals(b[i], a[i], "limpiar: discrepancia en píxel $i")
+        }
+        nativo.close()
+        kotlin.close()
+    }
+
+    @Test
+    fun limpiarTrazosHojaVacia() {
+        val motores = mutableListOf<com.dibujo.core.MotorDibujo>(MotorKotlin(10, 10))
+        if (NativeEngine.disponible()) motores.add(MotorNativo(10, 10))
+        for (m in motores) {
+            assertTrue(!m.limpiarTrazos(), "${m.nombre}: hoja vacía no cambia")
+            m.close()
+        }
+    }
 }

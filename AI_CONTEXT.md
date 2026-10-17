@@ -116,6 +116,25 @@ El algoritmo por tramos es lineal y da exactamente el mismo conjunto rellenado;
 el C++ y el Kotlin deben cambiarse juntos (`MotorTest.rellenoParidadConBarreras`
 verifica la paridad con barreras aleatorias).
 
+### Limpiar trazos (visión por computadora local)
+`MotorDibujo.limpiarTrazos()` adelgaza **toda** la tinta de la hoja a un
+esqueleto de 1 px con el método de Zhang-Suen y la vuelve a dibujar con ancho
+uniforme (`Lienzo.RADIO_LIMPIEZA = 1.0f`; el C++ usa `1.0f`). Es la herramienta
+para el usuario que repasa el mismo trazo muchas veces y la línea queda gruesa e
+irregular: el resultado es una línea pareja. Cada píxel del esqueleto conserva
+el color que tenía en la hoja original (el esqueleto es un subconjunto de la
+tinta). El algoritmo es puramente entero/booleano, así que el C++ y Kotlin dan
+exactamente el mismo resultado; `MotorTest.limpiarTrazosParidadNativoKotlin` lo
+verifica. Si la hoja está vacía devuelve `false` y no ensucia el historial.
+
+### Paleta del calco (color local, sin red neuronal)
+`Cuantizador` (`:core`) implementa k-medias (k-means++ con semilla fija, por eso
+es determinista) para sacar los colores dominantes de una imagen. La app
+(`DibujoViewModel.analizarCalco`) decodifica el calco, muestrea una grilla
+64×64 descartando transparencias y el fondo casi blanco, y pide 8 colores; al
+tocar uno se elige y la herramienta pasa a PINTAR. Es aprendizaje no supervisado
+local: **0 MB** y ninguna dependencia nueva.
+
 ### Historial
 Undo/redo por snapshots completos de la hoja. Límite de pasos: **30**
 (`Historial` en Kotlin y `kMaxHistorial` en C++ tienen que coincidir). El
@@ -179,11 +198,13 @@ Particularidades:
   símbolos de texto: cada icono lleva `contentDescription` desde strings.xml.
 - **Cero texto duro**: todo por `stringResource`.
 - **Barra inferior sin scroll incómodo** (issue 18): se pasó de chips de texto
-  en una fila deslizable a tres filas fijas → modo + acciones (calco/expandir)
-  + grosor de herramientas (iconos compactos `IconoToggle`, sin scroll) +
-  paleta deslizable. La paleta creció a 29 colores (`Colores.PALETA`); los
-  primeros 12 conservan su índice (la consola y sus tests los eligen por
-  número), los nuevos van al final.
+  en una fila deslizable a tres filas fijas → modo + acciones (calco/IA
+  local/expandir) + grosor de herramientas (iconos compactos `IconoToggle`, sin
+  scroll) +
+  paleta deslizable. La paleta creció a 58 colores (`Colores.PALETA`), con
+  brillos (neón), metálicos y pasteles al final; los primeros 12 conservan su
+  índice (la consola y sus tests los eligen por número), los nuevos van al
+  final.
 - **Imagen de calco** (issue 18): `CapaCalco` es una capa Compose translúcida
   sobre la hoja (GPU o CPU) y debajo del trazo; la imagen se ajusta dentro de
   la hoja y sigue la cámara. Se elige con el Photo Picker (sin permisos), se

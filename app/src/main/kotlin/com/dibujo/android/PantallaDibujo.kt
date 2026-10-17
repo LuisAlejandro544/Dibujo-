@@ -1,10 +1,8 @@
 package com.dibujo.android
 
 import android.Manifest
-import android.content.Context
 import android.content.pm.PackageManager
 import android.graphics.Bitmap
-import android.graphics.BitmapFactory
 import android.graphics.Color as ColorAndroid
 import android.net.Uri
 import android.os.Build
@@ -48,6 +46,7 @@ import androidx.compose.material.icons.automirrored.rounded.Redo
 import androidx.compose.material.icons.automirrored.rounded.Undo
 import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material.icons.rounded.AddPhotoAlternate
+import androidx.compose.material.icons.rounded.AutoFixHigh
 import androidx.compose.material.icons.rounded.Brush
 import androidx.compose.material.icons.rounded.CenterFocusWeak
 import androidx.compose.material.icons.rounded.CleaningServices
@@ -184,6 +183,7 @@ fun PantallaDibujo(vm: DibujoViewModel = viewModel()) {
     var mostrarConfig by remember { mutableStateOf(false) }
     var mostrarExpandir by remember { mutableStateOf(false) }
     var mostrarCalco by remember { mutableStateOf(false) }
+    var mostrarIa by remember { mutableStateOf(false) }
 
     // Selector de imagen del sistema (Photo Picker): no requiere permisos.
     val elegirImagen = rememberLauncherForActivityResult(
@@ -291,6 +291,12 @@ fun PantallaDibujo(vm: DibujoViewModel = viewModel()) {
                 },
                 alAlternarCalco = vm::alternarCalco,
                 alAbrirCalco = { mostrarCalco = true },
+                alAbrirIa = {
+                    mostrarIa = true
+                    if (estado.calcoUri != null && estado.coloresCalco.isEmpty()) {
+                        vm.analizarCalco()
+                    }
+                },
             )
         },
         // Transparente: deja ver la superficie GPU que va en una capa detrás
@@ -337,6 +343,16 @@ fun PantallaDibujo(vm: DibujoViewModel = viewModel()) {
             alCambiarAlfa = vm::cambiarCalcoAlfa,
             alQuitar = { vm.elegirCalco(null) },
             alCerrar = { mostrarCalco = false },
+        )
+    }
+
+    if (mostrarIa) {
+        DialogoIa(
+            estado = estado,
+            alLimpiarTrazos = vm::limpiarTrazos,
+            alAnalizar = vm::analizarCalco,
+            alElegir = vm::usarColorCalco,
+            alCerrar = { mostrarIa = false },
         )
     }
 }
@@ -671,26 +687,6 @@ private fun CapaCalco(
     }
 }
 
-/** Lado máximo al que se reduce la imagen de calco al decodificarla. */
-private const val MAX_CALCO = 2048
-
-/**
- * Decodifica la imagen elegida reduciéndola si es muy grande ([MAX_CALCO] por
- * lado). Devuelve null si no se puede leer. El muestreo se calcula en potencias
- * de dos (`inSampleSize`) para no agotar la memoria con fotos enormes.
- */
-private fun cargarBitmap(contexto: Context, uri: Uri): Bitmap? = runCatching {
-    val resolver = contexto.contentResolver
-    val limites = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-    resolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, limites) }
-    var escala = 1
-    while (limites.outWidth / escala > MAX_CALCO || limites.outHeight / escala > MAX_CALCO) {
-        escala *= 2
-    }
-    val opciones = BitmapFactory.Options().apply { inSampleSize = escala }
-    resolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, opciones) }
-}.getOrNull()
-
 /**
  * Barra inferior. Tres filas para no depender del scroll horizontal (que era
  * incómodo): modo + acciones de hoja/calco, herramientas + grosor, y paleta.
@@ -703,6 +699,7 @@ private fun BarraHerramientas(
     alElegirImagen: () -> Unit,
     alAlternarCalco: () -> Unit,
     alAbrirCalco: () -> Unit,
+    alAbrirIa: () -> Unit,
 ) {
     Surface(modifier = Modifier.absorberToque(), tonalElevation = 3.dp) {
         Column(
@@ -754,6 +751,12 @@ private fun BarraHerramientas(
                     descripcion = stringResource(R.string.cd_calco_opciones),
                     seleccionado = false,
                     alPulsar = alAbrirCalco,
+                )
+                IconoToggle(
+                    icono = Icons.Rounded.AutoFixHigh,
+                    descripcion = stringResource(R.string.cd_ia_local),
+                    seleccionado = false,
+                    alPulsar = alAbrirIa,
                 )
                 IconoToggle(
                     icono = Icons.Rounded.OpenInFull,
@@ -947,6 +950,118 @@ private fun DialogoCalco(
                 TextButton(onClick = alCerrar) {
                     Text(stringResource(R.string.cerrar))
                 }
+            }
+        },
+    )
+}
+
+/**
+ * Diálogo "IA local": reúne las dos herramientas locales (sin red neuronal):
+ *  - Limpiar trazos: adelgaza los trazos repasados a una línea pareja.
+ *  - Paleta del calco: saca los colores dominantes de la imagen que calcas
+ *    (k-medias) para terminar de colorear; al tocar un color se activa PINTAR.
+ */
+@Composable
+private fun DialogoIa(
+    estado: DibujoEstado,
+    alLimpiarTrazos: () -> Unit,
+    alAnalizar: () -> Unit,
+    alElegir: (Int) -> Unit,
+    alCerrar: () -> Unit,
+) {
+    AlertDialog(
+        onDismissRequest = alCerrar,
+        title = { Text(stringResource(R.string.ia_titulo)) },
+        text = {
+            Column {
+                Text(
+                    stringResource(R.string.ia_descripcion),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Spacer(Modifier.height(12.dp))
+
+                Text(
+                    stringResource(R.string.ia_limpiar_titulo),
+                    style = MaterialTheme.typography.titleSmall,
+                )
+                Text(
+                    stringResource(R.string.ia_limpiar_descripcion),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Spacer(Modifier.height(4.dp))
+                if (estado.limpiando) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        CircularProgressIndicator(Modifier.size(20.dp))
+                        Spacer(Modifier.width(8.dp))
+                        Text(stringResource(R.string.ia_limpiando))
+                    }
+                } else {
+                    TextButton(onClick = alLimpiarTrazos) {
+                        Text(stringResource(R.string.ia_limpiar_boton))
+                    }
+                }
+
+                Spacer(Modifier.height(12.dp))
+                Text(
+                    stringResource(R.string.paleta_calco_titulo),
+                    style = MaterialTheme.typography.titleSmall,
+                )
+                Text(
+                    stringResource(R.string.paleta_calco_descripcion),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Spacer(Modifier.height(8.dp))
+                when {
+                    estado.calcoUri == null -> Text(
+                        stringResource(R.string.paleta_calco_sin_calco),
+                        style = MaterialTheme.typography.bodyMedium,
+                    )
+                    estado.analizandoCalco -> Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        CircularProgressIndicator(Modifier.size(20.dp))
+                        Spacer(Modifier.width(8.dp))
+                        Text(stringResource(R.string.paleta_calco_analizando))
+                    }
+                    estado.coloresCalco.isEmpty() -> TextButton(onClick = alAnalizar) {
+                        Text(stringResource(R.string.paleta_calco_analizar))
+                    }
+                    else -> {
+                        Text(
+                            stringResource(R.string.paleta_calco_toca),
+                            style = MaterialTheme.typography.labelLarge,
+                        )
+                        Spacer(Modifier.height(8.dp))
+                        Row(
+                            Modifier
+                                .fillMaxWidth()
+                                .horizontalScroll(rememberScrollState()),
+                            horizontalArrangement = Arrangement.spacedBy(10.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            estado.coloresCalco.forEach { argb ->
+                                CabezaColor(
+                                    color = com.dibujo.core.Color(
+                                        com.dibujo.core.Colores.PALETA
+                                            .firstOrNull { it.argb == argb }?.nombre
+                                            ?: "#%06X".format(argb and 0xFFFFFF),
+                                        argb,
+                                    ),
+                                    seleccionado = estado.lapiz.color == argb,
+                                    onElegir = { alElegir(argb) },
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = alCerrar) {
+                Text(stringResource(R.string.cerrar))
             }
         },
     )

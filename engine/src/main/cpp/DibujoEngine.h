@@ -44,6 +44,11 @@ public:
     bool puedeRehacer() const { return !futuro_.empty(); }
     void limpiarHoja();  // borra todo (queda en el historial)
 
+    // "Limpiar trazos": adelgaza toda la tinta a un esqueleto de 1 px
+    // (Zhang-Suen) y la redibuja con ancho uniforme `radio`. Devuelve false si
+    // la hoja está vacía. Replica `Lienzo.limpiarTrazos` de Kotlin (paridad).
+    bool limpiarTrazos(float radio = 1.0f);
+
     // --- Tamaño de la hoja ---
     // Expande la hoja agregando píxeles nuevos (rellenos con `fondo_`) en cada
     // lado; el contenido conserva sus coordenadas. Acota a kMaxLado por lado y

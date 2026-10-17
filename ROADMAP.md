@@ -24,6 +24,8 @@ mencionarla en el PR.
 - [x] **Herramientas de depuración (issue 19)**: panel propio en el source set `debug` con icono en el launcher (`PanelDebugActivity`), monitor siempre activo (`MonitorDibujo` + `MonitorProvider`) de RAM por categoría, hilos activos/cambios, acciones, logs W/E/F y crashes; reporte copiable/compartible y LeakCanary 2.14 (icono propio desactivado, se entra desde el panel). Nada de esto entra en release.
 - [x] **Pulido de la hoja (issue 24)**: corregida la desincronización de la cámara al hacer mucho zoom o tras **expandir** la hoja (el `MotorNativo` leía una cámara espejo en Kotlin que divergía del clamp del C++; ahora `camara()` lee del nativo con `nativoLeerCamara`); **rotación libre de la hoja** con gesto de dos dedos anclado al foco y botón "enderezar" (transformación `pantalla = R(rot)·(hoja·zoom) − pan`, en C++, Kotlin y los shaders GL/Vulkan); **límites de zoom 0.05..64** (antes 0.25..8); y **herramienta DOBLE** (dos trazos paralelos). Paridad `MotorTest` ampliada a rotación y DOBLE.
 
+- [x] **IA local ligera (issue 25)**: herramienta **limpiar trazos** (adelgazado de Zhang-Suen, con paridad C++/Kotlin cubierta por `MotorTest.limpiarTrazosParidadNativoKotlin`) para los trazos repasados; **paleta del calco** (`Cuantizador` con k-medias en `:core`, sin dependencias: analiza la imagen que calcas y sugiere sus colores para colorear); y **paleta ampliada a 58 colores**, con brillos (neón), metálicos y pasteles.
+
 ## En curso
 
 - [ ] Pulir más la UI Android con feedback del usuario (nueva barra superior/inferior con iconos en el PR del issue 13).
@@ -43,3 +45,7 @@ mencionarla en el PR.
 - Capas (layers) con undo por capa: el historial actual es de un solo nivel (por snapshots).
 - iOS: el motor dual ya admite un front-end nuevo (el C++ es portable); Compose Multiplatform / KMP como candidata.
 - Borrador por capas/bitmaps (destination-out) si algún día la hoja deja de ser opaca.
+- **IA aprendida (opcional)**: solo si se quiere un efecto de red neuronal, meter
+  LiteRT (ex-TFLite) con un modelo cuantizado de 1–5 MB para *sketch cleanup* o
+  segmentación. Hoy las dos herramientas de IA son algoritmos locales (visión +
+  k-medias): pesan 0 MB y no necesitan modelo.

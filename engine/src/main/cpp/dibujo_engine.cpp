@@ -91,6 +91,14 @@ Java_com_dibujo_engine_NativeEngine_nativoLimpiarHoja(JNIEnv*, jobject, jlong ha
     peer(handle)->limpiarHoja();
 }
 
+JNIEXPORT jboolean JNICALL
+Java_com_dibujo_engine_NativeEngine_nativoLimpiarTrazos(JNIEnv*, jobject, jlong handle) {
+    auto* e = peer(handle);
+    if (e == nullptr) return JNI_FALSE;
+    // Radio uniforme de redibujo: coincide con `Lienzo.RADIO_LIMPIEZA`.
+    return e->limpiarTrazos(1.0f) ? JNI_TRUE : JNI_FALSE;
+}
+
 JNIEXPORT void JNICALL
 Java_com_dibujo_engine_NativeEngine_nativoExpandir(
         JNIEnv*, jobject, jlong handle,

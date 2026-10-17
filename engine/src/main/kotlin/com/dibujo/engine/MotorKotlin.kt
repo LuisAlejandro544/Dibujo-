@@ -124,6 +124,14 @@ class MotorKotlin(
         hoja.limpiar()
     }
 
+    override fun limpiarTrazos(): Boolean {
+        // Si no hay tinta no hay nada que limpiar (y no ensuciamos el historial).
+        if (hoja.pixeles.all { it == hoja.fondo }) return false
+        historial.guardar(hoja)
+        hoja.limpiarTrazos()
+        return true
+    }
+
     override fun expandir(izquierda: Int, arriba: Int, derecha: Int, abajo: Int) {
         historial.limpiar()
         hoja.expandir(izquierda, arriba, derecha, abajo)

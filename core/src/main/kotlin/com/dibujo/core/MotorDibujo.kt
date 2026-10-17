@@ -31,6 +31,15 @@ interface MotorDibujo : AutoCloseable {
     fun limpiarHoja()
 
     /**
+     * "Limpiar trazos": adelgaza la tinta de la hoja a un esqueleto de 1 px
+     * (Zhang-Suen) y la vuelve a dibujar con ancho uniforme. Sirve cuando el
+     * usuario repasa el mismo trazo muchas veces y la línea queda gruesa e
+     * irregular. Devuelve `true` si cambió algo (queda en el historial para
+     * poder deshacer). El C++ y Kotlin lo implementan idéntico (paridad).
+     */
+    fun limpiarTrazos(): Boolean
+
+    /**
      * Expande la hoja agregando píxeles nuevos (rellenos con el fondo) en cada
      * lado. El contenido existente conserva sus coordenadas de hoja. El tamaño
      * resultante se acota a `Lienzo.MAX_LADO` por lado. El historial se limpia

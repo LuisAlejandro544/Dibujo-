@@ -15,6 +15,7 @@
     <string name="cd_deshacer">Deshacer</string>
     <string name="cd_rehacer">Rehacer</string>
     <string name="cd_limpiar">Limpiar hoja</string>
+    <string name="cd_ia_local">Herramientas con IA local</string>
     <string name="cd_centrar">Centrar la vista</string>
     <string name="cd_enderezar">Enderezar la hoja (quitar la rotación)</string>
     <string name="cd_grosor_mas">Aumentar grosor</string>
@@ -74,4 +75,20 @@
     <string name="calco_mostrar">Mostrar</string>
     <string name="calco_ocultar">Ocultar</string>
     <string name="calco_quitar">Quitar</string>
+
+    <!-- IA local (herramientas sin red neuronal: adelgazado y k-medias) -->
+    <string name="ia_titulo">Herramientas con IA local</string>
+    <string name="ia_descripcion">Corren en el teléfono, sin internet ni modelos que descargar.</string>
+    <string name="ia_limpiar_titulo">Limpiar trazos repasados</string>
+    <string name="ia_limpiar_descripcion">Adelgaza la tinta de la hoja a una línea pareja; ideal cuando repasas el mismo trazo y queda grueso o tembloroso.</string>
+    <string name="ia_limpiar_boton">Limpiar trazos</string>
+    <string name="ia_limpiando">Limpiando los trazos…</string>
+
+    <!-- Paleta del calco (IA local: k-medias sobre la imagen de calco) -->
+    <string name="paleta_calco_titulo">Paleta del calco</string>
+    <string name="paleta_calco_descripcion">Analiza la imagen que calcas y saca sus colores dominantes para que termines de colorear. Al tocar un color se activa la herramienta Pintar.</string>
+    <string name="paleta_calco_sin_calco">Primero elige una imagen de calco.</string>
+    <string name="paleta_calco_analizando">Analizando la imagen…</string>
+    <string name="paleta_calco_toca">Toca un color para usarlo:</string>
+    <string name="paleta_calco_analizar">Analizar</string>
 </resources>

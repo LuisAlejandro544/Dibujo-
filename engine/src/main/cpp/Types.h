@@ -5,11 +5,13 @@
 namespace dibujo {
 
 // Lápices disponibles. El valor entero viaja por JNI.
+// El orden debe coincidir con `com.dibujo.core.Herramienta`.
 enum class Tool : int {
     LAPIZ = 0,        // lápiz clásico
     PORTAMINA = 1,    // trazo fino
     CARBONCILLO = 2,  // trazo grueso y suave
     BORRADOR = 3,     // borra hacia el color de la hoja
+    PINTAR = 4,       // balde: rellena la región tocada
 };
 
 // Modos de interacción: editar (dibujar) o moverse libremente por la hoja.

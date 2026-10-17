@@ -44,6 +44,12 @@ public:
     bool puedeRehacer() const { return !futuro_.empty(); }
     void limpiarHoja();  // borra todo (queda en el historial)
 
+    // --- Tamaño de la hoja ---
+    // Expande la hoja agregando píxeles nuevos (rellenos con `fondo_`) en cada
+    // lado; el contenido conserva sus coordenadas. Acota a kMaxLado por lado y
+    // limpia el historial (los snapshots viejos tienen otras dimensiones).
+    void expandir(int izquierda, int arriba, int derecha, int abajo);
+
     // --- Cámara (modo moverse libremente) ---
     void pan(float dx, float dy);       // desplaza la vista en px de hoja
     void zoom(float factor);            // >1 acercar, <1 alejar
@@ -115,6 +121,9 @@ private:
     std::vector<std::vector<uint32_t>> futuro_;
     // Igual que el límite de Historial en Kotlin: hojas grandes por snapshot.
     static constexpr std::size_t kMaxHistorial = 30;
+
+    // Lado máximo de la hoja (coincide con Lienzo.MAX_LADO en Kotlin).
+    static constexpr int kMaxLado = 4096;
 
     // Protege `hoja_` frente al hilo de render GPU y cuenta las revisiones.
     mutable std::mutex mutex_;

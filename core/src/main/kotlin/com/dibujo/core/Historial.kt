@@ -18,6 +18,15 @@ class Historial(private val maximo: Int = 30) {
     fun puedeDeshacer(): Boolean = pasado.isNotEmpty()
     fun puedeRehacer(): Boolean = futuro.isNotEmpty()
 
+    /**
+     * Olvida todos los pasos. Se usa cuando cambia el tamaño de la hoja: los
+     * snapshots viejos tienen otras dimensiones y no se pueden restaurar.
+     */
+    fun limpiar() {
+        pasado.clear()
+        futuro.clear()
+    }
+
     fun deshacer(l: Lienzo): Boolean {
         val estado = pasado.removeLastOrNull() ?: return false
         futuro.addLast(l.pixeles.copyOf())

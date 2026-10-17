@@ -13,7 +13,37 @@ inline int grosorHerramienta(Tool tool, int grosor) {
         case Tool::PORTAMINA: return std::max(1, grosor / 2);
         case Tool::CARBONCILLO: return grosor + 2;
         case Tool::BORRADOR: return grosor + 4;
-        case Tool::LAPIZ: default: return grosor;
+        case Tool::LAPIZ:
+        case Tool::PINTAR:
+        default: return grosor;
+    }
+}
+
+// Color de los píxeles fuera de la hoja en `renderizar` (gris claro). Debe
+// coincidir con `MotorKotlin.FUERA` para que el render no dependa del backend.
+constexpr uint32_t kFuera = 0xFFECECECu;
+
+// Relleno por inundación a partir de (x, y). Cuatro vecinos, igualdad exacta de
+// color; replica `Lienzo.rellenar` de Kotlin (el conjunto rellenado es el mismo
+// sin importar el orden de la pila).
+void rellenar(std::vector<uint32_t>& hoja, int ancho, int alto,
+              int x, int y, uint32_t color) {
+    if (x < 0 || y < 0 || x >= ancho || y >= alto) return;
+    const uint32_t origen = hoja[static_cast<std::size_t>(y) * ancho + x];
+    if (origen == color) return;
+    std::vector<int> pila;
+    pila.push_back(y * ancho + x);
+    while (!pila.empty()) {
+        const int i = pila.back();
+        pila.pop_back();
+        if (hoja[static_cast<std::size_t>(i)] != origen) continue;
+        hoja[static_cast<std::size_t>(i)] = color;
+        const int cx = i % ancho;
+        const int cy = i / ancho;
+        if (cx > 0) pila.push_back(i - 1);
+        if (cx < ancho - 1) pila.push_back(i + 1);
+        if (cy > 0) pila.push_back(i - ancho);
+        if (cy < alto - 1) pila.push_back(i + ancho);
     }
 }
 
@@ -139,7 +169,12 @@ bool DibujoEngine::terminarTrazo() {
     const int grosor = grosorHerramienta(herramienta_, grosor_);
     const float radio = static_cast<float>(grosor) * 0.5f;
 
-    if (trazo_.size() == 2) {
+    if (herramienta_ == Tool::PINTAR) {
+        // Balde: rellena la región donde se tocó con el color del lápiz.
+        rellenar(hoja_, ancho_, alto_,
+                 static_cast<int>(std::lround(trazo_[0])),
+                 static_cast<int>(std::lround(trazo_[1])), color_);
+    } else if (trazo_.size() == 2) {
         // Punto aislado.
         pintarDisco(hoja_, ancho_, alto_, trazo_[0], trazo_[1], radio, color);
     } else {
@@ -189,6 +224,38 @@ void DibujoEngine::limpiarHoja() {
     ++revision_;
 }
 
+void DibujoEngine::expandir(int izquierda, int arriba, int derecha, int abajo) {
+    const int izq = std::max(0, izquierda);
+    const int arr = std::max(0, arriba);
+    const int der = std::max(0, derecha);
+    const int aba = std::max(0, abajo);
+    if (izq == 0 && arr == 0 && der == 0 && aba == 0) return;
+
+    std::lock_guard<std::mutex> bloqueo(mutex_);
+    const int nuevoAncho = std::min(kMaxLado, ancho_ + izq + der);
+    const int nuevoAlto = std::min(kMaxLado, alto_ + arr + aba);
+    if (nuevoAncho == ancho_ && nuevoAlto == alto_) return;
+
+    std::vector<uint32_t> nuevo(static_cast<std::size_t>(nuevoAncho) *
+                                    static_cast<std::size_t>(nuevoAlto),
+                                fondo_);
+    const int copiaAncho = std::max(0, std::min(ancho_, nuevoAncho - izq));
+    const int copiaAlto = std::max(0, std::min(alto_, nuevoAlto - arr));
+    for (int y = 0; y < copiaAlto; ++y) {
+        for (int x = 0; x < copiaAncho; ++x) {
+            nuevo[static_cast<std::size_t>(y + arr) * nuevoAncho + (x + izq)] =
+                hoja_[static_cast<std::size_t>(y) * ancho_ + x];
+        }
+    }
+
+    hoja_.swap(nuevo);
+    ancho_ = nuevoAncho;
+    alto_ = nuevoAlto;
+    pasado_.clear();
+    futuro_.clear();
+    ++revision_;
+}
+
 void DibujoEngine::pan(float dx, float dy) {
     panX_ += dx;
     panY_ += dy;
@@ -227,7 +294,7 @@ void DibujoEngine::renderizar(uint32_t* destino, int vw, int vh) const {
             destino[y * vw + x] =
                 (ix >= 0 && iy >= 0 && ix < ancho_ && iy < alto_)
                     ? hoja_[static_cast<std::size_t>(iy) * ancho_ + ix]
-                    : fondo_;
+                    : kFuera;
         }
     }
 }

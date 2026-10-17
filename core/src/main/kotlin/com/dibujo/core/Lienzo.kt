@@ -7,15 +7,26 @@ package com.dibujo.core
  * lógica y se usa automáticamente si la librería está disponible.
  */
 class Lienzo(
-    val ancho: Int,
-    val alto: Int,
+    anchoInicial: Int,
+    altoInicial: Int,
     val fondo: Int = Colores.BLANCO,
 ) {
     init {
-        require(ancho in 1..4096 && alto in 1..4096) { "hoja inválida: ${ancho}x$alto" }
+        require(anchoInicial in 1..MAX_LADO && altoInicial in 1..MAX_LADO) {
+            "hoja inválida: ${anchoInicial}x$altoInicial"
+        }
     }
 
-    val pixeles: IntArray = IntArray(ancho * alto) { fondo }
+    /** Ancho de la hoja en píxeles. Cambia al expandir. */
+    var ancho: Int = anchoInicial
+        private set
+
+    /** Alto de la hoja en píxeles. Cambia al expandir. */
+    var alto: Int = altoInicial
+        private set
+
+    var pixeles: IntArray = IntArray(ancho * alto) { fondo }
+        private set
 
     fun dentro(x: Int, y: Int): Boolean = x in 0 until ancho && y in 0 until alto
 
@@ -48,6 +59,37 @@ class Lienzo(
     }
 
     fun limpiar() = pixeles.fill(fondo)
+
+    /**
+     * Expande la hoja agregando [izquierda]/[arriba]/[derecha]/[abajo] píxeles
+     * nuevos (rellenos con el [fondo]). El contenido existente conserva sus
+     * coordenadas: al agregar por la izquierda/arriba el dibujo se desplaza en
+     * el buffer para no moverse de lugar. El tamaño final no puede pasar de
+     * [MAX_LADO] por lado.
+     */
+    fun expandir(izquierda: Int, arriba: Int, derecha: Int, abajo: Int) {
+        val izq = izquierda.coerceAtLeast(0)
+        val arr = arriba.coerceAtLeast(0)
+        val der = derecha.coerceAtLeast(0)
+        val aba = abajo.coerceAtLeast(0)
+        if (izq == 0 && arr == 0 && der == 0 && aba == 0) return
+        val nuevoAncho = (ancho + izq + der).coerceIn(1, MAX_LADO)
+        val nuevoAlto = (alto + arr + aba).coerceIn(1, MAX_LADO)
+        if (nuevoAncho == ancho && nuevoAlto == alto) return
+        val nuevo = IntArray(nuevoAncho * nuevoAlto) { fondo }
+        val copiaAncho = minOf(ancho, nuevoAncho - izq).coerceAtLeast(0)
+        val copiaAlto = minOf(alto, nuevoAlto - arr).coerceAtLeast(0)
+        for (y in 0 until copiaAlto) {
+            System.arraycopy(
+                pixeles, y * ancho,
+                nuevo, (y + arr) * nuevoAncho + izq,
+                copiaAncho,
+            )
+        }
+        ancho = nuevoAncho
+        alto = nuevoAlto
+        pixeles = nuevo
+    }
 
     fun clonar(): Lienzo {
         val copia = Lienzo(ancho, alto, fondo)
@@ -131,5 +173,10 @@ class Lienzo(
             if (cy > 0) pila.add(i - ancho)
             if (cy < alto - 1) pila.add(i + ancho)
         }
+    }
+
+    companion object {
+        /** Lado máximo de la hoja (coincide con el C++ y con `DibujoViewModel`). */
+        const val MAX_LADO = 4096
     }
 }

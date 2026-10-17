@@ -1,17 +1,24 @@
 package com.dibujo.android
 
+import android.content.Context
 import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import android.graphics.Color as ColorAndroid
+import android.net.Uri
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.SystemBarStyle
+import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.activity.result.PickVisualMediaRequest
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
@@ -22,6 +29,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -35,16 +43,22 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.Redo
 import androidx.compose.material.icons.automirrored.rounded.Undo
 import androidx.compose.material.icons.rounded.Add
+import androidx.compose.material.icons.rounded.AddPhotoAlternate
 import androidx.compose.material.icons.rounded.Brush
 import androidx.compose.material.icons.rounded.CenterFocusWeak
 import androidx.compose.material.icons.rounded.CleaningServices
 import androidx.compose.material.icons.rounded.Delete
 import androidx.compose.material.icons.rounded.Draw
+import androidx.compose.material.icons.rounded.FormatColorFill
 import androidx.compose.material.icons.rounded.Gesture
+import androidx.compose.material.icons.rounded.Layers
 import androidx.compose.material.icons.rounded.Mode
+import androidx.compose.material.icons.rounded.OpenInFull
 import androidx.compose.material.icons.rounded.PanTool
 import androidx.compose.material.icons.rounded.Remove
 import androidx.compose.material.icons.rounded.Settings
+import androidx.compose.material.icons.rounded.Visibility
+import androidx.compose.material.icons.rounded.VisibilityOff
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -56,6 +70,7 @@ import androidx.compose.material3.IconButtonDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Slider
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -72,19 +87,23 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.FilterQuality
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.Density
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -93,6 +112,8 @@ import com.dibujo.core.Colores
 import com.dibujo.core.Herramienta
 import com.dibujo.core.Lapiz
 import com.dibujo.core.Modo
+import kotlin.math.roundToInt
+
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -142,6 +163,13 @@ fun PantallaDibujo(vm: DibujoViewModel = viewModel()) {
     val estadoState = vm.estado.collectAsState()
     val estado = estadoState.value
     var mostrarConfig by remember { mutableStateOf(false) }
+    var mostrarExpandir by remember { mutableStateOf(false) }
+    var mostrarCalco by remember { mutableStateOf(false) }
+
+    // Selector de imagen del sistema (Photo Picker): no requiere permisos.
+    val elegirImagen = rememberLauncherForActivityResult(
+        ActivityResultContracts.PickVisualMedia(),
+    ) { uri: Uri? -> vm.elegirCalco(uri?.toString()) }
 
     Scaffold(
         topBar = {
@@ -154,7 +182,20 @@ fun PantallaDibujo(vm: DibujoViewModel = viewModel()) {
                 alAbrirConfig = { mostrarConfig = true },
             )
         },
-        bottomBar = { BarraHerramientas(estado, vm) },
+        bottomBar = {
+            BarraHerramientas(
+                estado = estado,
+                vm = vm,
+                alAbrirExpandir = { mostrarExpandir = true },
+                alElegirImagen = {
+                    elegirImagen.launch(
+                        PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly),
+                    )
+                },
+                alAlternarCalco = vm::alternarCalco,
+                alAbrirCalco = { mostrarCalco = true },
+            )
+        },
         // Transparente: deja ver la superficie GPU que va en una capa detrás
         // de la ventana (el `SurfaceView`). Las barras y la vista previa del
         // trazo se dibujan encima en la ventana de Compose.
@@ -173,6 +214,32 @@ fun PantallaDibujo(vm: DibujoViewModel = viewModel()) {
             estado = estado,
             alElegirBackend = vm::elegirBackend,
             alCerrar = { mostrarConfig = false },
+        )
+    }
+
+    if (mostrarExpandir) {
+        DialogoExpandir(
+            estado = estado,
+            alExpandir = { extraAncho, extraAlto ->
+                vm.expandirHoja(extraAncho, extraAlto)
+                mostrarExpandir = false
+            },
+            alCerrar = { mostrarExpandir = false },
+        )
+    }
+
+    if (mostrarCalco) {
+        DialogoCalco(
+            estado = estado,
+            alElegirImagen = {
+                elegirImagen.launch(
+                    PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly),
+                )
+            },
+            alAlternar = vm::alternarCalco,
+            alCambiarAlfa = vm::cambiarCalcoAlfa,
+            alQuitar = { vm.elegirCalco(null) },
+            alCerrar = { mostrarCalco = false },
         )
     }
 }
@@ -261,13 +328,18 @@ private fun AreaDibujo(
     ) {
         if (usarGpu) {
             // Recrear al cambiar de backend: un renderizador OpenGL no sirve
-            // para Vulkan y viceversa.
-            key(estado.backendEfectivo) {
+            // para Vulkan y viceversa. También al cambiar el tamaño de la hoja
+            // (expandir): la textura se asigna con las dimensiones del motor,
+            // así que un renderizador recreado evita gestionar la reasignación.
+            key(estado.backendEfectivo, estado.hojaAncho, estado.hojaAlto) {
                 SuperficieGpu(estadoState, vm, Modifier.fillMaxSize())
             }
         } else {
             LienzoCpu(estadoState, vm, dimension, Modifier.fillMaxSize())
         }
+        // Imagen de calco: capa translúcida sobre la hoja (GPU o CPU) y debajo
+        // del trazo en curso, para poder calcar viendo el dibujo al mismo tiempo.
+        CapaCalco(estadoState, Modifier.fillMaxSize())
         CapaGestos(estadoState, vm, Modifier.fillMaxSize())
 
         // Mientras el motor/renderizador se crea (al abrir la app o al cambiar
@@ -376,7 +448,13 @@ private fun CapaGestos(
                     },
                 )
             }
-        },
+        }
+            // Toque sin arrastre: punto con el lápiz o relleno con PINTAR.
+            .pointerInput(modo) {
+                if (modo == Modo.EDICION) {
+                    detectTapGestures { punto -> vm.tocarHoja(punto.x, punto.y) }
+                }
+            },
     ) {
         val estado = estadoState.value
         val trazo = estado.trazoEnCurso
@@ -386,7 +464,7 @@ private fun CapaGestos(
         // fondo de la hoja y usa su grosor efectivo, así la marca se ve
         // "borrada" al instante mientras arrastrás el dedo.
         val borran = lapiz.herramienta == Herramienta.BORRADOR
-        if (trazo != null && trazo.size >= 2) {
+        if (trazo != null && trazo.size >= 2 && lapiz.herramienta != Herramienta.PINTAR) {
             val colorTrazo = if (borran) Color(Colores.BLANCO) else Color(lapiz.color)
             val grosorTrazo = lapiz.grosorEfectivo()
             val path = Path()
@@ -411,9 +489,92 @@ private fun CapaGestos(
     }
 }
 
-/** Barra inferior: herramientas + modo + grosor (fila 1) y paleta (fila 2). */
+/**
+ * Imagen de calco: capa translúcida que se dibuja sobre la hoja (GPU o CPU) y
+ * debajo de la vista previa del trazo. La imagen se ajusta (manteniendo la
+ * proporción) dentro de la hoja y sigue la cámara (pan/zoom), así se puede
+ * calcar con el dibujo a la vista.
+ */
 @Composable
-private fun BarraHerramientas(estado: DibujoEstado, vm: DibujoViewModel) {
+private fun CapaCalco(
+    estadoState: State<DibujoEstado>,
+    modifier: Modifier = Modifier,
+) {
+    val estado = estadoState.value
+    val uri = estado.calcoUri
+    val contexto = LocalContext.current
+    val bitmap = remember(uri) {
+        uri?.let { ruta -> cargarBitmap(contexto, Uri.parse(ruta)) }
+    }
+    if (bitmap == null || !estado.calcoVisible ||
+        estado.hojaAncho <= 0 || estado.hojaAlto <= 0
+    ) {
+        return
+    }
+    val descripcion = stringResource(R.string.cd_calco)
+    Canvas(modifier.semantics { contentDescription = descripcion }) {
+        val imagen = bitmap.asImageBitmap()
+        if (imagen.width <= 0 || imagen.height <= 0) return@Canvas
+        val cam = estado.camara
+        val escala = minOf(
+            estado.hojaAncho.toFloat() / imagen.width,
+            estado.hojaAlto.toFloat() / imagen.height,
+        )
+        val anchoHoja = imagen.width * escala
+        val altoHoja = imagen.height * escala
+        val xHoja = (estado.hojaAncho - anchoHoja) / 2f
+        val yHoja = (estado.hojaAlto - altoHoja) / 2f
+        drawImage(
+            image = imagen,
+            srcOffset = IntOffset.Zero,
+            srcSize = IntSize(imagen.width, imagen.height),
+            dstOffset = IntOffset(
+                (xHoja * cam.zoom - cam.panX).roundToInt(),
+                (yHoja * cam.zoom - cam.panY).roundToInt(),
+            ),
+            dstSize = IntSize(
+                (anchoHoja * cam.zoom).roundToInt(),
+                (altoHoja * cam.zoom).roundToInt(),
+            ),
+            alpha = estado.calcoAlfa,
+            filterQuality = FilterQuality.Medium,
+        )
+    }
+}
+
+/** Lado máximo al que se reduce la imagen de calco al decodificarla. */
+private const val MAX_CALCO = 2048
+
+/**
+ * Decodifica la imagen elegida reduciéndola si es muy grande ([MAX_CALCO] por
+ * lado). Devuelve null si no se puede leer. El muestreo se calcula en potencias
+ * de dos (`inSampleSize`) para no agotar la memoria con fotos enormes.
+ */
+private fun cargarBitmap(contexto: Context, uri: Uri): Bitmap? = runCatching {
+    val resolver = contexto.contentResolver
+    val limites = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+    resolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, limites) }
+    var escala = 1
+    while (limites.outWidth / escala > MAX_CALCO || limites.outHeight / escala > MAX_CALCO) {
+        escala *= 2
+    }
+    val opciones = BitmapFactory.Options().apply { inSampleSize = escala }
+    resolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, opciones) }
+}.getOrNull()
+
+/**
+ * Barra inferior. Tres filas para no depender del scroll horizontal (que era
+ * incómodo): modo + acciones de hoja/calco, herramientas + grosor, y paleta.
+ */
+@Composable
+private fun BarraHerramientas(
+    estado: DibujoEstado,
+    vm: DibujoViewModel,
+    alAbrirExpandir: () -> Unit,
+    alElegirImagen: () -> Unit,
+    alAlternarCalco: () -> Unit,
+    alAbrirCalco: () -> Unit,
+) {
     Surface(modifier = Modifier.absorberToque(), tonalElevation = 3.dp) {
         Column(
             Modifier
@@ -422,13 +583,12 @@ private fun BarraHerramientas(estado: DibujoEstado, vm: DibujoViewModel) {
                 // esto la paleta quedaba debajo y no se podía tocar.
                 .windowInsetsPadding(WindowInsets.navigationBars),
         ) {
-            // Fila 1: modo, herramientas y grosor.
+            // Fila 1: modo + acciones de calco y hoja.
             Row(
                 Modifier
                     .fillMaxWidth()
-                    .horizontalScroll(rememberScrollState())
                     .padding(horizontal = 8.dp, vertical = 6.dp),
-                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                horizontalArrangement = Arrangement.spacedBy(4.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 FiltroChip(
@@ -442,9 +602,48 @@ private fun BarraHerramientas(estado: DibujoEstado, vm: DibujoViewModel) {
                     ),
                     alPulsar = { vm.alternarModo() },
                 )
+                Spacer(Modifier.weight(1f))
+                IconoToggle(
+                    icono = Icons.Rounded.AddPhotoAlternate,
+                    descripcion = stringResource(R.string.cd_calco_elegir),
+                    seleccionado = false,
+                    alPulsar = alElegirImagen,
+                )
+                IconoToggle(
+                    icono = if (estado.calcoVisible) {
+                        Icons.Rounded.Visibility
+                    } else {
+                        Icons.Rounded.VisibilityOff
+                    },
+                    descripcion = stringResource(R.string.cd_calco_alternar),
+                    seleccionado = estado.calcoVisible,
+                    habilitado = estado.calcoUri != null,
+                    alPulsar = alAlternarCalco,
+                )
+                IconoToggle(
+                    icono = Icons.Rounded.Layers,
+                    descripcion = stringResource(R.string.cd_calco_opciones),
+                    seleccionado = false,
+                    alPulsar = alAbrirCalco,
+                )
+                IconoToggle(
+                    icono = Icons.Rounded.OpenInFull,
+                    descripcion = stringResource(R.string.cd_expandir),
+                    seleccionado = false,
+                    alPulsar = alAbrirExpandir,
+                )
+            }
 
+            // Fila 2: herramientas (iconos, sin scroll) + grosor.
+            Row(
+                Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 8.dp),
+                horizontalArrangement = Arrangement.spacedBy(4.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
                 Herramientas(estado, vm)
-
+                Spacer(Modifier.weight(1f))
                 BotonIcono(
                     icono = Icons.Rounded.Remove,
                     descripcion = stringResource(R.string.cd_grosor_menos),
@@ -461,7 +660,7 @@ private fun BarraHerramientas(estado: DibujoEstado, vm: DibujoViewModel) {
                 )
             }
 
-            // Fila 2: paleta de colores.
+            // Fila 3: paleta de colores.
             Row(
                 Modifier
                     .fillMaxWidth()
@@ -480,6 +679,148 @@ private fun BarraHerramientas(estado: DibujoEstado, vm: DibujoViewModel) {
             }
         }
     }
+}
+
+/** Diálogo para expandir la hoja: elige cuántos px agregar de ancho y alto. */
+@Composable
+private fun DialogoExpandir(
+    estado: DibujoEstado,
+    alExpandir: (Int, Int) -> Unit,
+    alCerrar: () -> Unit,
+) {
+    var extraAncho by remember { mutableStateOf(512f) }
+    var extraAlto by remember { mutableStateOf(512f) }
+    val maxAncho = (com.dibujo.core.Lienzo.MAX_LADO - estado.hojaAncho).coerceAtLeast(0)
+    val maxAlto = (com.dibujo.core.Lienzo.MAX_LADO - estado.hojaAlto).coerceAtLeast(0)
+    val ancho = extraAncho.roundToInt().coerceIn(0, maxAncho)
+    val alto = extraAlto.roundToInt().coerceIn(0, maxAlto)
+
+    AlertDialog(
+        onDismissRequest = alCerrar,
+        title = { Text(stringResource(R.string.expandir_titulo)) },
+        text = {
+            Column {
+                Text(
+                    stringResource(R.string.expandir_actual, estado.hojaAncho, estado.hojaAlto),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Spacer(Modifier.height(12.dp))
+                Text(
+                    stringResource(R.string.expandir_ancho, ancho),
+                    style = MaterialTheme.typography.labelLarge,
+                )
+                Slider(
+                    value = extraAncho.coerceIn(0f, maxAncho.toFloat()),
+                    onValueChange = { extraAncho = it },
+                    valueRange = 0f..maxAncho.toFloat().coerceAtLeast(1f),
+                    steps = ((maxAncho / 256) - 1).coerceAtLeast(0),
+                    enabled = maxAncho > 0,
+                )
+                Text(
+                    stringResource(R.string.expandir_alto, alto),
+                    style = MaterialTheme.typography.labelLarge,
+                )
+                Slider(
+                    value = extraAlto.coerceIn(0f, maxAlto.toFloat()),
+                    onValueChange = { extraAlto = it },
+                    valueRange = 0f..maxAlto.toFloat().coerceAtLeast(1f),
+                    steps = ((maxAlto / 256) - 1).coerceAtLeast(0),
+                    enabled = maxAlto > 0,
+                )
+                if (maxAncho == 0 && maxAlto == 0) {
+                    Text(
+                        stringResource(R.string.expandir_maximo),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.error,
+                    )
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(
+                onClick = { alExpandir(ancho, alto) },
+                enabled = ancho > 0 || alto > 0,
+            ) {
+                Text(stringResource(R.string.expandir_aplicar))
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = alCerrar) {
+                Text(stringResource(R.string.cancelar))
+            }
+        },
+    )
+}
+
+/** Diálogo de la imagen de calco: elegir, mostrar/ocultar, opacidad y quitar. */
+@Composable
+private fun DialogoCalco(
+    estado: DibujoEstado,
+    alElegirImagen: () -> Unit,
+    alAlternar: () -> Unit,
+    alCambiarAlfa: (Float) -> Unit,
+    alQuitar: () -> Unit,
+    alCerrar: () -> Unit,
+) {
+    AlertDialog(
+        onDismissRequest = alCerrar,
+        title = { Text(stringResource(R.string.calco_titulo)) },
+        text = {
+            Column {
+                Text(
+                    stringResource(R.string.calco_descripcion),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    stringResource(
+                        if (estado.calcoUri == null) R.string.calco_sin_imagen else R.string.calco_cargada,
+                    ),
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    stringResource(
+                        R.string.calco_opacidad,
+                        (estado.calcoAlfa * 100).roundToInt(),
+                    ),
+                    style = MaterialTheme.typography.labelLarge,
+                )
+                Slider(
+                    value = estado.calcoAlfa,
+                    onValueChange = alCambiarAlfa,
+                    valueRange = 0.1f..1f,
+                    enabled = estado.calcoUri != null,
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = alElegirImagen) {
+                Text(stringResource(R.string.calco_elegir))
+            }
+        },
+        dismissButton = {
+            Row {
+                if (estado.calcoUri != null) {
+                    TextButton(onClick = alAlternar) {
+                        Text(
+                            stringResource(
+                                if (estado.calcoVisible) R.string.calco_ocultar else R.string.calco_mostrar,
+                            ),
+                        )
+                    }
+                    TextButton(onClick = alQuitar) {
+                        Text(stringResource(R.string.calco_quitar))
+                    }
+                }
+                TextButton(onClick = alCerrar) {
+                    Text(stringResource(R.string.cerrar))
+                }
+            }
+        },
+    )
 }
 
 @Composable
@@ -679,19 +1020,67 @@ private fun Herramientas(
     estado: DibujoEstado,
     vm: DibujoViewModel,
 ) {
+    // Botones de icono compactos: entran todos en una fila, sin scroll.
     val pares = listOf(
         Triple(Herramienta.LAPIZ, R.string.herramienta_lapiz, Icons.Rounded.Draw),
         Triple(Herramienta.PORTAMINA, R.string.herramienta_portamina, Icons.Rounded.Mode),
         Triple(Herramienta.CARBONCILLO, R.string.herramienta_carboncillo, Icons.Rounded.Brush),
         Triple(Herramienta.BORRADOR, R.string.herramienta_borrador, Icons.Rounded.CleaningServices),
+        Triple(Herramienta.PINTAR, R.string.herramienta_pintar, Icons.Rounded.FormatColorFill),
     )
-    pares.forEach { (herramienta, etiquetaRes, icono) ->
-        FiltroChip(
-            seleccionado = estado.lapiz.herramienta == herramienta,
-            etiqueta = stringResource(etiquetaRes),
-            icono = icono,
-            descripcion = stringResource(etiquetaRes),
-            alPulsar = { vm.elegirHerramienta(herramienta) },
+    Row(
+        horizontalArrangement = Arrangement.spacedBy(2.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        pares.forEach { (herramienta, etiquetaRes, icono) ->
+            val etiqueta = stringResource(etiquetaRes)
+            IconoToggle(
+                icono = icono,
+                descripcion = etiqueta,
+                seleccionado = estado.lapiz.herramienta == herramienta,
+                alPulsar = { vm.elegirHerramienta(herramienta) },
+            )
+        }
+    }
+}
+
+/**
+ * Botón de icono compacto con estado seleccionado (fondo tonal). Se usa en la
+ * barra inferior para que todas las herramientas entren en una fila sin scroll
+ * horizontal, que era incómodo en pantallas angostas.
+ */
+@Composable
+private fun IconoToggle(
+    icono: androidx.compose.ui.graphics.vector.ImageVector,
+    descripcion: String,
+    seleccionado: Boolean,
+    alPulsar: () -> Unit,
+    habilitado: Boolean = true,
+) {
+    Box(
+        Modifier
+            .size(40.dp)
+            .clip(MaterialTheme.shapes.medium)
+            .background(
+                if (seleccionado) MaterialTheme.colorScheme.secondaryContainer else Color.Transparent,
+            )
+            .clickable(enabled = habilitado, onClick = alPulsar)
+            .semantics { contentDescription = descripcion },
+        contentAlignment = Alignment.Center,
+    ) {
+        Icon(
+            imageVector = icono,
+            contentDescription = null,
+            modifier = Modifier.size(22.dp),
+            tint = if (habilitado) {
+                if (seleccionado) {
+                    MaterialTheme.colorScheme.onSecondaryContainer
+                } else {
+                    MaterialTheme.colorScheme.onSurfaceVariant
+                }
+            } else {
+                MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.38f)
+            },
         )
     }
 }

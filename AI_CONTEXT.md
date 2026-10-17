@@ -49,8 +49,10 @@ paridad, para poder ser nativo (C++) donde exista y puro Kotlin donde no:
 Cualquier cambio en el rasterizado (disco, bloque, línea gruesa, relleno,
 grosor efectivo por herramienta, cámara, render) debe hacerse en las DOS
 implementaciones y pasar `MotorTest` (paridad píxel a píxel). Las diferencias:
-- `grosorEfectivo`: PORTAMINA `grosor/2`, CARBONCILLO `grosor+2`, BORRADOR `grosor+4`.
-- BORRADOR pinta con el color de fondo de la hoja.
+- `grosorEfectivo`: PORTAMINA `grosor/2`, CARBONCILLO `grosor+2`, BORRADOR `grosor+4`
+  (la fórmula vive en `Lapiz.grosorEfectivo()`; el C++ la replica).
+- BORRADOR pinta con el color de fondo de la hoja; la vista previa de Compose
+  lo imita (fondo + grosor efectivo) para que el borrado se vea al instante.
 - FUERA de hoja en render = gris `0xFFECECEC`.
 
 ### Cámara
@@ -66,6 +68,12 @@ De ahí salen (ver `README_AI.md`):
 En Android el ViewModel crea el motor con el tamaño físico de la pantalla
 (px), acotado a `MAX_LADO = 4096`. El motor NO se recrea ante rotaciones:
 vive en el `ViewModel` (la hoja sobrevive cambios de configuración).
+
+### Historial
+Undo/redo por snapshots completos de la hoja. Límite de pasos: **30**
+(`Historial` en Kotlin y `kMaxHistorial` en C++ tienen que coincidir). El
+estado Compose expone `puedeDeshacer`/`puedeRehacer` (leídos del motor
+después de cada operación) y habilita/deshabilita los botones.
 
 ## 4. Build
 
@@ -97,9 +105,14 @@ Particularidades:
   curso (Path con la misma transformación de cámara) para feedback inmediato.
 - **Gestos**: `detectDragGestures` (EDICION) y `detectTransformGestures`
   con foco (MOVER), en `pointerInput(estado.modo)`.
-- **Edge-to-edge** desde la Activity (`enableEdgeToEdge()`), `Scaffold` con insets.
-- **Cero texto duro**: todo por `stringResource`; símbolos (↶ ↷ ◎ ✕ –) en `strings.xml`.
-- Icono: adaptive icon XML (sin PNG) con `monochrome`.
+- **Edge-to-edge** desde la Activity (`enableEdgeToEdge()`), `Scaffold` con
+  `TopAppBar` (título + motor + deshacer/rehacer/centrar/limpiar) y barra
+  inferior con herramientas/chips de modo/grosor y la paleta.
+- **Material Icons**: `androidx.compose.material:material-icons-extended`
+  (BOM, iconos Rounded; deshacer/rehacer vía `Icons.AutoMirrored`). Sin
+  símbolos de texto: cada icono lleva `contentDescription` desde strings.xml.
+- **Cero texto duro**: todo por `stringResource`.
+- Icono de app: adaptive icon XML (sin PNG) con `monochrome`.
 
 ## 6. Riesgos conocidos / no resueltos
 
@@ -107,16 +120,15 @@ Particularidades:
   soltar, el resultado exacto (disco/bloque/línea gruesa) puede diferir levemente del overlay.
 - `MotorKotlin.renderizar` es O(vw*vh) por frame en CPU; en pantallas grandes
   conviene eventualmente mover el render a textura (ver ROADMAP).
-- `build-debug-apk.yml` empaqueta a mano un APK placeholder que inicial la
-  consola (`:ui`) en el dispositivo: con `:app` ya existe el APK real vía AGP;
-  ese workflow queda como fallback histórico.
 - No hay persistencia de la hoja (guardar PNG/deshacer entre sesiones): es la
   tarea #1 del ROADMAP.
 - Release de `:app` no está firmado para distribución (solo debug).
+- El historial es por snapshots: 30 pasos (compartidos C++/Kotlin) para
+  acotar la RAM del dispositivo (ver "Historial").
 
 ## 7. Datos útiles para agentes
 
 - Horario del usuario: America/Caracas; respondé en español nativo, fixeáte en `opencode.json`.
-- Tests: JUnit Platform; paridad en `engine/src/test/kotlin/com/dibujo/engine/MotorTest.kt`.
-- El workflow `android-apk.yml` corre solo manual (`workflow_dispatch`).
+- Tests: JUnit Platform; paridad en `engine/src/test/kotlin/com/dibujo/engine/MotorTest.kt` (incluye paridad de undo/redo con `historialParidad`).
+- El workflow `android-apk.yml` corre manual (`workflow_dispatch`) y en cada PR contra main; el workflow falso `build-debug-apk.yml` (APK placeholder aapt2/d8) fue eliminado.
 - Commits: esperar orden explícita del usuario (nunca commit proactivo).

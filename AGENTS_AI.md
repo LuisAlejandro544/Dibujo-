@@ -18,13 +18,11 @@ trabajo del agente de código están en `AGENTS.md`; el mapa técnico está en
 
 | Workflow | Archivo | Trigger | Artefacto |
 |---|---|---|---|
-| APK Android (assembleDebug) | `android-apk.yml` | `workflow_dispatch` (manual) | APK debug firmado de la app Android real (`:app`, con motor C++ via NDK). |
-| APK Debug (manual, legacy) | `build-debug-apk.yml` | `workflow_dispatch` (manual) | APK empaquetado a mano (aapt2/d8/apksigner) con las clases DEX de `:core/:engine/:ui` + consola Linux con el motor C++. |
+| APK Android (assembleDebug) | `android-apk.yml` | `workflow_dispatch` + `pull_request` (main) | APK debug firmado de la app Android real (`:app`, con motor C++ via NDK). |
 
-Ambos son **100% manuales**: ninguno corre en push ni PR. Regla de
-`opencode.json`: si el entorno no permite push de workflows
-(GH_TOKEN sin PAT), mover el archivo por el PR y avisar en la descripción que
-requiere merge para activarse.
+El workflow legacy `build-debug-apk.yml` (APK placeholder aapt2/d8) fue
+eliminado. El que queda corre igual en pushes de PR (compila y sube el
+APK debug como artefacto).
 
 ## 3. Cómo trabaja el agente de código (resumen operativo)
 

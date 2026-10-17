@@ -52,6 +52,47 @@ class MotorKotlinTest {
  */
 class MotorNativoTest {
     @Test
+    fun historialParidad() {
+        if (!NativeEngine.disponible()) return
+
+        for (m in listOf(MotorNativo(20, 10), MotorKotlin(20, 10))) {
+            m.configurarLapiz(Lapiz(color = Colores.ROJO, grosor = 3))
+            m.iniciarTrazo(1f, 5f)
+            m.continuarTrazo(15f, 5f)
+            assertTrue(m.terminarTrazo())
+            m.configurarLapiz(Lapiz(color = Colores.NEGRO, grosor = 3))
+            m.iniciarTrazo(1f, 9f)
+            m.continuarTrazo(15f, 9f)
+            assertTrue(m.terminarTrazo())
+            assertTrue(m.puedeDeshacer(), "${m.nombre}: hay paso que deshacer")
+            assertTrue(!m.puedeRehacer(), "${m.nombre}: no hay paso que rehacer")
+
+            // Deshacer borra el último trazo y habilita rehacer.
+            assertTrue(m.deshacer(), "${m.nombre}: deshacer 1")
+            assertTrue(m.puedeRehacer(), "${m.nombre}: rehacer habilitado")
+            val b1 = IntArray(20 * 10)
+            m.renderizar(b1, 20, 10)
+            assertEquals(Colores.BLANCO, b1[9 * 20 + 1], "${m.nombre}: trazo 2 deshecho")
+            assertEquals(Colores.ROJO, b1[5 * 20 + 1], "${m.nombre}: trazo 1 queda")
+
+            // Segunda ronda completa: deshacer todo, rehacer todo.
+            assertTrue(m.deshacer(), "${m.nombre}: deshacer 2")
+            assertTrue(!m.puedeDeshacer(), "${m.nombre}: historial vacío")
+            val b2 = IntArray(20 * 10)
+            m.renderizar(b2, 20, 10)
+            assertEquals(Colores.BLANCO, b2[5 * 20 + 1], "${m.nombre}: hoja limpia")
+            assertTrue(m.rehacer(), "${m.nombre}: rehacer 1")
+            assertTrue(m.rehacer(), "${m.nombre}: rehacer 2")
+            val b3 = IntArray(20 * 10)
+            m.renderizar(b3, 20, 10)
+            assertEquals(Colores.NEGRO, b3[9 * 20 + 1], "${m.nombre}: trazo 2 rehecho")
+            assertEquals(Colores.ROJO, b3[5 * 20 + 1], "${m.nombre}: trazo 1 rehecho")
+            assertTrue(!m.puedeRehacer(), "${m.nombre}: futuro vacío")
+            m.close()
+        }
+    }
+
+    @Test
     fun nativoDibujaLineaIgualQueKotlin() {
         if (!NativeEngine.disponible()) return
 

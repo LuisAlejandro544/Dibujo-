@@ -131,12 +131,7 @@ class MotorKotlin(
         // Sin recursos nativos: nada que liberar.
     }
 
-    private fun grosorEfectivo(): Int = when (lapiz.herramienta) {
-        com.dibujo.core.Herramienta.PORTAMINA -> maxOf(1, lapiz.grosor / 2)
-        com.dibujo.core.Herramienta.CARBONCILLO -> lapiz.grosor + 2
-        com.dibujo.core.Herramienta.BORRADOR -> lapiz.grosor + 4
-        else -> lapiz.grosor
-    }
+    private fun grosorEfectivo(): Int = lapiz.grosorEfectivo()
 
     companion object {
         const val MAX_PUNTOS = 4096

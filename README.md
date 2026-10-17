@@ -52,10 +52,10 @@ sigue funcionando con el respaldo.
 ./gradlew :app:installDebug      # instala en un dispositivo/emulador conectado (adb)
 ```
 
-En CI hay un workflow manual (`.github/workflows/android-apk.yml`) que genera
-el APK debug listo para instalar. También sigue existiendo
-`build-debug-apk.yml`, que empaqueta a mano (aapt2/d8/apksigner) la app de
-consola con la clase DEX completa, útil para armar builds sin AGP.
+En CI hay un workflow (`.github/workflows/android-apk.yml`) que genera el APK
+debug listo para instalar: corre manualmente (`workflow_dispatch`) y en cada
+PR contra main, siempre con `./gradlew :app:assembleDebug` (compilación
+estándar de Android vía AGP + NDK).
 
 ## Uso (consola)
 
@@ -70,10 +70,12 @@ Dentro de la app escribe `h` para la ayuda completa:
 
 ## Uso (Android)
 
-- Tocá y arrastrá en la hoja para dibujar (modo **Edit**).
-- El chip superior alterna a **Mover**: arrastra la hoja y pitucho de zoom.
-- Barra inferior: paleta de colores, lápiz/portamina/carbón/borrador,
-  grosor +/–, deshacer, rehacer, centrar y limpiar.
+- Tocá y arrastrá en la hoja para dibujar (chip **Dibujar**).
+- El chip alterna a **Mover**: arrastra la hoja y pinch para zoom.
+- Barra superior: título + motor activo, deshacer/rehacer (se habilitan
+  según el historial), centrar y limpiar, todo con iconos Material.
+- Barra inferior: modo, herramientas (lápiz/portamina/carbón/borrador con
+  icono), grosor +/– y paleta de colores.
 
 ## Estructura del código nativo
 

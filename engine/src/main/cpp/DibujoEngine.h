@@ -93,7 +93,8 @@ private:
     // Historial (snapshots de la hoja completa).
     std::vector<std::vector<uint32_t>> pasado_;
     std::vector<std::vector<uint32_t>> futuro_;
-    static constexpr std::size_t kMaxHistorial = 60;
+    // Igual que el límite de Historial en Kotlin: hojas grandes por snapshot.
+    static constexpr std::size_t kMaxHistorial = 30;
 };
 
 } // namespace dibujo

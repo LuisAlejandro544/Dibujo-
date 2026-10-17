@@ -22,12 +22,31 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.rounded.Redo
+import androidx.compose.material.icons.automirrored.rounded.Undo
+import androidx.compose.material.icons.rounded.Add
+import androidx.compose.material.icons.rounded.Brush
+import androidx.compose.material.icons.rounded.CenterFocusWeak
+import androidx.compose.material.icons.rounded.CleaningServices
+import androidx.compose.material.icons.rounded.Delete
+import androidx.compose.material.icons.rounded.Draw
+import androidx.compose.material.icons.rounded.Gesture
+import androidx.compose.material.icons.rounded.Mode
+import androidx.compose.material.icons.rounded.PanTool
+import androidx.compose.material.icons.rounded.Remove
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
+import androidx.compose.material3.FilterChipDefaults
+import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.IconButtonDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -46,11 +65,9 @@ import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
-import androidx.compose.ui.text.style.TextAlign
-import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.IntSize
 import androidx.lifecycle.viewmodel.compose.viewModel
-import com.dibujo.core.Camara
 import com.dibujo.core.Colores
 import com.dibujo.core.Herramienta
 import com.dibujo.core.Lapiz
@@ -68,17 +85,62 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-/** Pantalla principal: hoja táctil + barra de herramientas. */
+/** Pantalla principal: barra superior (acciones) + hoja táctil + herramientas. */
 @Composable
 fun PantallaDibujo(vm: DibujoViewModel = viewModel()) {
     val estado by vm.estado.collectAsState()
 
-    Scaffold { padding ->
-        Column(Modifier.padding(padding)) {
-            Hoja(estado, vm, Modifier.weight(1f))
-            BarraHerramientas(estado, vm)
-        }
+    Scaffold(
+        topBar = { BarraSuperior(estado, vm) },
+        bottomBar = { BarraHerramientas(estado, vm) },
+    ) { margenes ->
+        Hoja(estado, vm, Modifier.padding(margenes).fillMaxSize())
     }
+}
+
+/** Barra superior: título + estado del motor + deshacer/rehacer/centrar/limpiar. */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun BarraSuperior(estado: DibujoEstado, vm: DibujoViewModel) {
+    TopAppBar(
+        title = {
+            Column {
+                Text(stringResource(R.string.app_name))
+                Text(
+                    stringResource(R.string.estado_motor, estado.motorNombre),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        },
+        actions = {
+            BotonIcono(
+                icono = Icons.AutoMirrored.Rounded.Undo,
+                descripcion = stringResource(R.string.cd_deshacer),
+                habilitado = estado.puedeDeshacer,
+                alPulsar = { vm.deshacer() },
+            )
+            BotonIcono(
+                icono = Icons.AutoMirrored.Rounded.Redo,
+                descripcion = stringResource(R.string.cd_rehacer),
+                habilitado = estado.puedeRehacer,
+                alPulsar = { vm.rehacer() },
+            )
+            BotonIcono(
+                icono = Icons.Rounded.CenterFocusWeak,
+                descripcion = stringResource(R.string.cd_centrar),
+                alPulsar = { vm.centrar() },
+            )
+            BotonIcono(
+                icono = Icons.Rounded.Delete,
+                descripcion = stringResource(R.string.cd_limpiar),
+                alPulsar = { vm.limpiar() },
+            )
+        },
+        colors = TopAppBarDefaults.topAppBarColors(
+            containerColor = MaterialTheme.colorScheme.surface,
+        ),
+    )
 }
 
 @Composable
@@ -95,12 +157,17 @@ private fun Hoja(estado: DibujoEstado, vm: DibujoViewModel, modifier: Modifier =
             null
         }
     }
-    val imageBitmap = bitmap?.asImageBitmap()
 
     val trazo = estado.trazoEnCurso
     val camara = estado.camara
     val lapiz = estado.lapiz
-    val colorLapiz = Color(estado.lapiz.color)
+
+    // El borrador se previsualiza como lo rasteriza el motor: pinta con el
+    // fondo de la hoja y usa su grosor efectivo (grosor + 4), así la marca
+    // se ve "borrada" al instante mientras arrastrás el dedo.
+    val borran = lapiz.herramienta == Herramienta.BORRADOR
+    val colorTrazo = if (borran) Color(Colores.BLANCO) else Color(lapiz.color)
+    val grosorTrazo = lapiz.grosorEfectivo()
 
     Canvas(
         modifier
@@ -136,7 +203,7 @@ private fun Hoja(estado: DibujoEstado, vm: DibujoViewModel, modifier: Modifier =
         bmp.setPixels(buffer, 0, vw, 0, 0, vw, vh)
         drawImage(bmp.asImageBitmap())
 
-        // Vista previa del trazo en curso (el motor la rastrea al soltar).
+        // Vista previa del trazo en curso (el motor la rasteriza al soltar).
         val puntos = trazo
         if (puntos != null && puntos.size >= 2) {
             val path = Path()
@@ -154,18 +221,58 @@ private fun Hoja(estado: DibujoEstado, vm: DibujoViewModel, modifier: Modifier =
             }
             drawPath(
                 path,
-                color = colorLapiz,
-                style = Stroke(width = lapiz.grosor * camara.zoom),
+                color = colorTrazo,
+                style = Stroke(width = grosorTrazo * camara.zoom),
             )
         }
     }
 }
 
+/** Barra inferior: herramientas + modo + grosor (fila 1) y paleta (fila 2). */
 @Composable
 private fun BarraHerramientas(estado: DibujoEstado, vm: DibujoViewModel) {
-    Surface(shadowElevation = 8.dp) {
+    Surface(tonalElevation = 3.dp) {
         Column(Modifier.fillMaxWidth()) {
-            // Fila 1: paleta de colores.
+            // Fila 1: modo, herramientas y grosor.
+            Row(
+                Modifier
+                    .fillMaxWidth()
+                    .horizontalScroll(rememberScrollState())
+                    .padding(horizontal = 8.dp, vertical = 6.dp),
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                FiltroChip(
+                    seleccionado = estado.modo == Modo.EDICION,
+                    etiqueta = stringResource(
+                        if (estado.modo == Modo.EDICION) R.string.modo_editar else R.string.modo_mover,
+                    ),
+                    icono = if (estado.modo == Modo.EDICION) Icons.Rounded.Gesture else Icons.Rounded.PanTool,
+                    descripcion = stringResource(
+                        if (estado.modo == Modo.EDICION) R.string.cd_modo_editar else R.string.cd_modo_mover,
+                    ),
+                    alPulsar = { vm.alternarModo() },
+                )
+
+                Herramientas(estado, vm)
+
+                BotonIcono(
+                    icono = Icons.Rounded.Remove,
+                    descripcion = stringResource(R.string.cd_grosor_menos),
+                    alPulsar = { vm.cambiarGrosor(-1) },
+                )
+                Text(
+                    stringResource(R.string.estado_grosor, estado.lapiz.grosor),
+                    style = MaterialTheme.typography.labelLarge,
+                )
+                BotonIcono(
+                    icono = Icons.Rounded.Add,
+                    descripcion = stringResource(R.string.cd_grosor_mas),
+                    alPulsar = { vm.cambiarGrosor(1) },
+                )
+            }
+
+            // Fila 2: paleta de colores.
             Row(
                 Modifier
                     .fillMaxWidth()
@@ -182,52 +289,49 @@ private fun BarraHerramientas(estado: DibujoEstado, vm: DibujoViewModel) {
                     )
                 }
             }
-
-            // Fila 2: modo, herramientas, grosor y acciones.
-            Row(
-                Modifier
-                    .fillMaxWidth()
-                    .horizontalScroll(rememberScrollState())
-                    .padding(horizontal = 8.dp, vertical = 6.dp),
-                horizontalArrangement = Arrangement.spacedBy(6.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                val etqModo = if (estado.modo == Modo.EDICION) {
-                    stringResource(R.string.modo_editar)
-                } else {
-                    stringResource(R.string.modo_mover)
-                }
-                FilterChip(
-                    selected = true,
-                    onClick = { vm.alternarModo() },
-                    label = { Text(etqModo) },
-                    modifier = Modifier.semantics {
-                        contentDescription =
-                            if (estado.modo == Modo.EDICION) ""
-                            else etqModo
-                    },
-                )
-
-                Herramientas(estado, vm)
-
-                BotonTexto(stringResource(R.string.grosor_menos), stringResource(R.string.cd_grosor_menos)) {
-                    vm.cambiarGrosor(-1)
-                }
-                Text(
-                    stringResource(R.string.estado_grosor, estado.lapiz.grosor),
-                    style = MaterialTheme.typography.bodyMedium,
-                )
-                BotonTexto(stringResource(R.string.grosor_mas), stringResource(R.string.cd_grosor_mas)) {
-                    vm.cambiarGrosor(1)
-                }
-
-                BotonTexto(stringResource(R.string.accion_deshacer), stringResource(R.string.cd_deshacer)) { vm.deshacer() }
-                BotonTexto(stringResource(R.string.accion_rehacer), stringResource(R.string.cd_rehacer)) { vm.rehacer() }
-                BotonTexto(stringResource(R.string.accion_centrar), stringResource(R.string.cd_centrar)) { vm.centrar() }
-                BotonTexto(stringResource(R.string.accion_limpiar), stringResource(R.string.cd_limpiar)) { vm.limpiar() }
-            }
         }
     }
+}
+
+@Composable
+private fun BotonIcono(
+    icono: androidx.compose.ui.graphics.vector.ImageVector,
+    descripcion: String,
+    alPulsar: () -> Unit,
+    habilitado: Boolean = true,
+) {
+    IconButton(
+        onClick = alPulsar,
+        enabled = habilitado,
+        colors = IconButtonDefaults.iconButtonColors(
+            contentColor = MaterialTheme.colorScheme.onSurfaceVariant,
+        ),
+    ) {
+        Icon(
+            imageVector = icono,
+            contentDescription = descripcion,
+        )
+    }
+}
+
+@Composable
+private fun FiltroChip(
+    seleccionado: Boolean,
+    etiqueta: String,
+    icono: androidx.compose.ui.graphics.vector.ImageVector,
+    descripcion: String,
+    alPulsar: () -> Unit,
+) {
+    FilterChip(
+        selected = seleccionado,
+        onClick = alPulsar,
+        label = { Text(etiqueta) },
+        leadingIcon = {
+            Icon(icono, contentDescription = null, Modifier.size(18.dp))
+        },
+        modifier = Modifier.semantics { contentDescription = descripcion },
+        colors = FilterChipDefaults.filterChipColors(),
+    )
 }
 
 @Composable
@@ -239,11 +343,15 @@ private fun CabezaColor(
     val descripcion = stringResource(R.string.cd_color, color.nombre)
     Box(
         Modifier
-            .size(32.dp)
+            .size(34.dp)
             .background(Color(color.argb), CircleShape)
             .border(
                 width = if (seleccionado) 3.dp else 1.dp,
-                color = if (seleccionado) MaterialTheme.colorScheme.primary else Color.LightGray,
+                color = if (seleccionado) {
+                    MaterialTheme.colorScheme.primary
+                } else {
+                    MaterialTheme.colorScheme.outline
+                },
                 shape = CircleShape,
             )
             .clickable(onClick = onElegir)
@@ -252,31 +360,23 @@ private fun CabezaColor(
 }
 
 @Composable
-private fun BotonTexto(simbolo: String, descripcion: String, alPulsar: () -> Unit) {
-    IconButton(
-        onClick = alPulsar,
-        modifier = Modifier.semantics { contentDescription = descripcion },
-    ) {
-        Text(simbolo, style = MaterialTheme.typography.titleMedium)
-    }
-}
-
-@Composable
 private fun Herramientas(
     estado: DibujoEstado,
     vm: DibujoViewModel,
 ) {
     val pares = listOf(
-        Herramienta.LAPIZ to R.string.herramienta_lapiz,
-        Herramienta.PORTAMINA to R.string.herramienta_portamina,
-        Herramienta.CARBONCILLO to R.string.herramienta_carboncillo,
-        Herramienta.BORRADOR to R.string.herramienta_borrador,
+        Triple(Herramienta.LAPIZ, R.string.herramienta_lapiz, Icons.Rounded.Draw),
+        Triple(Herramienta.PORTAMINA, R.string.herramienta_portamina, Icons.Rounded.Mode),
+        Triple(Herramienta.CARBONCILLO, R.string.herramienta_carboncillo, Icons.Rounded.Brush),
+        Triple(Herramienta.BORRADOR, R.string.herramienta_borrador, Icons.Rounded.CleaningServices),
     )
-    pares.forEach { (herramienta, etiquetaRes) ->
-        FilterChip(
-            selected = estado.lapiz.herramienta == herramienta,
-            onClick = { vm.elegirHerramienta(herramienta) },
-            label = { Text(stringResource(etiquetaRes)) },
+    pares.forEach { (herramienta, etiquetaRes, icono) ->
+        FiltroChip(
+            seleccionado = estado.lapiz.herramienta == herramienta,
+            etiqueta = stringResource(etiquetaRes),
+            icono = icono,
+            descripcion = stringResource(etiquetaRes),
+            alPulsar = { vm.elegirHerramienta(herramienta) },
         )
     }
 }

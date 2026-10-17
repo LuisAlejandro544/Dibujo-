@@ -2,9 +2,10 @@ package com.dibujo.core
 
 /**
  * Historial de la hoja con deshacer/rehacer por snapshots.
- * Límite de pasos configurable (por defecto 60).
+ * Límite de pasos configurable (por defecto 30: con hoja del tamaño de
+ * pantalla cada snapshot son ~6-10 MB, y el C++ replica el mismo límite).
  */
-class Historial(private val maximo: Int = 60) {
+class Historial(private val maximo: Int = 30) {
     private val pasado = ArrayDeque<IntArray>()
     private val futuro = ArrayDeque<IntArray>()
 

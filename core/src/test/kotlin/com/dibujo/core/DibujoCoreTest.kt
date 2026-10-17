@@ -100,8 +100,18 @@ class HistorialTest {
     }
 }
 
-class ComandoLineaTest {
+class LapizTest {
     @Test
+    fun grosorEfectivoPorHerramienta() {
+        assertEquals(2, Lapiz(herramienta = Herramienta.LAPIZ).grosorEfectivo())
+        assertEquals(1, Lapiz(herramienta = Herramienta.PORTAMINA, grosor = 3).grosorEfectivo())
+        assertEquals(1, Lapiz(herramienta = Herramienta.PORTAMINA, grosor = 1).grosorEfectivo())
+        assertEquals(6, Lapiz(herramienta = Herramienta.CARBONCILLO, grosor = 4).grosorEfectivo())
+        assertEquals(6, Lapiz(herramienta = Herramienta.BORRADOR, grosor = 2).grosorEfectivo())
+    }
+}
+
+class ComandoLineaTest {    @Test
     fun simple() {
         val c = ComandoLinea("m")
         assertEquals("m", c.letra)

@@ -90,6 +90,14 @@ del C++ deben mantener la paridad del conjunto rellenado. No usa grosor ni
 punta. En la app, un toque sin arrastre dispara `DibujoViewModel.tocarHoja`
 (punto con el lápiz, relleno con PINTAR).
 
+El relleno es por **tramos** ("spans"): al procesar una semilla se extiende el
+tramo horizontal contiguo de color `origen`, se rellena entero y sólo se apila
+una semilla por cada tramo nuevo arriba/abajo. Antes se apilaba píxel por píxel
+(~10^7 `push` en una hoja de pantalla), lo que hacía que el balde tardara 2-3 s.
+El algoritmo por tramos es lineal y da exactamente el mismo conjunto rellenado;
+el C++ y el Kotlin deben cambiarse juntos (`MotorTest.rellenoParidadConBarreras`
+verifica la paridad con barreras aleatorias).
+
 ### Historial
 Undo/redo por snapshots completos de la hoja. Límite de pasos: **30**
 (`Historial` en Kotlin y `kMaxHistorial` en C++ tienen que coincidir). El

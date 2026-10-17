@@ -23,9 +23,27 @@ inline int grosorHerramienta(Tool tool, int grosor) {
 // coincidir con `MotorKotlin.FUERA` para que el render no dependa del backend.
 constexpr uint32_t kFuera = 0xFFECECECu;
 
+// Apila una semilla por cada tramo contiguo de `origen` en la fila `base`
+// (índice del primer píxel de la fila). Es la clave del relleno por "spans":
+// apilar un punto por tramo en lugar de un punto por píxel.
+void agregarTramos(std::vector<uint32_t>& hoja, std::vector<int>& pila,
+                   int base, int izq, int der, uint32_t origen) {
+    int x = izq;
+    while (x <= der) {
+        if (hoja[static_cast<std::size_t>(base) + x] == origen) {
+            pila.push_back(base + x);
+            while (x <= der && hoja[static_cast<std::size_t>(base) + x] == origen) ++x;
+        } else {
+            ++x;
+        }
+    }
+}
+
 // Relleno por inundación a partir de (x, y). Cuatro vecinos, igualdad exacta de
-// color; replica `Lienzo.rellenar` de Kotlin (el conjunto rellenado es el mismo
-// sin importar el orden de la pila).
+// color. Versión por "spans" (tramos horizontales): replica `Lienzo.rellenar`
+// de Kotlin, que usa el mismo algoritmo, para mantener la paridad píxel a
+// píxel; el conjunto rellenado es el mismo que la versión ingenua, pero lineal
+// y con mucha menos pila (la causa de que el balde tardara segundos).
 void rellenar(std::vector<uint32_t>& hoja, int ancho, int alto,
               int x, int y, uint32_t color) {
     if (x < 0 || y < 0 || x >= ancho || y >= alto) return;
@@ -37,13 +55,18 @@ void rellenar(std::vector<uint32_t>& hoja, int ancho, int alto,
         const int i = pila.back();
         pila.pop_back();
         if (hoja[static_cast<std::size_t>(i)] != origen) continue;
-        hoja[static_cast<std::size_t>(i)] = color;
-        const int cx = i % ancho;
         const int cy = i / ancho;
-        if (cx > 0) pila.push_back(i - 1);
-        if (cx < ancho - 1) pila.push_back(i + 1);
-        if (cy > 0) pila.push_back(i - ancho);
-        if (cy < alto - 1) pila.push_back(i + ancho);
+        const int cx = i % ancho;
+        int izq = cx;
+        while (izq > 0 && hoja[static_cast<std::size_t>(cy) * ancho + izq - 1] == origen) --izq;
+        int der = cx;
+        while (der < ancho - 1 && hoja[static_cast<std::size_t>(cy) * ancho + der + 1] == origen) ++der;
+        const int base = cy * ancho;
+        for (int xx = izq; xx <= der; ++xx) {
+            hoja[static_cast<std::size_t>(base) + xx] = color;
+        }
+        if (cy > 0) agregarTramos(hoja, pila, base - ancho, izq, der, origen);
+        if (cy < alto - 1) agregarTramos(hoja, pila, base + ancho, izq, der, origen);
     }
 }
 

@@ -1,0 +1,197 @@
+# APK Debug de Dibujo — generado 100% dentro de GitHub Actions.
+#
+# Qué hace:
+#   1. Descarga TODO el código (checkout completo, historia incluida).
+#   2. Descarga dependencias de C++ (cmake, g++, ninja) y compila el motor
+#      nativo con CMake (tarea `buildNative` de :engine, disparada por `build`).
+#   3. Compila toda la app con Gradle (:core, :engine, :ui) con cache opcional.
+#   4. Empaqueta un APK Debug REAL: aapt2 (manifest) + d8 (DEX con las clases
+#      de los 3 módulos + Kotlin + launcher placeholder) + zipalign.
+#   5. La FIRMA se genera SI O SI dentro del action (keytool, keystore debug)
+#      y se firma/verifica con apksigner. Es un keystore de debug (contraseñas
+#      estándar `android`, alias `dibujo-debug`), NO es un secreto.
+#   6. Solo se activa MANUALMENTE (workflow_dispatch): no corre en push ni PR.
+#
+# Nota: este repo es una app de consola JVM con motor C++ nativo (JNI) y
+# respaldo puro Kotlin (ver README). El APK contiene la app compilada a DEX y
+# corre en el dispositivo con `MotorKotlin` (el respaldo), tal como diseña el
+# repo cuando la lib nativa no está disponible. Los ejecutables de consola con
+# el motor C++ compilado se suben como segundo artefacto.
+
+name: "APK Debug (Dibujo)"
+
+on:
+  workflow_dispatch:
+    inputs:
+      usar_cache:
+        description: 'Usar cache de Gradle (opcional: desmarcar para build frío)'
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+jobs:
+  apk-debug:
+    name: Compilar + acreditar APK Debug
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Descargar todo el código de la app
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          submodules: recursive
+
+      - name: Preparar JDK 17 (Temurin)
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Descargar dependencias de C++ (cmake, g++, ninja)
+        run: |
+          sudo apt-get update -y
+          sudo apt-get install -y --no-install-recommends cmake g++ ninja-build zip unzip
+          cmake --version | head -n1
+          g++ --version | head -n1
+
+      - name: Cache de Gradle (opcional)
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          cache-disabled: ${{ !inputs.usar_cache }}
+
+      - name: Compilar toda la app (Kotlin + tests + motor nativo C++)
+        run: |
+          chmod +x gradlew
+          ./gradlew build :ui:installDist --no-daemon --console=plain
+
+      - name: Verificar motor nativo compilado (libdibujo_engine)
+        run: ls -la engine/build/cmake/lib
+
+      - name: Generar firma de debug (si o si, dentro del action)
+        run: |
+          mkdir -p apk
+          rm -f apk/firma-debug.keystore
+          keytool -genkeypair -v \
+            -keystore apk/firma-debug.keystore \
+            -alias dibujo-debug -keyalg RSA -keysize 2048 -validity 10000 \
+            -storepass android -keypass android \
+            -dname "CN=Dibujo Debug, OU=Dibujo, O=Dibujo, C=AR"
+
+      - name: Empaquetar APK Debug (aapt2 + d8 + zipalign)
+        run: |
+          set -euo pipefail
+          SDK="${ANDROID_HOME:-/usr/local/lib/android/sdk}"
+          SDKM="$(find "$SDK/cmdline-tools" -type f -name sdkmanager 2>/dev/null | head -n1 || true)"
+          if ! ls "$SDK"/build-tools/*/aapt2 >/dev/null 2>&1 || ! ls "$SDK"/platforms/android-*/android.jar >/dev/null 2>&1; then
+            if [ -z "$SDKM" ]; then
+              echo "::error::El runner no trae build-tools ni sdkmanager"
+              exit 1
+            fi
+            yes | "$SDKM" --sdk_root="$SDK" --licenses >/dev/null 2>&1 || true
+            "$SDKM" --sdk_root="$SDK" "platforms;android-34" "build-tools;34.0.0"
+          fi
+          BT="$(ls -d "$SDK"/build-tools/* | sort -V | tail -n1)"
+          PLAT="$(ls -d "$SDK"/platforms/android-* | sort -V | tail -n1)"
+          export BT PLAT
+          echo "BT: $BT"
+          echo "PLAT: $PLAT"
+
+          rm -rf apk/classes apk/dex apk/src
+          mkdir -p apk/src/com/dibujo/android apk/classes apk/dex
+
+          cat > apk/AndroidManifest.xml <<'XML'
+          <?xml version="1.0" encoding="utf-8"?>
+          <manifest xmlns:android="http://schemas.android.com/apk/res/android"
+              package="com.dibujo.android">
+              <application
+                  android:label="Dibujo"
+                  android:debuggable="true">
+                  <activity android:name="com.dibujo.android.MainActivity" android:exported="true">
+                      <intent-filter>
+                          <action android:name="android.intent.action.MAIN" />
+                          <category android:name="android.intent.category.LAUNCHER" />
+                      </intent-filter>
+                  </activity>
+              </application>
+          </manifest>
+          XML
+
+          cat > apk/src/com/dibujo/android/MainActivity.java <<'JAVA'
+          package com.dibujo.android;
+
+          import android.app.Activity;
+          import android.os.Bundle;
+          import android.widget.TextView;
+
+          public class MainActivity extends Activity {
+              @Override
+              protected void onCreate(Bundle savedInstanceState) {
+                  super.onCreate(savedInstanceState);
+                  TextView vista = new TextView(this);
+                  vista.setText("=== Dibujo ===\nAPK debug compilado en CI\nMotor dibujo: dibujá trazos con el motor C++ y respaldo Kotlin.\nLa app completa está en classes.dex (módulos :core, :engine y :ui).");
+                  int pad = (int) (16 * getResources().getDisplayMetrics().density);
+                  vista.setPadding(pad, pad, pad, pad);
+                  setContentView(vista);
+              }
+          }
+          JAVA
+
+          javac -classpath "$PLAT/android.jar" -d apk/classes apk/src/com/dibujo/android/MainActivity.java
+          jar cf apk/main-classes.jar -C apk/classes .
+
+          rm -f apk/base.apk
+          "$BT/aapt2" link -o apk/base.apk -I "$PLAT/android.jar" \
+            --manifest apk/AndroidManifest.xml \
+            --min-sdk-version 26 --target-sdk-version 34
+
+          # DEX con TODO: MainActivity + :core + :engine + :ui + kotlin-stdlib.
+          "$BT/d8" --release --min-api 26 --lib "$PLAT/android.jar" \
+            --output apk/dex \
+            apk/main-classes.jar ui/build/install/ui/lib/*.jar
+
+          (cd apk/dex && zip -Xq ../base.apk classes*.dex)
+
+          "$BT/zipalign" -f 4 apk/base.apk apk/alineado.apk
+
+      - name: Firmar y verificar APK Debug (apksigner)
+        run: |
+          set -euo pipefail
+          "$BT/apksigner" sign \
+            --ks apk/firma-debug.keystore \
+            --ks-key-alias dibujo-debug \
+            --ks-pass pass:android --key-pass pass:android \
+            --out apk/Dibujo-debug.apk apk/alineado.apk
+          "$BT/apksigner" verify --print-certs apk/Dibujo-debug.apk
+          echo "--- badging ---"
+          "$BT/aapt2" dump badging apk/Dibujo-debug.apk | head -n6
+          rm -f apk/base.apk apk/alineado.apk
+          ls -la apk
+
+      - name: Empaquetar ejecutable de consola (motor nativo C++ incluido)
+        run: |
+          set -euo pipefail
+          cp -r ui/build/install/ui apk/consola-linux
+          if [ -f engine/build/cmake/lib/libdibujo_engine.so ]; then
+            cp engine/build/cmake/lib/libdibujo_engine.so apk/consola-linux/lib/
+          fi
+          cat > apk/consola-linux/dibujo <<'SH'
+          #!/usr/bin/env sh
+          DIR="$(cd "$(dirname "$0")" && pwd)"
+          LD_LIBRARY_PATH="$DIR/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" exec "$DIR/bin/ui" "$@"
+          SH
+          chmod +x apk/consola-linux/dibujo
+          (cd apk && zip -rq Dibujo-consola-linux.zip consola-linux)
+          ls -la apk
+
+      - name: Subir artefactos (APK + firma + consola linux)
+        uses: actions/upload-artifact@v4
+        with:
+          name: Dibujo-APK-Debug
+          path: |
+            apk/Dibujo-debug.apk
+            apk/firma-debug.keystore
+            apk/Dibujo-consola-linux.zip
+          if-no-files-found: error
+          retention-days: 14

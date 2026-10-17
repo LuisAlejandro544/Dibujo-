@@ -13,15 +13,21 @@ import com.dibujo.core.Punta
  * cámara para que la UI pueda dibujar el cursor.
  */
 class MotorNativo(
-    override val ancho: Int,
-    override val alto: Int,
+    anchoInicial: Int,
+    altoInicial: Int,
 ) : MotorDibujo {
 
-    private val handle: Long = NativeEngine.nativoCrear(ancho, alto)
+    private val handle: Long = NativeEngine.nativoCrear(anchoInicial, altoInicial)
 
     init {
         check(handle != 0L) { "no se pudo crear el motor nativo" }
     }
+
+    override var ancho: Int = anchoInicial
+        private set
+
+    override var alto: Int = altoInicial
+        private set
 
     override val nombre: String = "C++ nativo"
 
@@ -53,6 +59,12 @@ class MotorNativo(
     override fun puedeDeshacer(): Boolean = NativeEngine.nativoPuedeDeshacer(handle)
     override fun puedeRehacer(): Boolean = NativeEngine.nativoPuedeRehacer(handle)
     override fun limpiarHoja() = NativeEngine.nativoLimpiarHoja(handle)
+
+    override fun expandir(izquierda: Int, arriba: Int, derecha: Int, abajo: Int) {
+        NativeEngine.nativoExpandir(handle, izquierda, arriba, derecha, abajo)
+        ancho = NativeEngine.nativoAncho(handle)
+        alto = NativeEngine.nativoAlto(handle)
+    }
 
     override fun pan(dx: Float, dy: Float) {
         NativeEngine.nativoPan(handle, dx, dy)

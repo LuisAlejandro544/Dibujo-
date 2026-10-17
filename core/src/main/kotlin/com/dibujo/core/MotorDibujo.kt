@@ -30,6 +30,14 @@ interface MotorDibujo : AutoCloseable {
     fun puedeRehacer(): Boolean
     fun limpiarHoja()
 
+    /**
+     * Expande la hoja agregando píxeles nuevos (rellenos con el fondo) en cada
+     * lado. El contenido existente conserva sus coordenadas de hoja. El tamaño
+     * resultante se acota a `Lienzo.MAX_LADO` por lado. El historial se limpia
+     * (los snapshots viejos tienen otras dimensiones).
+     */
+    fun expandir(izquierda: Int, arriba: Int, derecha: Int, abajo: Int)
+
     /** Cámara: la vista sobre la hoja (modo moverse libremente). */
     fun pan(dx: Float, dy: Float)
     fun zoom(factor: Float)

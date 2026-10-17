@@ -10,13 +10,16 @@ import com.dibujo.core.MotorDibujo
  * Se usa cuando la librería nativa no está disponible (p. ej. sin cmake/g++).
  */
 class MotorKotlin(
-    override val ancho: Int,
-    override val alto: Int,
+    anchoInicial: Int,
+    altoInicial: Int,
 ) : MotorDibujo {
 
-    private val hoja = Lienzo(ancho, alto)
+    private val hoja = Lienzo(anchoInicial, altoInicial)
     private val historial = com.dibujo.core.Historial()
     private var lapiz = Lapiz()
+
+    override val ancho: Int get() = hoja.ancho
+    override val alto: Int get() = hoja.alto
 
     // Trazo en curso (coordenadas de hoja).
     private val trazo = FloatArray(MAX_PUNTOS * 2)
@@ -57,6 +60,17 @@ class MotorKotlin(
     override fun terminarTrazo(): Boolean {
         if (puntos == 0) return false
         historial.guardar(hoja)
+        // La herramienta PINTAR ignora el trazo: rellena la región donde se
+        // tocó con el color del lápiz (balde de pintura).
+        if (lapiz.herramienta == com.dibujo.core.Herramienta.PINTAR) {
+            hoja.rellenar(
+                kotlin.math.round(trazo[0]).toInt(),
+                kotlin.math.round(trazo[1]).toInt(),
+                lapiz.color,
+            )
+            puntos = 0
+            return true
+        }
         val grosor = grosorEfectivo()
         val color = if (lapiz.herramienta == com.dibujo.core.Herramienta.BORRADOR) hoja.fondo else lapiz.color
         val radio = grosor / 2.0f
@@ -88,6 +102,11 @@ class MotorKotlin(
     override fun limpiarHoja() {
         historial.guardar(hoja)
         hoja.limpiar()
+    }
+
+    override fun expandir(izquierda: Int, arriba: Int, derecha: Int, abajo: Int) {
+        historial.limpiar()
+        hoja.expandir(izquierda, arriba, derecha, abajo)
     }
 
     override fun pan(dx: Float, dy: Float) {

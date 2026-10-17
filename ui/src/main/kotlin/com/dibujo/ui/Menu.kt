@@ -40,6 +40,7 @@ object Menu {
         salida.append("  4) carboncillo (suave, grueso)\n")
         salida.append("  5) punta ").append(if (lapiz.punta == Punta.REDONDA) "cuadrada" else "redonda").append('\n')
         salida.append("  6) ").append(if (lapiz.herramienta == Herramienta.LAPIZ) "borrador" else "lápiz").append('\n')
+        salida.append("  7) pintar (balde: rellena la región)\n")
         salida.append("  0) cancelar\n> ")
         val linea = siguienteLinea(entrada) ?: return null
         val n = linea.trim().toIntOrNull() ?: run {
@@ -58,6 +59,7 @@ object Menu {
             6 -> lapiz.copy(
                 herramienta = if (lapiz.herramienta == Herramienta.LAPIZ) Herramienta.BORRADOR else Herramienta.LAPIZ,
             )
+            7 -> lapiz.copy(herramienta = Herramienta.PINTAR)
             else -> {
                 salida.append("opción fuera de rango\n")
                 null

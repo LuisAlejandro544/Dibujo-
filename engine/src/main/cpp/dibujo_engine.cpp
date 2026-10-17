@@ -92,6 +92,23 @@ Java_com_dibujo_engine_NativeEngine_nativoLimpiarHoja(JNIEnv*, jobject, jlong ha
 }
 
 JNIEXPORT void JNICALL
+Java_com_dibujo_engine_NativeEngine_nativoExpandir(
+        JNIEnv*, jobject, jlong handle,
+        jint izquierda, jint arriba, jint derecha, jint abajo) {
+    peer(handle)->expandir(izquierda, arriba, derecha, abajo);
+}
+
+JNIEXPORT jint JNICALL
+Java_com_dibujo_engine_NativeEngine_nativoAncho(JNIEnv*, jobject, jlong handle) {
+    return peer(handle)->ancho();
+}
+
+JNIEXPORT jint JNICALL
+Java_com_dibujo_engine_NativeEngine_nativoAlto(JNIEnv*, jobject, jlong handle) {
+    return peer(handle)->alto();
+}
+
+JNIEXPORT void JNICALL
 Java_com_dibujo_engine_NativeEngine_nativoPan(
         JNIEnv*, jobject, jlong handle, jfloat dx, jfloat dy) {
     peer(handle)->pan(dx, dy);

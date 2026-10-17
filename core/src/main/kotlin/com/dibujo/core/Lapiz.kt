@@ -1,7 +1,12 @@
 package com.dibujo.core
 
-/** Herramientas del lápiz. */
-enum class Herramienta { LAPIZ, PORTAMINA, CARBONCILLO, BORRADOR }
+/**
+ * Herramientas del lápiz.
+ *
+ * El ordinal viaja por JNI hasta el enum `Tool` del C++ (mismo orden): al
+ * agregar una herramienta nueva hay que añadirla al final en los dos lados.
+ */
+enum class Herramienta { LAPIZ, PORTAMINA, CARBONCILLO, BORRADOR, PINTAR }
 
 /** Punta del lápiz. */
 enum class Punta { REDONDA, CUADRADA }
@@ -21,8 +26,9 @@ data class Lapiz(
 
     /**
      * Grosor real del trazo según la herramienta: PORTAMINA es fino,
-     * CARBONCILLO y BORRADOR son más gruesos. El motor C++ replica
-     * esta fórmula (ver `grosorHerramienta` en `DibujoEngine.cpp`).
+     * CARBONCILLO y BORRADOR son más gruesos. PINTAR no usa grosor (rellena
+     * una región). El motor C++ replica esta fórmula (ver `grosorHerramienta`
+     * en `DibujoEngine.cpp`).
      */
     fun grosorEfectivo(): Int = when (herramienta) {
         Herramienta.PORTAMINA -> maxOf(1, grosor / 2)

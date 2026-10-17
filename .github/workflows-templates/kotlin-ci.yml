@@ -15,7 +15,7 @@ permissions:
 
 jobs:
   build:
-    name: Build + Test (JDK 17)
+    name: Build + Test (JDK 17, motor C++ nativo)
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -31,7 +31,8 @@ jobs:
         uses: gradle/actions/setup-gradle@v4
 
       - name: Compilar y correr tests
+        # `build` incluye el build del motor C++ con CMake (tarea buildNative).
         run: ./gradlew build --no-daemon
 
       - name: Verificar ejecutable
-        run: echo "h" | ./gradlew run --no-daemon --console=plain -q
+        run: printf 'h\nq\n' | ./gradlew :ui:run --no-daemon --console=plain -q

@@ -1,0 +1,130 @@
+package com.dibujo.core
+
+import kotlin.test.Test
+import kotlin.test.assertEquals
+import kotlin.test.assertTrue
+
+class LienzoTest {
+    @Test
+    fun pintarDentroDeLimites() {
+        val l = Lienzo(10, 10)
+        l.pintar(3, 4, Colores.ROJO)
+        assertEquals(Colores.ROJO, l.pixel(3, 4))
+    }
+
+    @Test
+    fun pintarFueraNoFalla() {
+        val l = Lienzo(5, 5)
+        l.pintar(-1, 0, Colores.ROJO)
+        l.pintar(0, 99, Colores.ROJO)
+        assertEquals(Colores.BLANCO, l.pixel(0, 0))
+    }
+
+    @Test
+    fun discoRadioCeroPintaUnPixel() {
+        val l = Lienzo(5, 5)
+        l.disco(2f, 2f, 0.5f, Colores.AZUL)
+        assertEquals(Colores.AZUL, l.pixel(2, 2))
+        assertEquals(Colores.BLANCO, l.pixel(0, 0))
+    }
+
+    @Test
+    fun lineaGruesaHorizontal() {
+        val l = Lienzo(10, 5)
+        l.lineaGruesa(0f, 0f, 4f, 0f, 1, redonda = true, color = Colores.VERDE)
+        for (x in 0 until 5) assertEquals(Colores.VERDE, l.pixel(x, 0))
+        assertEquals(Colores.BLANCO, l.pixel(5, 0))
+    }
+
+    @Test
+    fun rellenarInundaRegion() {
+        val l = Lienzo(3, 3)
+        l.lineaGruesa(0f, 1f, 2f, 1f, 1, redonda = true, color = Colores.NEGRO)
+        l.rellenar(0, 0, Colores.AMARILLO)
+        assertTrue((0 until 3).all { l.pixel(it, 0) == Colores.AMARILLO })
+        assertTrue((0 until 3).all { l.pixel(it, 1) == Colores.NEGRO })
+    }
+
+    @Test
+    fun rellenarNoCruzaBorde() {
+        val l = Lienzo(3, 3)
+        l.lineaGruesa(0f, 1f, 2f, 1f, 1, redonda = true, color = Colores.NEGRO)
+        l.rellenar(0, 2, Colores.AMARILLO)
+        assertEquals(Colores.AMARILLO, l.pixel(0, 2))
+        assertEquals(Colores.NEGRO, l.pixel(0, 1))
+    }
+
+    @Test
+    fun clonarCopiaPixeles() {
+        val l = Lienzo(4, 4)
+        l.pintar(1, 1, Colores.ROJO)
+        val copia = l.clonar()
+        assertEquals(Colores.ROJO, copia.pixel(1, 1))
+        copia.pintar(1, 1, Colores.AZUL)
+        assertEquals(Colores.ROJO, l.pixel(1, 1))
+    }
+}
+
+class HistorialTest {
+    @Test
+    fun deshacerRestaura() {
+        val l = Lienzo(5, 5)
+        val h = Historial()
+        h.guardar(l)
+        l.pintar(0, 0, Colores.ROJO)
+        assertTrue(h.deshacer(l))
+        assertEquals(Colores.BLANCO, l.pixel(0, 0))
+    }
+
+    @Test
+    fun rehacerRestauraCambio() {
+        val l = Lienzo(5, 5)
+        val h = Historial()
+        h.guardar(l)
+        l.pintar(2, 2, Colores.ROJO)
+        h.deshacer(l)
+        assertTrue(h.rehacer(l))
+        assertEquals(Colores.ROJO, l.pixel(2, 2))
+    }
+
+    @Test
+    fun rehacerSeInvalidaConCambioNuevo() {
+        val l = Lienzo(5, 5)
+        val h = Historial()
+        h.guardar(l)
+        l.pintar(0, 0, Colores.ROJO)
+        h.deshacer(l)
+        h.guardar(l)
+        l.pintar(1, 1, Colores.AZUL)
+        assertTrue(!h.puedeRehacer())
+    }
+}
+
+class ComandoLineaTest {
+    @Test
+    fun simple() {
+        val c = ComandoLinea("m")
+        assertEquals("m", c.letra)
+        assertEquals(null, c.numero)
+    }
+
+    @Test
+    fun conteoPegado() {
+        val c = ComandoLinea("3d")
+        assertEquals("d", c.letra)
+        assertEquals(3, c.numero)
+    }
+
+    @Test
+    fun conteoSeparado() {
+        val c = ComandoLinea("d 5")
+        assertEquals("d", c.letra)
+        assertEquals(5, c.numero)
+    }
+
+    @Test
+    fun vacia() {
+        val c = ComandoLinea("   ")
+        assertTrue(c.esVacia)
+    }
+}

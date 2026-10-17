@@ -25,6 +25,28 @@ class Lienzo(
         if (dentro(x, y)) pixeles[y * ancho + x] = color
     }
 
+    /**
+     * Pinta [color] sobre el píxel (x, y) mezclando por cobertura [alpha]
+     * (0..255): 255 reemplaza, 0 no hace nada, el resto interpola canal a
+     * canal. `alpha` sale del antialiasing del disco; el C++ replica esta
+     * misma aritmética entera para mantener la paridad píxel a píxel.
+     */
+    fun pintarMezcla(x: Int, y: Int, color: Int, alpha: Int) {
+        if (!dentro(x, y)) return
+        val i = y * ancho + x
+        if (alpha >= 255) {
+            pixeles[i] = color
+            return
+        }
+        if (alpha <= 0) return
+        val destino = pixeles[i]
+        val inv = 255 - alpha
+        val r = (((color ushr 16) and 0xFF) * alpha + ((destino ushr 16) and 0xFF) * inv + 127) / 255
+        val g = (((color ushr 8) and 0xFF) * alpha + ((destino ushr 8) and 0xFF) * inv + 127) / 255
+        val b = ((color and 0xFF) * alpha + (destino and 0xFF) * inv + 127) / 255
+        pixeles[i] = (0xFF shl 24) or (r shl 16) or (g shl 8) or b
+    }
+
     fun limpiar() = pixeles.fill(fondo)
 
     fun clonar(): Lienzo {
@@ -38,19 +60,32 @@ class Lienzo(
         System.arraycopy(otro.pixeles, 0, pixeles, 0, pixeles.size)
     }
 
-    /** Disco relleno (punta del lápiz). Métrica de cuadrícula: px (x, y). */
+    /**
+     * Disco relleno y suavizado (punta redonda del lápiz). La cobertura de
+     * cada píxel se calcula analíticamente (`0.5 + radio − distancia`) y se
+     * mezcla con el fondo, así los bordes del trazo quedan con antialiasing
+     * en lugar de escalonados. La distancia usa `Double` y el C++ idéntico
+     * para que la paridad no dependa del redondeo de `sqrt` en `Float`.
+     */
     fun disco(cx: Float, cy: Float, radio: Float, color: Int) {
-        val x0 = kotlin.math.floor(cx - radio).toInt()
-        val x1 = kotlin.math.ceil(cx + radio).toInt()
-        val y0 = kotlin.math.floor(cy - radio).toInt()
-        val y1 = kotlin.math.ceil(cy + radio).toInt()
-        val r2 = radio * radio
+        val margen = radio + 1.0f
+        val x0 = kotlin.math.floor(cx - margen).toInt()
+        val x1 = kotlin.math.ceil(cx + margen).toInt()
+        val y0 = kotlin.math.floor(cy - margen).toInt()
+        val y1 = kotlin.math.ceil(cy + margen).toInt()
+        val r = radio.toDouble()
+        val cxD = cx.toDouble()
+        val cyD = cy.toDouble()
         for (y in y0..y1) {
             for (x in x0..x1) {
                 if (x < 0 || y < 0 || x >= ancho || y >= alto) continue
-                val dx = x - cx
-                val dy = y - cy
-                if (dx * dx + dy * dy <= r2) pintar(x, y, color)
+                val dx = x - cxD
+                val dy = y - cyD
+                val dist = kotlin.math.sqrt(dx * dx + dy * dy)
+                val cobertura = (0.5 + r - dist).coerceIn(0.0, 1.0)
+                if (cobertura <= 0.0) continue
+                val alpha = kotlin.math.round(cobertura * 255.0).toInt()
+                pintarMezcla(x, y, color, alpha)
             }
         }
     }

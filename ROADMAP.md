@@ -16,6 +16,8 @@ mencionarla en el PR.
 - [x] **Iconos Material 3**: dependencia `material-icons-extended` (BOM) y UI con `TopAppBar` + iconos (undo/redo se habilitan/deshabilitan según el historial). Eliminado el workflow falso `build-debug-apk.yml` (APK placeholder) y `android-apk.yml` ahora también corre en PRs contra main.
 - [x] **Borrado instantáneo**: la vista previa del borrador pinta con el fondo de la hoja y su grosor efectivo (`Lapiz.grosorEfectivo()`), igual que el motor. Historial limitado a 30 pasos (C++ y Kotlin) para acotar la RAM.
 - [x] Requisitos: `minSdk 26` (Android 8) ya era el requisito desde la estructura inicial; confirmado.
+- [x] **Arreglos de diseño (issue 16)**: undo/redo repinta (el `Canvas` observa el `State` en el draw), barras del sistema legibles (iconos oscuros + padding de la barra de navegación para que la paleta se pueda tocar), tamaño de letra fijo (`fontScale = 1`) y trazos con antialiasing en C++ y Kotlin (paridad `MotorTest`).
+- [x] **Selección de backend gráfico (issue 16)**: `BackendRender` + detección de Vulkan 1.1 / OpenGL ES + diálogo de configuración (Vulkan bloqueado sin soporte) y persistencia en `SharedPreferences`. La preferencia queda cableada; el render GPU es el paso siguiente.
 
 ## En curso
 
@@ -25,7 +27,7 @@ mencionarla en el PR.
 
 1. **Persistencia**: guardar/cargar la hoja (PNG a galería o archivo propio) y restaurar el historial de la sesión.
 2. **Firma de release**: keystore de release + `assembleRelease` firmado en CI (hoy solo debug).
-3. **Render acelerado**: reemplazar el render CPU O(vw·vh) por textura (composabled) o mover la rasterización pesada al motor nativo con render directo (OpenGL ES / SurfaceView); mantener paridad con `MotorTest`.
+3. **Render GPU real**: usar el backend elegido (OpenGL ES de base, Vulkan 1.1 cuando el equipo lo soporte) para presentar la hoja como textura y mover el antialiasing/presentación a GPU; mantener paridad con `MotorTest`.
 4. **Cámara al abrir**: modo MOVER centrado con zoom inicial para hojas más grandes que la pantalla.
 5. **Exportar/importar dibujos**: compartir imagen (Intent SHARE) y abrir desde archivos.
 6. **Rueda de herramienta**: selector rápido tipo popover al mantener presionado el chip del modo.

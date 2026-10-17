@@ -1,6 +1,9 @@
 package com.dibujo.android
 
-import androidx.lifecycle.ViewModel
+import android.app.Application
+import android.content.Context
+import androidx.lifecycle.AndroidViewModel
+import com.dibujo.core.BackendRender
 import com.dibujo.core.Camara
 import com.dibujo.core.Herramienta
 import com.dibujo.core.Lapiz
@@ -26,6 +29,14 @@ data class DibujoEstado(
     /** Hay pasos que rehacer (habilita el botón de rehacer). */
     val puedeRehacer: Boolean = false,
     val motorNombre: String = "",
+    /** Backend gráfico elegido por el usuario (persistido). */
+    val backendSeleccionado: BackendRender = BackendRender.AUTOMATICO,
+    /** Backend que realmente corre según la selección y el soporte del equipo. */
+    val backendEfectivo: BackendRender = BackendRender.OPENGL,
+    /** El equipo soporta Vulkan 1.1 (habilita esa opción en configuración). */
+    val vulkanSoportado: Boolean = false,
+    /** Versión de OpenGL ES del equipo (informativo). */
+    val openglEsVersion: String = "2.0",
 )
 
 /**
@@ -37,10 +48,22 @@ data class DibujoEstado(
  * hoja = (pantalla + pan) / zoom, la misma transformación de
  * `MotorDibujo.renderizar`.
  */
-class DibujoViewModel : ViewModel() {
+class DibujoViewModel(app: Application) : AndroidViewModel(app) {
+
+    private val capacidades = CapacidadesGraficas(app)
+    private val preferencias =
+        app.getSharedPreferences(PREFERENCIAS, Context.MODE_PRIVATE)
 
     private var motor: MotorDibujo? = null
-    private val _estado = MutableStateFlow(DibujoEstado())
+    private val seleccionInicial = leerBackend()
+    private val _estado = MutableStateFlow(
+        DibujoEstado(
+            backendSeleccionado = seleccionInicial,
+            backendEfectivo = seleccionInicial.resolver(capacidades.vulkanSoportado),
+            vulkanSoportado = capacidades.vulkanSoportado,
+            openglEsVersion = capacidades.openglEsVersion,
+        ),
+    )
     val estado: StateFlow<DibujoEstado> = _estado.asStateFlow()
 
     /** Crea el motor una sola vez con el tamaño físico de la pantalla (px). */
@@ -51,6 +74,25 @@ class DibujoViewModel : ViewModel() {
         m.configurarLapiz(_estado.value.lapiz)
         _estado.update { it.copy(motorNombre = m.nombre) }
     }
+
+    /**
+     * Elige el backend gráfico y lo persiste. Una opción no disponible en el
+     * equipo (Vulkan sin soporte) se ignora; la UI ya la muestra bloqueada.
+     */
+    fun elegirBackend(backend: BackendRender) {
+        if (!backend.disponible(capacidades.vulkanSoportado)) return
+        val efectivo = backend.resolver(capacidades.vulkanSoportado)
+        if (backend == _estado.value.backendSeleccionado &&
+            efectivo == _estado.value.backendEfectivo
+        ) {
+            return
+        }
+        preferencias.edit().putString(CLAVE_BACKEND, backend.name).apply()
+        _estado.update {
+            it.copy(backendSeleccionado = backend, backendEfectivo = efectivo)
+        }
+    }
+
 
     fun iniciarTrazo(px: Float, py: Float) {
         val m = motor ?: return
@@ -202,8 +244,15 @@ class DibujoViewModel : ViewModel() {
         return (px + cam.panX) / cam.zoom to (py + cam.panY) / cam.zoom
     }
 
+    private fun leerBackend(): BackendRender =
+        preferencias.getString(CLAVE_BACKEND, null)
+            ?.let { nombre -> runCatching { BackendRender.valueOf(nombre) }.getOrNull() }
+            ?: BackendRender.AUTOMATICO
+
     private companion object {
         /** Coincide con el límite de Lienzo. */
         const val MAX_LADO = 4096
+        const val PREFERENCIAS = "dibujo_config"
+        const val CLAVE_BACKEND = "backend_render"
     }
 }

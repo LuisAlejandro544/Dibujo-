@@ -17,22 +17,51 @@ inline int grosorHerramienta(Tool tool, int grosor) {
     }
 }
 
-// Pinta un disco centrado en (cx, cy) con radio r.
-// Métrica de cuadrícula (como en el respaldo Kotlin): x, y son índices.
+// Mezcla `color` sobre el píxel (x, y) con cobertura `alpha` (0..255).
+// Misma aritmética entera que `Lienzo.pintarMezcla` en Kotlin para no romper
+// la paridad píxel a píxel.
+inline void pintarMezcla(std::vector<uint32_t>& hoja, int ancho, int alto,
+                         int x, int y, uint32_t color, int alpha) {
+    if (x < 0 || y < 0 || x >= ancho || y >= alto) return;
+    if (alpha >= 255) {
+        hoja[static_cast<std::size_t>(y) * ancho + x] = color;
+        return;
+    }
+    if (alpha <= 0) return;
+    uint32_t& destino = hoja[static_cast<std::size_t>(y) * ancho + x];
+    const uint32_t a = static_cast<uint32_t>(alpha);
+    const uint32_t inv = static_cast<uint32_t>(255 - alpha);
+    const uint32_t r = ((((color >> 16) & 0xFFu) * a + ((destino >> 16) & 0xFFu) * inv + 127u) / 255u);
+    const uint32_t g = ((((color >> 8) & 0xFFu) * a + ((destino >> 8) & 0xFFu) * inv + 127u) / 255u);
+    const uint32_t b = (((color & 0xFFu) * a + (destino & 0xFFu) * inv + 127u) / 255u);
+    destino = 0xFF000000u | (r << 16) | (g << 8) | b;
+}
+
+// Pinta un disco suavizado centrado en (cx, cy) con radio r.
+// La cobertura se calcula analíticamente (0.5 + r − distancia) usando double,
+// igual que el respaldo Kotlin, para que el antialiasing sea idéntico.
 void pintarDisco(std::vector<uint32_t>& hoja, int ancho, int alto,
                  float cx, float cy, float radio, uint32_t color) {
-    const int x0 = static_cast<int>(std::floor(cx - radio));
-    const int x1 = static_cast<int>(std::ceil(cx + radio));
-    const int y0 = static_cast<int>(std::floor(cy - radio));
-    const int y1 = static_cast<int>(std::ceil(cy + radio));
-    const float r2 = radio * radio;
+    const float margen = radio + 1.0f;
+    const int x0 = static_cast<int>(std::floor(cx - margen));
+    const int x1 = static_cast<int>(std::ceil(cx + margen));
+    const int y0 = static_cast<int>(std::floor(cy - margen));
+    const int y1 = static_cast<int>(std::ceil(cy + margen));
+    const double r = static_cast<double>(radio);
+    const double cxD = static_cast<double>(cx);
+    const double cyD = static_cast<double>(cy);
     for (int y = y0; y <= y1; ++y) {
         if (y < 0 || y >= alto) continue;
         for (int x = x0; x <= x1; ++x) {
             if (x < 0 || x >= ancho) continue;
-            const float dx = static_cast<float>(x) - cx;
-            const float dy = static_cast<float>(y) - cy;
-            if (dx * dx + dy * dy <= r2) hoja[y * ancho + x] = color;
+            const double dx = static_cast<double>(x) - cxD;
+            const double dy = static_cast<double>(y) - cyD;
+            const double dist = std::sqrt(dx * dx + dy * dy);
+            double cobertura = 0.5 + r - dist;
+            if (cobertura <= 0.0) continue;
+            if (cobertura > 1.0) cobertura = 1.0;
+            const int alpha = static_cast<int>(std::lround(cobertura * 255.0));
+            pintarMezcla(hoja, ancho, alto, x, y, color, alpha);
         }
     }
 }

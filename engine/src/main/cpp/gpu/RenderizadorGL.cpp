@@ -215,8 +215,11 @@ bool RenderizadorGL::compilarPrograma() {
 }
 
 void RenderizadorGL::subirHoja() {
+    // `copiarHoja` siempre copia una hoja completa. La primera subida también
+    // debe ocurrir con revisión 0 (hoja recién creada): si se descarta, la
+    // textura queda sin inicializar y el lienzo se ve negro hasta el primer
+    // trazo (o hasta que algo cambie la revisión).
     const uint64_t rev = motor_->copiarHoja(buffer_.data(), buffer_.size());
-    if (rev == 0) return;
     glBindTexture(GL_TEXTURE_2D, textura_);
     glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, anchoHoja_, altoHoja_, GL_RGBA,
                     GL_UNSIGNED_BYTE, buffer_.data());

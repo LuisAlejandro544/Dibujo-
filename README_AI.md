@@ -50,8 +50,13 @@ barra superior) permite cambiarlo; Vulkan se bloquea sin soporte 1.1 y la
 preferencia se guarda en `SharedPreferences`. El render GPU real ya existe:
 `engine/src/main/cpp/gpu/` (EGL+GLES3 y Vulkan) presenta la hoja como textura
 y mueve la cámara al shader; `SuperficieGpu` (`:app`) la muestra en un
-`SurfaceView` con hilo propio y, si falla, la app cae a `LienzoCpu`. El
-rasterizado del trazo sigue en C++/Kotlin (paridad `MotorTest` intacta).
+`SurfaceView` con hilo propio y, si falla, la app cae a `LienzoCpu`. La hoja
+ocupa toda la ventana (barras encima) para que superficie GPU, gestos y motor
+compartan origen y el trazo caiga donde se dibuja. Hay pantalla de carga
+(`gpuCargando`) mientras el renderizador inicia o se cambia de backend, y la
+primera subida de la hoja se hace con revisión 0 (si no, el lienzo queda negro
+hasta el primer trazo). El rasterizado del trazo sigue en C++/Kotlin (paridad
+`MotorTest` intacta).
 
 ## Reglas duras (resumen de AGENTS.md)
 

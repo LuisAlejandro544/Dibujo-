@@ -308,8 +308,10 @@ bool RenderizadorVulkan::crearHoja() {
 }
 
 void RenderizadorVulkan::subirHoja(VkCommandBuffer externo) {
+    // Igual que en OpenGL: la revisión 0 (hoja recién creada) es válida y debe
+    // subirse. Descartarla dejaba la imagen de la hoja sin inicializar, así que
+    // el lienzo se veía negro hasta el primer cambio de contenido.
     const uint64_t rev = motor_->copiarHoja(buffer_.data(), buffer_.size());
-    if (rev == 0) return;
 
     void* destino = nullptr;
     if (vkMapMemory(dispositivo_, memoriaStaging_, 0, tamanoStaging_, 0, &destino) == VK_SUCCESS) {

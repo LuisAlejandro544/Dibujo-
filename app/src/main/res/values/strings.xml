@@ -20,10 +20,12 @@
     <string name="cd_modo_editar">Modo edición: tocar para cambiar a mover</string>
     <string name="cd_modo_mover">Modo mover: tocar para cambiar a edición</string>
     <string name="cd_configuracion">Abrir configuración</string>
+    <string name="cd_cargando_render">Preparando el motor gráfico</string>
 
     <!-- Estado -->
     <string name="estado_motor">Motor: %1$s</string>
     <string name="estado_grosor">Grosor %1$d</string>
+    <string name="cargando_render">Preparando render %1$s…</string>
 
     <!-- Configuración -->
     <string name="config_titulo">Configuración</string>

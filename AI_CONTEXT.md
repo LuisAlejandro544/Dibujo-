@@ -162,13 +162,35 @@ corresponde.
 
 **Lado Kotlin:** `SuperficieGpu` (`:app`) es un `SurfaceView` + hilo de render
 (`HiloRenderGpu`, `ReentrantLock`/`Condition`) que crea el renderizador y pide
-cuadros on-demand. `DibujoEngine` expone `revision()`/`copiarHoja()`/
+cuadros on-demand. El hilo presenta un primer cuadro **antes** de avisar
+`gpuListo`: así la pantalla de carga se retira con la hoja ya pintada y no se
+ve un destello negro. `DibujoEngine` expone `revision()`/`copiarHoja()`/
 `leerCamara()` con mutex para que el hilo GPU lea un snapshot coherente.
 `PantallaDibujo` separa `AreaDibujo` en: hoja (`SuperficieGpu` si hay GPU, si
 no `LienzoCpu`) + `CapaGestos` encima (gestos y vista previa del trazo). El
 `Scaffold` y el `windowBackground` son transparentes para que se vea la
 superficie GPU, que queda en una capa detrás de la ventana. Si el render GPU
 falla en runtime, `gpuFracaso()` cae a `LienzoCpu` (CPU).
+
+**Alineación de coordenadas (crítico).** El contenido del `Scaffold` NO aplica
+`margenes`: la hoja ocupa **toda la ventana** (las barras se pintan encima, con
+la barra superior/inferior después del contenido, así siguen dibujándose y
+recibiendo toque). De este modo la superficie GPU, la capa de gestos y el motor
+comparten el mismo origen y tamaño (pantalla completa), y el trazo cae justo
+donde se dibuja. Aplicar `margenes` al área de dibujo desincronizaba el
+`SurfaceView` (capa aparte) de la capa Compose y el trazo aparecía desplazado.
+
+**Pantalla de carga.** `DibujoEstado.gpuCargando` se enciende al crear el motor
+con GPU disponible y al cambiar de backend, y se apaga en `gpuListo()` o
+`gpuFracaso()`. Mientras `motorNombre` está vacío o `gpuCargando` es true,
+`AreaDibujo` muestra `PantallaCarga` (indicador + texto) sobre la superficie,
+evitando el cuadro en negro durante la inicialización de OpenGL/Vulkan.
+
+**Primera subida de la hoja.** La revisión 0 es válida (hoja recién creada) y
+la textura/imagen debe subirse igualmente: `subirHoja` en `RenderizadorGL` y
+`RenderizadorVulkan` no descartan `rev == 0`. Si se descarta, el lienzo queda
+negro hasta el primer cambio de contenido (el "negro hasta tocar la pantalla",
+sobre todo en Vulkan).
 
 
 ## 6. Riesgos conocidos / no resueltos

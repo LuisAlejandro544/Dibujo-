@@ -196,6 +196,19 @@ private class HiloRenderGpu(
             } catch (_: Throwable) {
                 ""
             }
+
+            // Primer cuadro ANTES de avisar "listo": así la pantalla de carga se
+            // retira con la hoja ya presentada y no se alcanza a ver un cuadro
+            // negro (sobre todo en Vulkan). Si falla, se cae a CPU.
+            val primerCuadro = try {
+                NativeEngine.nativoGpuRender(gpu)
+            } catch (_: Throwable) {
+                false
+            }
+            if (!primerCuadro) {
+                alFallo("contexto-perdido")
+                return
+            }
             alListo(descripcion)
 
             while (true) {

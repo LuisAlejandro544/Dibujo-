@@ -41,6 +41,8 @@ data class DibujoEstado(
     val gpuDisponible: Boolean = false,
     /** El render GPU está en uso (si no, se pinta por CPU con Compose). */
     val gpuActivo: Boolean = false,
+    /** El render GPU se está creando/creando de nuevo: pantalla de carga. */
+    val gpuCargando: Boolean = false,
     /** Descripción del renderizador GPU en uso (diagnóstico). */
     val gpuDescripcion: String = "",
     /** El intento de GPU falló: se cae al render por CPU. */
@@ -80,8 +82,15 @@ class DibujoViewModel(app: Application) : AndroidViewModel(app) {
         val m = Motores.crear(vw.coerceIn(1, MAX_LADO), vh.coerceIn(1, MAX_LADO))
         motor = m
         m.configurarLapiz(_estado.value.lapiz)
+        val hayGpu = m.handleNativo != 0L
         _estado.update {
-            it.copy(motorNombre = m.nombre, gpuDisponible = m.handleNativo != 0L)
+            it.copy(
+                motorNombre = m.nombre,
+                gpuDisponible = hayGpu,
+                // Con GPU disponible arranca la pantalla de carga hasta que el
+                // renderizador nativo confirme (`gpuListo`) o falle (`gpuFracaso`).
+                gpuCargando = hayGpu,
+            )
         }
     }
 
@@ -91,14 +100,24 @@ class DibujoViewModel(app: Application) : AndroidViewModel(app) {
     /** El render GPU arrancó: se pinta por GPU y se registra su descripción. */
     fun gpuListo(descripcion: String) {
         _estado.update {
-            it.copy(gpuActivo = true, gpuDescripcion = descripcion, gpuFallo = false)
+            it.copy(
+                gpuActivo = true,
+                gpuDescripcion = descripcion,
+                gpuFallo = false,
+                gpuCargando = false,
+            )
         }
     }
 
     /** El render GPU falló: se cae al render por CPU con Compose. */
     fun gpuFracaso() {
         _estado.update {
-            it.copy(gpuActivo = false, gpuDescripcion = "", gpuFallo = true)
+            it.copy(
+                gpuActivo = false,
+                gpuDescripcion = "",
+                gpuFallo = true,
+                gpuCargando = false,
+            )
         }
     }
 
@@ -109,21 +128,27 @@ class DibujoViewModel(app: Application) : AndroidViewModel(app) {
     fun elegirBackend(backend: BackendRender) {
         if (!backend.disponible(capacidades.vulkanSoportado)) return
         val efectivo = backend.resolver(capacidades.vulkanSoportado)
-        if (backend == _estado.value.backendSeleccionado &&
-            efectivo == _estado.value.backendEfectivo
+        val actual = _estado.value
+        if (backend == actual.backendSeleccionado &&
+            efectivo == actual.backendEfectivo &&
+            !actual.gpuFallo
         ) {
             return
         }
         preferencias.edit().putString(CLAVE_BACKEND, backend.name).apply()
-        // Se reintenta el render GPU con el backend nuevo (por si el anterior
-        // había fallado y se estaba pintando por CPU).
+        // El renderizador se recrea si cambia el backend EFECTIVO (p. ej. pasar
+        // de Automático a OpenGL sigue usando OpenGL) o si el intento anterior
+        // había fallado (se reintenta la GPU). En cambio, si todo sigue igual, no
+        // hay nada que recrear ni pantalla de carga que mostrar.
+        val cambiaRender = efectivo != actual.backendEfectivo || actual.gpuFallo
         _estado.update {
             it.copy(
                 backendSeleccionado = backend,
                 backendEfectivo = efectivo,
-                gpuActivo = false,
-                gpuDescripcion = "",
-                gpuFallo = false,
+                gpuActivo = if (cambiaRender) false else it.gpuActivo,
+                gpuDescripcion = if (cambiaRender) "" else it.gpuDescripcion,
+                gpuFallo = if (cambiaRender) false else it.gpuFallo,
+                gpuCargando = if (cambiaRender) it.gpuDisponible else it.gpuCargando,
             )
         }
     }

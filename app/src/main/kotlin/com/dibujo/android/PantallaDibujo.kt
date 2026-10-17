@@ -46,6 +46,7 @@ import androidx.compose.material.icons.rounded.PanTool
 import androidx.compose.material.icons.rounded.Remove
 import androidx.compose.material.icons.rounded.Settings
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilterChipDefaults
@@ -158,8 +159,13 @@ fun PantallaDibujo(vm: DibujoViewModel = viewModel()) {
         // de la ventana (el `SurfaceView`). Las barras y la vista previa del
         // trazo se dibujan encima en la ventana de Compose.
         containerColor = Color.Transparent,
-    ) { margenes ->
-        AreaDibujo(estadoState, vm, Modifier.padding(margenes).fillMaxSize())
+    ) {
+        // A propósito NO aplicamos `margenes`: la hoja ocupa toda la ventana
+        // (detrás de las barras). Así la superficie GPU, la capa de gestos y el
+        // motor comparten EXACTAMENTE el mismo origen y tamaño (pantalla
+        // completa), y el trazo cae justo donde se dibuja. Las barras se pintan
+        // encima y siguen recibiendo el toque.
+        AreaDibujo(estadoState, vm, Modifier.fillMaxSize())
     }
 
     if (mostrarConfig) {
@@ -183,6 +189,7 @@ private fun BarraSuperior(
     alAbrirConfig: () -> Unit,
 ) {
     TopAppBar(
+        modifier = Modifier.absorberToque(),
         title = {
             Column {
                 Text(stringResource(R.string.app_name))
@@ -262,6 +269,43 @@ private fun AreaDibujo(
             LienzoCpu(estadoState, vm, dimension, Modifier.fillMaxSize())
         }
         CapaGestos(estadoState, vm, Modifier.fillMaxSize())
+
+        // Mientras el motor/renderizador se crea (al abrir la app o al cambiar
+        // de backend) tapamos la superficie para no mostrar el cuadro en negro.
+        if (estado.motorNombre.isEmpty() || estado.gpuCargando) {
+            PantallaCarga(estado.backendEfectivo, Modifier.fillMaxSize())
+        }
+    }
+}
+
+/**
+ * Pantalla de carga del render GPU: cubre el área de dibujo mientras el
+ * renderizador nativo (OpenGL ES o Vulkan) se inicializa y publica su primer
+ * cuadro. Evita el destello negro de una superficie aún sin inicializar.
+ */
+@Composable
+private fun PantallaCarga(
+    backend: BackendRender,
+    modifier: Modifier = Modifier,
+) {
+    val descripcion = stringResource(R.string.cd_cargando_render)
+    Box(
+        modifier
+            .background(MaterialTheme.colorScheme.surface)
+            .semantics { contentDescription = descripcion },
+        contentAlignment = Alignment.Center,
+    ) {
+        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            CircularProgressIndicator()
+            Spacer(Modifier.size(16.dp))
+            Text(
+                stringResource(
+                    R.string.cargando_render,
+                    stringResource(backend.recursoNombre()),
+                ),
+                style = MaterialTheme.typography.bodyMedium,
+            )
+        }
     }
 }
 
@@ -370,7 +414,7 @@ private fun CapaGestos(
 /** Barra inferior: herramientas + modo + grosor (fila 1) y paleta (fila 2). */
 @Composable
 private fun BarraHerramientas(estado: DibujoEstado, vm: DibujoViewModel) {
-    Surface(tonalElevation = 3.dp) {
+    Surface(modifier = Modifier.absorberToque(), tonalElevation = 3.dp) {
         Column(
             Modifier
                 .fillMaxWidth()
@@ -548,6 +592,20 @@ private fun BackendRender.recursoNombre(): Int = when (this) {
     BackendRender.AUTOMATICO -> R.string.backend_automatico
     BackendRender.OPENGL -> R.string.backend_opengl
     BackendRender.VULKAN -> R.string.backend_vulkan
+}
+
+/**
+ * Absorbe el toque dentro de la vista. La hoja ocupa toda la ventana (detrás de
+ * las barras): sin esto, un toque sobre una zona vacía de una barra caería a la
+ * capa de dibujo de atrás y dejaría una marca. Los hijos de la barra (botones,
+ * chips, scroll) siguen funcionando: se recorren primero.
+ */
+private fun Modifier.absorberToque(): Modifier = pointerInput(Unit) {
+    awaitPointerEventScope {
+        while (true) {
+            awaitPointerEvent().changes.forEach { it.consume() }
+        }
+    }
 }
 
 @Composable

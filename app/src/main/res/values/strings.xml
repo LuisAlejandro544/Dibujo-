@@ -31,6 +31,9 @@
     <string name="config_backend_efectivo">En uso: %1$s</string>
     <string name="config_vulkan_no_soportado">Este equipo no soporta Vulkan 1.1; la opción queda bloqueada.</string>
     <string name="config_opengl_version">OpenGL ES %1$s disponible</string>
+    <string name="config_render_gpu">Dibujo por GPU: %1$s</string>
+    <string name="config_render_cpu">Dibujo por CPU (sin render GPU)</string>
+    <string name="config_render_cpu_fallo">Dibujo por CPU (el render GPU falló)</string>
     <string name="backend_automatico">Automático</string>
     <string name="backend_opengl">OpenGL ES</string>
     <string name="backend_vulkan">Vulkan</string>

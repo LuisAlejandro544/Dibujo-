@@ -38,6 +38,13 @@ interface MotorDibujo : AutoCloseable {
 
     /** Rasteriza el viewport (vw x vh píxeles) en [destino] aplicando la cámara. */
     fun renderizar(destino: IntArray, vw: Int, vh: Int)
+
+    /**
+     * Handle nativo opaco del motor para el render GPU (Android). Es `0` en
+     * motores que no exponen memoria nativa compartible (p. ej. `MotorKotlin`),
+     * caso en el que la app cae al render por CPU.
+     */
+    val handleNativo: Long get() = 0L
 }
 
 /** Estado de la cámara: pan (px de hoja) y zoom. */

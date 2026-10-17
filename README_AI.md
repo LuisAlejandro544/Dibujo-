@@ -15,9 +15,9 @@ garantizada por tests). Dos front-ends: consola JVM (`:ui`) y Android Compose
 |---|---|
 | `core/src/main/kotlin/com/dibujo/core/` | Dominio: `Lienzo` (hoja ARGB ≤4096×4096, disco con antialiasing), `MotorDibujo` (fachada), `Lapiz`, `Colores`, `Modo`, `Historial`, `BackendRender`, `ComandoLinea` (parser). |
 | `engine/src/main/kotlin/com/dibujo/engine/` | `Motores.crear()` → `MotorNativo` (JNI) o `MotorKotlin` (respaldo); `NativeEngine` declara los `external`. |
-| `engine/src/main/cpp/` | C++17: `DibujoEngine` (núcleo, disco antialiased), `dibujo_engine.cpp` (JNI), `CMakeLists.txt` (JDK en escritorio, NDK en Android). |
+| `engine/src/main/cpp/` | C++17: `DibujoEngine` (núcleo, disco antialiased), `dibujo_engine.cpp` (JNI), `gpu/` (`RenderizadorGL`, `RenderizadorVulkan`, `GpuJni.cpp`, shaders; sólo Android), `CMakeLists.txt` (JDK en escritorio, NDK en Android). |
 | `ui/` | Consola ANSI: `Main.kt`, `ControladorConsola`, `VistaHoja`, `Menu`. |
-| `app/` | Android: `MainActivity`, `PantallaDibujo` (Compose M3, edge-to-edge + fuente fija), `DibujoViewModel`, `CapacidadesGraficas` (detección Vulkan 1.1 / OpenGL ES), manifest, recursos e adaptive icon. |
+| `app/` | Android: `MainActivity`, `PantallaDibujo` (Compose M3, edge-to-edge + fuente fija), `SuperficieGpu` (SurfaceView + hilo de render GPU), `DibujoViewModel`, `CapacidadesGraficas` (detección Vulkan 1.1 / OpenGL ES), manifest, recursos e adaptive icon. |
 | `.github/workflows/` | `android-apk.yml` (assembleDebug manual y en PRs contra main). |
 
 ## Semántica de cámara (crítica, no re-derivar)
@@ -47,8 +47,11 @@ nDevice ABIs: arm64-v8a + x86_64.
 `BackendRender` (`:core`: `AUTOMATICO` / `OPENGL` / `VULKAN`) + detección en
 `CapacidadesGraficas` (`:app`). El diálogo de configuración (engranaje en la
 barra superior) permite cambiarlo; Vulkan se bloquea sin soporte 1.1 y la
-preferencia se guarda en `SharedPreferences`. El render GPU real todavía no
-está implementado (ver ROADMAP); el rasterizado sigue en C++/Kotlin.
+preferencia se guarda en `SharedPreferences`. El render GPU real ya existe:
+`engine/src/main/cpp/gpu/` (EGL+GLES3 y Vulkan) presenta la hoja como textura
+y mueve la cámara al shader; `SuperficieGpu` (`:app`) la muestra en un
+`SurfaceView` con hilo propio y, si falla, la app cae a `LienzoCpu`. El
+rasterizado del trazo sigue en C++/Kotlin (paridad `MotorTest` intacta).
 
 ## Reglas duras (resumen de AGENTS.md)
 

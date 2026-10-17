@@ -65,6 +65,7 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.State
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -153,8 +154,12 @@ fun PantallaDibujo(vm: DibujoViewModel = viewModel()) {
             )
         },
         bottomBar = { BarraHerramientas(estado, vm) },
+        // Transparente: deja ver la superficie GPU que va en una capa detrás
+        // de la ventana (el `SurfaceView`). Las barras y la vista previa del
+        // trazo se dibujan encima en la ventana de Compose.
+        containerColor = Color.Transparent,
     ) { margenes ->
-        Hoja(estadoState, vm, Modifier.padding(margenes).fillMaxSize())
+        AreaDibujo(estadoState, vm, Modifier.padding(margenes).fillMaxSize())
     }
 
     if (mostrarConfig) {
@@ -223,14 +228,51 @@ private fun BarraSuperior(
     )
 }
 
+/**
+ * Área de dibujo: superficie GPU con caída a CPU y capa de gestos encima.
+ *
+ * La hoja se presenta por GPU sólo si el equipo la soporta, no falló antes y
+ * el motor nativo está disponible; si no, se pinta por CPU en un `Canvas`.
+ * Los gestos y la vista previa del trazo van siempre en una capa Compose
+ * encima, así funcionan igual con GPU o CPU.
+ */
 @Composable
-private fun Hoja(
+private fun AreaDibujo(
     estadoState: State<DibujoEstado>,
     vm: DibujoViewModel,
     modifier: Modifier = Modifier,
 ) {
+    val estado = estadoState.value
     var dimension by remember { mutableStateOf(IntSize.Zero) }
+    val usarGpu = estado.gpuDisponible && !estado.gpuFallo && vm.handleMotor() != 0L
 
+    Box(
+        modifier.onSizeChanged { tamano ->
+            if (tamano != dimension) dimension = tamano
+            vm.inicializar(tamano.width, tamano.height)
+        },
+    ) {
+        if (usarGpu) {
+            // Recrear al cambiar de backend: un renderizador OpenGL no sirve
+            // para Vulkan y viceversa.
+            key(estado.backendEfectivo) {
+                SuperficieGpu(estadoState, vm, Modifier.fillMaxSize())
+            }
+        } else {
+            LienzoCpu(estadoState, vm, dimension, Modifier.fillMaxSize())
+        }
+        CapaGestos(estadoState, vm, Modifier.fillMaxSize())
+    }
+}
+
+/** Hoja rasterizada por CPU: reserva para equipos sin render GPU. */
+@Composable
+private fun LienzoCpu(
+    estadoState: State<DibujoEstado>,
+    vm: DibujoViewModel,
+    dimension: IntSize,
+    modifier: Modifier = Modifier,
+) {
     val buffer = remember(dimension) {
         IntArray((dimension.width * dimension.height).coerceAtLeast(1))
     }
@@ -242,48 +284,57 @@ private fun Hoja(
         }
     }
 
-    val modo = estadoState.value.modo
-
-    Canvas(
-        modifier
-            .fillMaxSize()
-            .onSizeChanged { tamano ->
-                if (tamano != dimension) dimension = tamano
-                vm.inicializar(tamano.width, tamano.height)
-            }
-            // EDICION: un dedo dibuja; MOVER: pan y pinch de la cámara.
-            .pointerInput(modo) {
-                if (modo == Modo.MOVER) {
-                    detectTransformGestures { foco, pan, zoom, _ ->
-                        if (zoom != 1f) vm.zoomear(zoom, foco.x, foco.y)
-                        if (pan != Offset.Zero) vm.panear(pan.x, pan.y)
-                    }
-                } else {
-                    detectDragGestures(
-                        onDragStart = { vm.iniciarTrazo(it.x, it.y) },
-                        onDragEnd = { vm.soltarTrazo() },
-                        onDragCancel = { vm.cancelarTrazo() },
-                        onDrag = { cambio, _ ->
-                            vm.continuarTrazo(cambio.position.x, cambio.position.y)
-                            cambio.consume()
-                        },
-                    )
-                }
-            },
-    ) {
+    Canvas(modifier) {
         // Leer el State dentro del draw suscribe el repintado a *todo* cambio
         // del estado. Sin esto, undo/redo/limpiar (que sólo tocan `marco`)
         // cambiaban el motor pero el Canvas no se volvía a pintar: el famoso
         // "se unde y no hace nada".
-        val estado = estadoState.value
+        val fotograma = estadoState.value.marco
         val bmp = bitmap ?: return@Canvas
         val vw = size.width.toInt().coerceAtLeast(1)
         val vh = size.height.toInt().coerceAtLeast(1)
-        vm.renderizar(buffer, vw, vh)
-        bmp.setPixels(buffer, 0, vw, 0, 0, vw, vh)
+        if (fotograma >= 0) {
+            vm.renderizar(buffer, vw, vh)
+            bmp.setPixels(buffer, 0, vw, 0, 0, vw, vh)
+        }
         drawImage(bmp.asImageBitmap())
+    }
+}
 
-        // Vista previa del trazo en curso (el motor la rasteriza al soltar).
+/**
+ * Capa transparente de entrada: captura los gestos y dibuja la vista previa
+ * del trazo en curso. Va encima de la hoja (GPU o CPU) para que la marca se
+ * vea al instante sin esperar a que el motor la rasterice.
+ */
+@Composable
+private fun CapaGestos(
+    estadoState: State<DibujoEstado>,
+    vm: DibujoViewModel,
+    modifier: Modifier = Modifier,
+) {
+    // EDICION: un dedo dibuja; MOVER: pan y pinch de la cámara.
+    val modo = estadoState.value.modo
+    Canvas(
+        modifier.pointerInput(modo) {
+            if (modo == Modo.MOVER) {
+                detectTransformGestures { foco, pan, zoom, _ ->
+                    if (zoom != 1f) vm.zoomear(zoom, foco.x, foco.y)
+                    if (pan != Offset.Zero) vm.panear(pan.x, pan.y)
+                }
+            } else {
+                detectDragGestures(
+                    onDragStart = { vm.iniciarTrazo(it.x, it.y) },
+                    onDragEnd = { vm.soltarTrazo() },
+                    onDragCancel = { vm.cancelarTrazo() },
+                    onDrag = { cambio, _ ->
+                        vm.continuarTrazo(cambio.position.x, cambio.position.y)
+                        cambio.consume()
+                    },
+                )
+            }
+        },
+    ) {
+        val estado = estadoState.value
         val trazo = estado.trazoEnCurso
         val camara = estado.camara
         val lapiz = estado.lapiz
@@ -291,9 +342,9 @@ private fun Hoja(
         // fondo de la hoja y usa su grosor efectivo, así la marca se ve
         // "borrada" al instante mientras arrastrás el dedo.
         val borran = lapiz.herramienta == Herramienta.BORRADOR
-        val colorTrazo = if (borran) Color(Colores.BLANCO) else Color(lapiz.color)
-        val grosorTrazo = lapiz.grosorEfectivo()
         if (trazo != null && trazo.size >= 2) {
+            val colorTrazo = if (borran) Color(Colores.BLANCO) else Color(lapiz.color)
+            val grosorTrazo = lapiz.grosorEfectivo()
             val path = Path()
             path.moveTo(
                 trazo[0] * camara.zoom - camara.panX,
@@ -423,6 +474,18 @@ private fun DialogoConfiguracion(
                 )
                 Text(
                     stringResource(R.string.config_opengl_version, estado.openglEsVersion),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Text(
+                    stringResource(
+                        when {
+                            estado.gpuActivo -> R.string.config_render_gpu
+                            estado.gpuFallo -> R.string.config_render_cpu_fallo
+                            else -> R.string.config_render_cpu
+                        },
+                        estado.gpuDescripcion,
+                    ),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )

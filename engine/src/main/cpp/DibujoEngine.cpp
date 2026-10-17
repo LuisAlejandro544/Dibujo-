@@ -127,6 +127,8 @@ bool DibujoEngine::terminarTrazo() {
         cancelarTrazo();
         return false;
     }
+    // La hoja la lee también el hilo de render GPU: bloquear la mutación.
+    std::lock_guard<std::mutex> bloqueo(mutex_);
     // Snapshot para undo antes de aplicar el trazo.
     pasado_.push_back(hoja_);
     if (pasado_.size() > kMaxHistorial) pasado_.erase(pasado_.begin());
@@ -149,6 +151,7 @@ bool DibujoEngine::terminarTrazo() {
 
     trazo_.clear();
     trazoActivo_ = false;
+    ++revision_;
     return true;
 }
 
@@ -158,29 +161,32 @@ void DibujoEngine::cancelarTrazo() {
 }
 
 bool DibujoEngine::deshacer() {
+    std::lock_guard<std::mutex> bloqueo(mutex_);
     if (pasado_.empty()) return false;
     futuro_.push_back(hoja_);
     hoja_ = pasado_.back();
     pasado_.pop_back();
+    ++revision_;
     return true;
 }
 
 bool DibujoEngine::rehacer() {
+    std::lock_guard<std::mutex> bloqueo(mutex_);
     if (futuro_.empty()) return false;
     pasado_.push_back(hoja_);
     hoja_ = futuro_.back();
     futuro_.pop_back();
+    ++revision_;
     return true;
 }
 
 void DibujoEngine::limpiarHoja() {
-    if (futuro_.empty()) {
-        // Limpieza desde el estado actual: es deshacible.
-    }
+    std::lock_guard<std::mutex> bloqueo(mutex_);
     pasado_.push_back(hoja_);
     if (pasado_.size() > kMaxHistorial) pasado_.erase(pasado_.begin());
     futuro_.clear();
     std::fill(hoja_.begin(), hoja_.end(), fondo_);
+    ++revision_;
 }
 
 void DibujoEngine::pan(float dx, float dy) {
@@ -208,6 +214,9 @@ void DibujoEngine::centrarVista() {
 
 void DibujoEngine::renderizar(uint32_t* destino, int vw, int vh) const {
     if (destino == nullptr || vw <= 0 || vh <= 0) return;
+    // Este camino corre en el hilo de la UI (el mismo que muta la hoja), así
+    // que no necesita bloqueo; lee `hoja_` directamente para no bloquear por
+    // píxel. El hilo de render GPU usa `copiarHoja`, que sí bloquea.
     for (int y = 0; y < vh; ++y) {
         for (int x = 0; x < vw; ++x) {
             // Coordenada de hoja que corresponde al píxel de pantalla.
@@ -215,9 +224,32 @@ void DibujoEngine::renderizar(uint32_t* destino, int vw, int vh) const {
             const float hy = (static_cast<float>(y) + panY_) / zoom_;
             const int ix = static_cast<int>(std::floor(hx));
             const int iy = static_cast<int>(std::floor(hy));
-            destino[y * vw + x] = pixelHoja(ix, iy);
+            destino[y * vw + x] =
+                (ix >= 0 && iy >= 0 && ix < ancho_ && iy < alto_)
+                    ? hoja_[static_cast<std::size_t>(iy) * ancho_ + ix]
+                    : fondo_;
         }
     }
+}
+
+uint64_t DibujoEngine::revision() const {
+    std::lock_guard<std::mutex> bloqueo(mutex_);
+    return revision_;
+}
+
+uint64_t DibujoEngine::copiarHoja(uint32_t* destino, std::size_t capacidad) const {
+    if (destino == nullptr) return 0;
+    std::lock_guard<std::mutex> bloqueo(mutex_);
+    if (capacidad < hoja_.size()) return 0;
+    std::copy(hoja_.begin(), hoja_.end(), destino);
+    return revision_;
+}
+
+void DibujoEngine::leerCamara(float& panX, float& panY, float& zoom) const {
+    std::lock_guard<std::mutex> bloqueo(mutex_);
+    panX = panX_;
+    panY = panY_;
+    zoom = zoom_;
 }
 
 } // namespace dibujo

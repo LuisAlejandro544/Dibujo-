@@ -37,6 +37,14 @@ data class DibujoEstado(
     val vulkanSoportado: Boolean = false,
     /** Versión de OpenGL ES del equipo (informativo). */
     val openglEsVersion: String = "2.0",
+    /** El motor expone un handle nativo compartible con el render GPU. */
+    val gpuDisponible: Boolean = false,
+    /** El render GPU está en uso (si no, se pinta por CPU con Compose). */
+    val gpuActivo: Boolean = false,
+    /** Descripción del renderizador GPU en uso (diagnóstico). */
+    val gpuDescripcion: String = "",
+    /** El intento de GPU falló: se cae al render por CPU. */
+    val gpuFallo: Boolean = false,
 )
 
 /**
@@ -72,7 +80,26 @@ class DibujoViewModel(app: Application) : AndroidViewModel(app) {
         val m = Motores.crear(vw.coerceIn(1, MAX_LADO), vh.coerceIn(1, MAX_LADO))
         motor = m
         m.configurarLapiz(_estado.value.lapiz)
-        _estado.update { it.copy(motorNombre = m.nombre) }
+        _estado.update {
+            it.copy(motorNombre = m.nombre, gpuDisponible = m.handleNativo != 0L)
+        }
+    }
+
+    /** Handle nativo del motor para el render GPU (0 si no aplica). */
+    fun handleMotor(): Long = motor?.handleNativo ?: 0L
+
+    /** El render GPU arrancó: se pinta por GPU y se registra su descripción. */
+    fun gpuListo(descripcion: String) {
+        _estado.update {
+            it.copy(gpuActivo = true, gpuDescripcion = descripcion, gpuFallo = false)
+        }
+    }
+
+    /** El render GPU falló: se cae al render por CPU con Compose. */
+    fun gpuFracaso() {
+        _estado.update {
+            it.copy(gpuActivo = false, gpuDescripcion = "", gpuFallo = true)
+        }
     }
 
     /**
@@ -88,8 +115,16 @@ class DibujoViewModel(app: Application) : AndroidViewModel(app) {
             return
         }
         preferencias.edit().putString(CLAVE_BACKEND, backend.name).apply()
+        // Se reintenta el render GPU con el backend nuevo (por si el anterior
+        // había fallado y se estaba pintando por CPU).
         _estado.update {
-            it.copy(backendSeleccionado = backend, backendEfectivo = efectivo)
+            it.copy(
+                backendSeleccionado = backend,
+                backendEfectivo = efectivo,
+                gpuActivo = false,
+                gpuDescripcion = "",
+                gpuFallo = false,
+            )
         }
     }
 

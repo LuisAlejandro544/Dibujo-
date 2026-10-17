@@ -140,18 +140,45 @@ configuración (icono de engranaje en la barra superior) permite elegir el
 backend; **Vulkan queda bloqueado si el equipo no lo soporta** y el menú
 sigue existiendo. La elección se persiste en `SharedPreferences`
 (`dibujo_config/backend_render`) y `resolver()` cae a OpenGL cuando
-corresponde. Hoy el rasterizado sigue en C++/Kotlin; el render GPU real es
-la tarea #3 del ROADMAP (la selección ya está cableada en el estado).
+corresponde.
+
+**Render GPU real (en `engine/src/main/cpp/gpu/`, sólo Android):**
+- `RenderizadorGpu` es la interfaz + fábrica `crear(Backend, ANativeWindow*,
+  DibujoEngine*)`; devuelve `nullptr` si el backend no arranca.
+- `RenderizadorGL` monta EGL + contexto OpenGL ES 3.x y presenta con
+  `glBindVertexArray` (por eso se enlaza `libGLESv3`, no `libGLESv2`, que sólo
+  expone VAOs con sufijo `OES`).
+- `RenderizadorVulkan` monta instancia/dispositivo/swapchain/render pass y
+  presenta; recrea la cadena ante `VK_ERROR_OUT_OF_DATE_KHR`.
+- Los shaders presentan la hoja como textura y resuelven la cámara en la GPU:
+  `hoja = (pantalla + pan) / zoom` con `texelFetch`; el color se lee del
+  `0xAARRGGBB` en bytes B,G,R,A y se reordena a RGBA. Parámetros en un bloque
+  std430 de 48 bytes (`ParametrosPresentacion.h`). El rasterizado del trazo
+  sigue en CPU (paridad `MotorTest` intacta); la GPU sólo presenta.
+- `GpuJni.cpp` expone `nativoGpuCrear/Render/Redimensionar/Nombre/Destruir` y
+  guarda el `ANativeWindow` (`ANativeWindow_fromSurface`).
+- Vulkan GLSL se compila a SPIR-V en configure (glslc del NDK) e incrusta en
+  `shaders_vk_generado.h`; el CMake lo hace sólo bajo `if(ANDROID)`.
+
+**Lado Kotlin:** `SuperficieGpu` (`:app`) es un `SurfaceView` + hilo de render
+(`HiloRenderGpu`, `ReentrantLock`/`Condition`) que crea el renderizador y pide
+cuadros on-demand. `DibujoEngine` expone `revision()`/`copiarHoja()`/
+`leerCamara()` con mutex para que el hilo GPU lea un snapshot coherente.
+`PantallaDibujo` separa `AreaDibujo` en: hoja (`SuperficieGpu` si hay GPU, si
+no `LienzoCpu`) + `CapaGestos` encima (gestos y vista previa del trazo). El
+`Scaffold` y el `windowBackground` son transparentes para que se vea la
+superficie GPU, que queda en una capa detrás de la ventana. Si el render GPU
+falla en runtime, `gpuFracaso()` cae a `LienzoCpu` (CPU).
+
 
 ## 6. Riesgos conocidos / no resueltos
 
 - El trazo en curso se previsualiza con Path sin rasterizar por el motor: al
   soltar, el resultado exacto (disco/bloque/línea gruesa) puede diferir levemente del overlay.
-- `MotorKotlin.renderizar` es O(vw*vh) por frame en CPU; en pantallas grandes
-  conviene eventualmente mover el render a textura (ver ROADMAP). La selección
-  de backend (OpenGL ES / Vulkan) ya existe en la UI, pero el render GPU que
-  la usaría todavía no está implementado: hoy el rasterizado corre igual en
-  C++/Kotlin y la preferencia queda persistida.
+- `MotorKotlin.renderizar` es O(vw*vh) por frame en CPU; con el render GPU ya
+  implementado, la app presenta la hoja como textura en GPU y sólo cae a CPU
+  si el backend falla. Sin dispositivo Android en el runner, la corrección en
+  runtime del render GPU (sobre todo Vulkan) sólo se valida compilando/enlazando.
 - No hay persistencia de la hoja (guardar PNG/deshacer entre sesiones): es la
   tarea #1 del ROADMAP.
 - Release de `:app` no está firmado para distribución (solo debug).

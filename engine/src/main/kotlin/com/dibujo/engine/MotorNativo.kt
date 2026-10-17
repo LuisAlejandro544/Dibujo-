@@ -25,6 +25,9 @@ class MotorNativo(
 
     override val nombre: String = "C++ nativo"
 
+    /** Puntero crudo al `DibujoEngine`, compartido con el render GPU. */
+    override val handleNativo: Long get() = handle
+
     private var camaraInterna = Camara(0f, 0f, 1f)
 
     override fun version(): String =

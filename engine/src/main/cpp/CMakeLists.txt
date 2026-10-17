@@ -50,3 +50,76 @@ endif()
 if(UNIX AND NOT APPLE)
     set_target_properties(dibujo_engine PROPERTIES LINK_FLAGS "-Wl,-z,defs")
 endif()
+
+# --- Render GPU (solo Android) -------------------------------------------
+# La presentación en GPU (OpenGL ES por EGL y Vulkan) necesita cabeceras y
+# librerías del NDK, por eso no se compila en el motor de escritorio.
+if(ANDROID)
+    set(DIBUJO_GPU_DIR "${CMAKE_CURRENT_SOURCE_DIR}/gpu")
+
+    target_sources(dibujo_engine PRIVATE
+        "${DIBUJO_GPU_DIR}/RenderizadorGpu.cpp"
+        "${DIBUJO_GPU_DIR}/RenderizadorGL.cpp"
+        "${DIBUJO_GPU_DIR}/RenderizadorVulkan.cpp"
+        "${DIBUJO_GPU_DIR}/GpuJni.cpp"
+    )
+    # `VK_USE_PLATFORM_ANDROID_KHR` habilita vkCreateAndroidSurfaceKHR en
+    # vulkan.h. La cabecera generada (SPIR-V) vive en el directorio de build.
+    target_compile_definitions(dibujo_engine PRIVATE VK_USE_PLATFORM_ANDROID_KHR)
+    target_include_directories(dibujo_engine PRIVATE "${CMAKE_CURRENT_BINARY_DIR}")
+
+    # Compila los shaders Vulkan a SPIR-V con el `glslc` del NDK y los deja en
+    # una cabecera con los arrays de bytes. Así el Vulkan no depende de archivos
+    # en tiempo de ejecución y el build falla temprano si un shader es inválido.
+    if(CMAKE_HOST_WIN32)
+        set(DIBUJO_NDK_HOST "windows-x86_64")
+    elseif(CMAKE_HOST_APPLE)
+        set(DIBUJO_NDK_HOST "darwin-x86_64")
+    else()
+        set(DIBUJO_NDK_HOST "linux-x86_64")
+    endif()
+    set(DIBUJO_GLSLC "${ANDROID_NDK}/shader-tools/${DIBUJO_NDK_HOST}/glslc")
+    if(NOT EXISTS "${DIBUJO_GLSLC}")
+        message(FATAL_ERROR "No se encontró glslc en '${DIBUJO_GLSLC}' (se necesita para los shaders Vulkan).")
+    endif()
+
+    set(DIBUJO_SPV_VERT "${CMAKE_CURRENT_BINARY_DIR}/presentacion_vk.vert.spv")
+    set(DIBUJO_SPV_FRAG "${CMAKE_CURRENT_BINARY_DIR}/presentacion_vk.frag.spv")
+    execute_process(
+        COMMAND "${DIBUJO_GLSLC}" -fshader-stage=vertex
+                "${DIBUJO_GPU_DIR}/shaders/presentacion_vk.vert" -o "${DIBUJO_SPV_VERT}"
+        RESULT_VARIABLE DIBUJO_RV_VERT)
+    execute_process(
+        COMMAND "${DIBUJO_GLSLC}" -fshader-stage=fragment
+                "${DIBUJO_GPU_DIR}/shaders/presentacion_vk.frag" -o "${DIBUJO_SPV_FRAG}"
+        RESULT_VARIABLE DIBUJO_RV_FRAG)
+    if(NOT DIBUJO_RV_VERT EQUAL 0 OR NOT DIBUJO_RV_FRAG EQUAL 0)
+        message(FATAL_ERROR "Falló glslc (vert=${DIBUJO_RV_VERT}, frag=${DIBUJO_RV_FRAG}).")
+    endif()
+
+    file(READ "${DIBUJO_SPV_VERT}" DIBUJO_HEX_VERT HEX)
+    string(REGEX REPLACE "([0-9a-f][0-9a-f])" "0x\\1," DIBUJO_BYTES_VERT "${DIBUJO_HEX_VERT}")
+    file(READ "${DIBUJO_SPV_FRAG}" DIBUJO_HEX_FRAG HEX)
+    string(REGEX REPLACE "([0-9a-f][0-9a-f])" "0x\\1," DIBUJO_BYTES_FRAG "${DIBUJO_HEX_FRAG}")
+    file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/shaders_vk_generado.h"
+"// Generado por CMake a partir de gpu/shaders/presentacion_vk.{vert,frag}: no editar.
+#pragma once
+#include <cstddef>
+alignas(4) static const unsigned char kSpvVert[] = { ${DIBUJO_BYTES_VERT} };
+static const std::size_t kSpvVertTam = sizeof(kSpvVert);
+alignas(4) static const unsigned char kSpvFrag[] = { ${DIBUJO_BYTES_FRAG} };
+static const std::size_t kSpvFragTam = sizeof(kSpvFrag);
+")
+
+    find_library(DIBUJO_EGL EGL REQUIRED)
+    # GLESv3 (API 21+) exporta los símbolos ES3 "core" (p. ej. glBindVertexArray);
+    # GLESv2 sigue aportando los comunes y el fallback del sistema.
+    find_library(DIBUJO_GLESv3 GLESv3 REQUIRED)
+    find_library(DIBUJO_GLESv2 GLESv2 REQUIRED)
+    find_library(DIBUJO_VULKAN vulkan REQUIRED)
+    find_library(DIBUJO_ANDROID android REQUIRED)
+    find_library(DIBUJO_LOG log REQUIRED)
+    target_link_libraries(dibujo_engine
+        ${DIBUJO_EGL} ${DIBUJO_GLESv3} ${DIBUJO_GLESv2}
+        ${DIBUJO_VULKAN} ${DIBUJO_ANDROID} ${DIBUJO_LOG})
+endif()

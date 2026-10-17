@@ -1,3 +1,10 @@
 <resources>
-    <style name="TemaDibujo" parent="@android:style/Theme.Material.Light.NoActionBar" />
+    <!--
+        Fondo de ventana transparente: la hoja puede presentarse en un
+        SurfaceView, que queda en una capa detrás de la ventana. Si el fondo
+        fuese opaco lo taparía y se vería un rectángulo negro.
+    -->
+    <style name="TemaDibujo" parent="@android:style/Theme.Material.Light.NoActionBar">
+        <item name="android:windowBackground">@android:color/transparent</item>
+    </style>
 </resources>

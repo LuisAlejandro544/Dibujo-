@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Manifest del source set `debug`. Se fusiona SOLO en el variant debug, así
+    que en release no existen el panel ni el monitor. El icono del panel es
+    propio (llave inglesa + bicho) para que aparezca aparte en el launcher.
+-->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <!-- LeakCanary avisa las fugas por notificación; en Android 13+ hace falta
+         el permiso. Si no se concede, igual detecta y muestra la fuga dentro
+         de su pantalla (accesible desde el panel). -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+
+    <application>
+
+        <!--
+            ContentProvider sin lógica de datos: su único rol es arrancar
+            [MonitorDibujo] en cuanto arranca el proceso de la app (se instala
+            antes de `Application.onCreate`). Así el monitor "escucha" siempre
+            a la app principal, aunque no se abra el panel.
+        -->
+        <provider
+            android:name="com.dibujo.android.debug.MonitorProvider"
+            android:authorities="${applicationId}.monitor-debug"
+            android:exported="false" />
+
+        <activity
+            android:name="com.dibujo.android.debug.PanelDebugActivity"
+            android:configChanges="orientation|screenSize|screenLayout|keyboardHidden|uiMode"
+            android:exported="true"
+            android:icon="@mipmap/ic_launcher_debug"
+            android:label="@string/debug_app_name"
+            android:roundIcon="@mipmap/ic_launcher_debug_round"
+            android:theme="@style/TemaDebug">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+
+    </application>
+
+</manifest>

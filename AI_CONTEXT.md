@@ -107,6 +107,7 @@ durante la composición; si no, undo/redo cambian el motor pero no repintan
 | Kotlin | 2.4.21 (root `build.gradle.kts`; alias en `gradle/libs.versions.toml`) |
 | AGP | 9.4.1 (con *built-in Kotlin*: NO aplicar `org.jetbrains.kotlin.android` en `:app`) |
 | Compose | BOM 2026.09.00 + `kotlin.plugin.compose` 2.4.21 |
+| LeakCanary | 2.14 (solo `debugImplementation` en `:app`) |
 | SDK | compileSdk 37, minSdk 26, targetSdk 37, ABIs arm64-v8a + x86_64 |
 | NDK en `:app` | `externalNativeBuild` → `engine/src/main/cpp/CMakeLists.txt` (versión CMake 3.31.5, `ndkVersion 27.3.13750724`) |
 | Motor escritorio | tareas `configureNative`/`buildNative` de `:engine` (requiere cmake + g++; si no hay, tests y app usan el respaldo) |
@@ -221,6 +222,42 @@ la textura/imagen debe subirse igualmente: `subirHoja` en `RenderizadorGL` y
 `RenderizadorVulkan` no descartan `rev == 0`. Si se descarta, el lienzo queda
 negro hasta el primer cambio de contenido (el "negro hasta tocar la pantalla",
 sobre todo en Vulkan).
+
+### Herramientas de depuración (source set `debug`, solo en el variant debug)
+
+Todo vive en `app/src/debug/` (Kotlin + `AndroidManifest.xml` + recursos) y
+**no existe en release**: el manifest de `debug` se fusiona solo en ese variant.
+Es clave para trabajar desde el móvil, sin adb ni PC.
+
+- **`MonitorDibujo`** (`object`): recolecta continuamente, en un hilo daemon
+  `dibujo-monitor` (muestra cada 2 s):
+  - **Memoria**: heap Java (`Runtime`), heap nativo (`Debug.getNativeHeap*`) y
+    PSS por categoría (`Debug.MemoryInfo`: Java/dalvik, nativo, gráficos vía
+    `summary.graphics`, y otros) más memoria privada.
+  - **Hilos**: enumeración barata con `Thread.enumerate`; detecta
+    apariciones/terminaciones respecto a la muestra anterior (`EventoHilo`).
+  - **Acciones**: ciclo de vida de las Activities de la app principal vía
+    `Application.registerActivityLifecycleCallbacks` (se salta el propio panel).
+  - **Crashes**: `Thread.setDefaultUncaughtExceptionHandler` encadenado al
+    anterior; registra el `FATAL` y guarda el volcado en `filesDir/crashes/`.
+  - Los buffers son ring buffers acotados (`MAX_MUESTRAS`, `MAX_LOGS`, ...).
+- **`CapturaLogs`**: lee el logcat propio (`logcat -v threadtime`) en un hilo
+  daemon y conserva W/E/F; de V/D/I solo tags de interés (dibujo, EGL, Vulkan,
+  OpenGL, GPU, LeakCanary). Si el dispositivo restringe `logcat`, el monitor
+  sigue con su buffer propio y el capturador de crashes.
+- **`MonitorProvider`**: `ContentProvider` sin datos en `src/debug`; su único
+  rol es arrancar `MonitorDibujo` al crear el proceso (se instala antes de
+  `Application.onCreate`), así "escucha" siempre, aunque no se abra el panel.
+- **`PanelDebugActivity`** (Compose, reusa `TemaDibujo`): Activity propia con
+  **icono propio** (`ic_launcher_debug`) y su `intent-filter` LAUNCHER. Pestañas
+  Resumen / Memoria / Hilos / Registro / Entorno; se refresca cada segundo.
+  Botones: abrir LeakCanary, copiar reporte al portapapeles y compartirlo
+  (`construirReporte`). Todo texto por `stringResource` en `strings_debug.xml`.
+- **LeakCanary 2.14**: `debugImplementation`, auto-instalado por su
+  `ContentProvider`. Su icono de launcher se **desactiva** (`bools_debug.xml`,
+  `leak_canary_add_launcher_icon=false`) para dejar un único icono de depuración
+  (el panel); se entra a su pantalla desde el botón "Ver fugas". El permiso
+  `POST_NOTIFICATIONS` se declara en el manifest de debug (Android 13+).
 
 
 ## 6. Riesgos conocidos / no resueltos

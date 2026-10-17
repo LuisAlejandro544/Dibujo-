@@ -18,6 +18,7 @@ garantizada por tests). Dos front-ends: consola JVM (`:ui`) y Android Compose
 | `engine/src/main/cpp/` | C++17: `DibujoEngine` (núcleo, disco antialiased), `dibujo_engine.cpp` (JNI), `gpu/` (`RenderizadorGL`, `RenderizadorVulkan`, `GpuJni.cpp`, shaders; sólo Android), `CMakeLists.txt` (JDK en escritorio, NDK en Android). |
 | `ui/` | Consola ANSI: `Main.kt`, `ControladorConsola`, `VistaHoja`, `Menu`. |
 | `app/` | Android: `MainActivity`, `PantallaDibujo` (Compose M3, edge-to-edge + fuente fija), `SuperficieGpu` (SurfaceView + hilo de render GPU), `DibujoViewModel`, `CapacidadesGraficas` (detección Vulkan 1.1 / OpenGL ES), manifest, recursos e adaptive icon. |
+| `app/src/debug/` | Solo variant debug: `PanelDebugActivity` (icono propio en el launcher), `MonitorDibujo` (RAM/hilos/crashes), `CapturaLogs`, `MonitorProvider` y LeakCanary 2.14. No existe en release. |
 | `.github/workflows/` | `android-apk.yml` (assembleDebug manual y en PRs contra main). |
 
 ## Semántica de cámara (crítica, no re-derivar)

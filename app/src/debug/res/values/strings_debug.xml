@@ -1,0 +1,119 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Recursos del source set `debug`: textos, colores, tema e iconos del panel
+    de depuración. No existen en release.
+-->
+<resources>
+
+    <string name="debug_app_name">Dibujo Debug</string>
+    <string name="debug_titulo">Panel de depuración</string>
+
+    <!-- Pestañas -->
+    <string name="debug_tab_resumen">Resumen</string>
+    <string name="debug_tab_memoria">Memoria</string>
+    <string name="debug_tab_hilos">Hilos</string>
+    <string name="debug_tab_registro">Registro</string>
+    <string name="debug_tab_entorno">Entorno</string>
+
+    <!-- Acciones -->
+    <string name="debug_accion_fugas">Ver fugas (LeakCanary)</string>
+    <string name="debug_accion_copiar">Copiar reporte</string>
+    <string name="debug_accion_compartir">Compartir</string>
+    <string name="debug_accion_limpiar">Limpiar</string>
+    <string name="debug_cd_fugas">Abrir la pantalla de fugas de LeakCanary</string>
+    <string name="debug_cd_copiar">Copiar el reporte de depuración</string>
+    <string name="debug_cd_compartir">Compartir el reporte de depuración</string>
+    <string name="debug_cd_limpiar">Limpiar el registro de logs y fallos</string>
+    <string name="debug_reporte_copiado">Reporte copiado al portapapeles</string>
+    <string name="debug_compartir_con">Compartir reporte con</string>
+    <string name="debug_fugas_no_disponible">LeakCanary no está disponible en este build</string>
+    <string name="debug_reporte_titulo">Reporte de Dibujo (debug)</string>
+
+    <!-- Resumen -->
+    <string name="debug_estado_titulo">Estado de salud</string>
+    <string name="debug_sin_incidencias">Sin incidencias detectadas</string>
+    <string name="debug_fallos_fatales">%1$d fallo(s) fatal(es)</string>
+    <string name="debug_uptime">Sesión activa: %1$s</string>
+    <string name="debug_hilos_activos">Hilos activos: %1$d</string>
+    <string name="debug_pss_total_resumen">RAM total (PSS): %1$s</string>
+    <string name="debug_motor_backend">Backend guardado: %1$s</string>
+    <string name="debug_ultima_actualizacion">Última muestra: %1$s</string>
+    <string name="debug_sin_muestras">Todavía no hay muestras de memoria.</string>
+
+    <!-- Memoria -->
+    <string name="debug_mem_java_heap">Heap Java usado: %1$s de %2$s</string>
+    <string name="debug_mem_nativo">Heap nativo: %1$s (reservado %2$s)</string>
+    <string name="debug_mem_ram_titulo">RAM por categoría (PSS)</string>
+    <string name="debug_mem_pss">PSS total: %1$s</string>
+    <string name="debug_mem_pss_java">PSS Java (dalvik): %1$s</string>
+    <string name="debug_mem_pss_nativo">PSS nativo: %1$s</string>
+    <string name="debug_mem_pss_graficos">PSS gráficos (GPU): %1$s</string>
+    <string name="debug_mem_pss_otros">PSS otros: %1$s</string>
+    <string name="debug_mem_private_dirty">Memoria privada (dirty): %1$s</string>
+    <string name="debug_mem_grafico_pss">Evolución del PSS total</string>
+    <string name="debug_mem_grafico_java">Evolución del heap Java</string>
+    <string name="debug_mem_actual">Ahora</string>
+
+    <!-- Hilos -->
+    <string name="debug_hilos_titulo">Hilos del proceso: %1$d</string>
+    <string name="debug_hilos_nuevo">nuevo</string>
+    <string name="debug_hilos_col_nombre">Hilo</string>
+    <string name="debug_hilos_col_estado">Estado</string>
+    <string name="debug_hilos_col_tipo">Tipo</string>
+    <string name="debug_hilo_daemon">daemon</string>
+    <string name="debug_hilo_usuario">usuario</string>
+    <string name="debug_formato_dos">%1$s · %2$s</string>
+    <string name="debug_formato_tres">%1$s · %2$s · %3$s</string>
+    <string name="debug_formato_log">%1$s/%2$s</string>
+    <string name="debug_cambios_titulo">Cambios de hilos recientes</string>
+    <string name="debug_cambios_vacio">Sin cambios registrados.</string>
+    <string name="debug_cambio_aparecio">apareció</string>
+    <string name="debug_cambio_termino">terminó</string>
+    <string name="debug_acciones_titulo">Acciones de la app</string>
+    <string name="debug_acciones_vacio">Sin acciones registradas.</string>
+    <string name="debug_hace_segundos">hace %1$d s</string>
+
+    <!-- Registro -->
+    <string name="debug_registro_titulo">Registro (warnings y errores)</string>
+    <string name="debug_filtro_warn">Warnings+</string>
+    <string name="debug_filtro_error">Errores+</string>
+    <string name="debug_filtro_fatal">Fatales</string>
+    <string name="debug_registro_vacio">Sin registros para este filtro.</string>
+    <string name="debug_crashes">Fallos fatales: %1$d</string>
+
+    <!-- Entorno -->
+    <string name="debug_entorno_abi">ABIs: %1$s</string>
+    <string name="debug_entorno_android">Android %1$s (API %2$d)</string>
+    <string name="debug_entorno_fabricante">Fabricante: %1$s</string>
+    <string name="debug_entorno_modelo">Modelo: %1$s</string>
+    <string name="debug_entorno_densidad">Densidad: %1$s</string>
+    <string name="debug_entorno_gl">OpenGL ES: %1$s</string>
+    <string name="debug_entorno_vulkan">Vulkan 1.1: %1$s</string>
+    <string name="debug_si">sí</string>
+    <string name="debug_no">no</string>
+    <string name="debug_entorno_build">Build: %1$s</string>
+    <string name="debug_entorno_version">Versión: %1$s (%2$d)</string>
+    <string name="debug_entorno_paquete">Paquete: %1$s</string>
+    <string name="debug_entorno_pid">PID: %1$d</string>
+    <string name="debug_entorno_leakcanary">LeakCanary: %1$s</string>
+    <string name="debug_leakcanary_integrado">integrado (build debug)</string>
+    <string name="debug_entorno_proceso">Proceso: %1$s</string>
+
+    <!-- Formatos -->
+    <string name="debug_formato_mb">%1$.1f MB</string>
+    <string name="debug_formato_kb">%1$d kB</string>
+    <string name="debug_hora">%1$s</string>
+    <string name="debug_duracion_horas">%1$d h %2$d min</string>
+    <string name="debug_duracion_minutos">%1$d min %2$d s</string>
+    <string name="debug_duracion_segundos">%1$d s</string>
+
+    <!-- Reporte -->
+    <string name="debug_reporte_seccion_entorno">ENTORNO</string>
+    <string name="debug_reporte_seccion_memoria">MEMORIA</string>
+    <string name="debug_reporte_seccion_hilos">HILOS</string>
+    <string name="debug_reporte_seccion_cambios">CAMBIOS DE HILOS</string>
+    <string name="debug_reporte_seccion_acciones">ACCIONES</string>
+    <string name="debug_reporte_seccion_logs">REGISTRO</string>
+    <string name="debug_reporte_sin_datos">(sin datos)</string>
+
+</resources>

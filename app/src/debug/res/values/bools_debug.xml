@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    LeakCanary queda integrado pero SIN su propio icono en el launcher: todo
+    el acceso pasa por el Panel de depuración (botón "Ver fugas"). Si querés
+    el icono de LeakCanary de vuelta, poné estos bool en true.
+-->
+<resources>
+    <bool name="leak_canary_add_launcher_icon">false</bool>
+    <bool name="leak_canary_add_dynamic_shortcut">false</bool>
+</resources>

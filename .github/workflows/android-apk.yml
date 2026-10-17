@@ -1,0 +1,65 @@
+# APK Debug de la app Android de Dibujo (módulo :app con AGP).
+#
+# A diferencia de build-debug-apk.yml (empaquetado manual con aapt2/d8),
+# acá la compilación es la estándar de Android:
+#   ./gradlew :app:assembleDebug  →  APK firmado con la clave de debug
+#
+# El motor C++ del dibujo se compila para Android vía NDK (externalNativeBuild
+# en :app) e ingresa al APK como libdibujo_engine.so, de modo que en el
+# dispositivo corre el motor nativo (MotorNativo por JNI) y no el respaldo.
+#
+# Se activa 100% manualmente (workflow_dispatch): no corre en push ni PR.
+
+name: "APK Android (assembleDebug)"
+
+on:
+  workflow_dispatch:
+    inputs:
+      usar_cache:
+        description: 'Usar cache de Gradle (opcional: desmarcar para build frío)'
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+jobs:
+  apk-android:
+    name: Compilar APK Android debug
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Descargar todo el código
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          submodules: recursive
+
+      - name: Preparar JDK 17 (Temurin)
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Cache de Gradle (opcional)
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          cache-disabled: ${{ !inputs.usar_cache }}
+
+      - name: Compilar la app Android (Gradle + Compose + motor C++ con NDK)
+        run: |
+          chmod +x gradlew
+          ./gradlew :app:assembleDebug --no-daemon --console=plain
+
+      - name: Verificar artefactos (APK + motor nativo)
+        run: |
+          ls -la app/build/outputs/apk/debug
+          find app/build/intermediates/stripped_native_libs -name "libdibujo_engine.so" -exec ls -la {} \;
+
+      - name: Subir artefacto (APK debug firmado)
+        uses: actions/upload-artifact@v4
+        with:
+          name: Dibujo-android-debug
+          path: app/build/outputs/apk/debug/*.apk
+          if-no-files-found: error
+          retention-days: 14

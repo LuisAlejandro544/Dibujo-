@@ -21,6 +21,10 @@ data class DibujoEstado(
     val trazoEnCurso: List<Float>? = null,
     /** Marco de render: cambia con cada operación para invalidar el lienzo. */
     val marco: Int = 0,
+    /** Hay pasos que deshacer (habilita el botón de deshacer). */
+    val puedeDeshacer: Boolean = false,
+    /** Hay pasos que rehacer (habilita el botón de rehacer). */
+    val puedeRehacer: Boolean = false,
     val motorNombre: String = "",
 )
 
@@ -72,7 +76,14 @@ class DibujoViewModel : ViewModel() {
     fun soltarTrazo() {
         val m = motor ?: return
         m.terminarTrazo()
-        _estado.update { it.copy(trazoEnCurso = null, marco = it.marco + 1) }
+        _estado.update {
+            it.copy(
+                trazoEnCurso = null,
+                puedeDeshacer = m.puedeDeshacer(),
+                puedeRehacer = m.puedeRehacer(),
+                marco = it.marco + 1,
+            )
+        }
     }
 
     fun cancelarTrazo() {
@@ -121,11 +132,41 @@ class DibujoViewModel : ViewModel() {
         _estado.update { it.copy(modo = nuevo, trazoEnCurso = null, marco = it.marco + 1) }
     }
 
-    fun deshacer() { motor?.let { it.deshacer(); marco() } }
+    fun deshacer() {
+        val m = motor ?: return
+        m.deshacer()
+        _estado.update {
+            it.copy(
+                puedeDeshacer = m.puedeDeshacer(),
+                puedeRehacer = m.puedeRehacer(),
+                marco = it.marco + 1,
+            )
+        }
+    }
 
-    fun rehacer() { motor?.let { it.rehacer(); marco() } }
+    fun rehacer() {
+        val m = motor ?: return
+        m.rehacer()
+        _estado.update {
+            it.copy(
+                puedeDeshacer = m.puedeDeshacer(),
+                puedeRehacer = m.puedeRehacer(),
+                marco = it.marco + 1,
+            )
+        }
+    }
 
-    fun limpiar() { motor?.limpiarHoja(); marco() }
+    fun limpiar() {
+        val m = motor ?: return
+        m.limpiarHoja()
+        _estado.update {
+            it.copy(
+                puedeDeshacer = m.puedeDeshacer(),
+                puedeRehacer = m.puedeRehacer(),
+                marco = it.marco + 1,
+            )
+        }
+    }
 
     fun centrar() {
         val m = motor ?: return

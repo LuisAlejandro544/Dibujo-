@@ -18,7 +18,7 @@ garantizada por tests). Dos front-ends: consola JVM (`:ui`) y Android Compose
 | `engine/src/main/cpp/` | C++17: `DibujoEngine` (núcleo), `dibujo_engine.cpp` (JNI), `CMakeLists.txt` (JDK en escritorio, NDK en Android). |
 | `ui/` | Consola ANSI: `Main.kt`, `ControladorConsola`, `VistaHoja`, `Menu`. |
 | `app/` | Android: `MainActivity`, `PantallaDibujo` (Compose M3), `DibujoViewModel` (dueño del motor), manifest, recursos e adaptive icon. |
-| `.github/workflows/` | `android-apk.yml` (assembleDebug manual) y `build-debug-apk.yml` (APK empaquetado a mano + consola Linux). |
+| `.github/workflows/` | `android-apk.yml` (assembleDebug manual y en PRs contra main). |
 
 ## Semántica de cámara (crítica, no re-derivar)
 

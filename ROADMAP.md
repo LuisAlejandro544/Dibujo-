@@ -13,11 +13,13 @@ mencionarla en el PR.
 - [x] **Motor C++ compilado para Android**: `externalNativeBuild` con NDK en `:app` (arm64-v8a + x86_64); en el dispositivo corre `MotorNativo` por JNI (el respaldo queda como red de seguridad).
 - [x] CI: workflow manual `android-apk.yml` → APK debug firmado vía AGP (`assembleDebug`).
 - [x] Documentación para humanos e IAs: `README`, `README_AI`, `AI_CONTEXT`, `AGENTS`, `AGENTS_AI`, este roadmap.
+- [x] **Iconos Material 3**: dependencia `material-icons-extended` (BOM) y UI con `TopAppBar` + iconos (undo/redo se habilitan/deshabilitan según el historial). Eliminado el workflow falso `build-debug-apk.yml` (APK placeholder) y `android-apk.yml` ahora también corre en PRs contra main.
+- [x] **Borrado instantáneo**: la vista previa del borrador pinta con el fondo de la hoja y su grosor efectivo (`Lapiz.grosorEfectivo()`), igual que el motor. Historial limitado a 30 pasos (C++ y Kotlin) para acotar la RAM.
+- [x] Requisitos: `minSdk 26` (Android 8) ya era el requisito desde la estructura inicial; confirmado.
 
 ## En curso
 
-- [ ] Revisión del PR #12 (workflow APK manual) — ya convive con el APK real de `:app`.
-- [ ] Análisis de mockups/capturas del usuario para pulir la UI Android (paleta final, layout de la barra).
+- [ ] Pulir más la UI Android con feedback del usuario (nueva barra superior/inferior con iconos en el PR del issue 13).
 
 ## Próximas (prioridad)
 
@@ -31,6 +33,6 @@ mencionarla en el PR.
 
 ## Ideas (sin fecha)
 
-- Capas (layers) con undo por capa: el historial actual es de un solo nivel.
+- Capas (layers) con undo por capa: el historial actual es de un solo nivel (por snapshots).
 - iOS: el motor dual ya admite un front-end nuevo (el C++ es portable); Compose Multiplatform / KMP como candidata.
-- Íconos material-icons-extended solo si hace falta: hoy todo con texto/unicode + strings.xml.
+- Borrador por capas/bitmaps (destination-out) si algún día la hoja deja de ser opaca.

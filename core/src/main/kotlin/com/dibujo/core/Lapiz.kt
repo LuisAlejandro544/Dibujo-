@@ -18,4 +18,16 @@ data class Lapiz(
     init {
         require(grosor in 1..64) { "grosor fuera de rango: $grosor" }
     }
+
+    /**
+     * Grosor real del trazo según la herramienta: PORTAMINA es fino,
+     * CARBONCILLO y BORRADOR son más gruesos. El motor C++ replica
+     * esta fórmula (ver `grosorHerramienta` en `DibujoEngine.cpp`).
+     */
+    fun grosorEfectivo(): Int = when (herramienta) {
+        Herramienta.PORTAMINA -> maxOf(1, grosor / 2)
+        Herramienta.CARBONCILLO -> grosor + 2
+        Herramienta.BORRADOR -> grosor + 4
+        else -> grosor
+    }
 }

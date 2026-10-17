@@ -1,14 +1,14 @@
 # APK Debug de la app Android de Dibujo (módulo :app con AGP).
 #
-# A diferencia de build-debug-apk.yml (empaquetado manual con aapt2/d8),
-# acá la compilación es la estándar de Android:
+# Compilación estándar de Android:
 #   ./gradlew :app:assembleDebug  →  APK firmado con la clave de debug
 #
 # El motor C++ del dibujo se compila para Android vía NDK (externalNativeBuild
 # en :app) e ingresa al APK como libdibujo_engine.so, de modo que en el
 # dispositivo corre el motor nativo (MotorNativo por JNI) y no el respaldo.
 #
-# Se activa 100% manualmente (workflow_dispatch): no corre en push ni PR.
+# Se activa manualmente (workflow_dispatch) y en cada PR contra main,
+# así el APK que sale del repo siempre es compilable y verificable.
 
 name: "APK Android (assembleDebug)"
 
@@ -19,6 +19,9 @@ on:
         description: 'Usar cache de Gradle (opcional: desmarcar para build frío)'
         type: boolean
         default: true
+  pull_request:
+    branches:
+      - main
 
 permissions:
   contents: read

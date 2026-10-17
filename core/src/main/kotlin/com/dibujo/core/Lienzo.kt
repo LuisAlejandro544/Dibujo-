@@ -155,7 +155,17 @@ class Lienzo(
         }
     }
 
-    /** Relleno por inundación a partir de (x, y). */
+    /**
+     * Relleno por inundación a partir de (x, y).
+     *
+     * En vez de apilar cada píxel vecino (lo que hacía millones de `push` y
+     * tardaba segundos en hojas grandes), apila **tramos horizontales**: al
+     * procesar una semilla se extiende el tramo contiguo de [origen] a
+     * izquierda y derecha, se rellena entero y sólo se apila una semilla por
+     * cada tramo nuevo en las filas de arriba y abajo. El resultado es el
+     * mismo conjunto rellenado (4 vecinos, igualdad exacta) que el C++, que
+     * replica este mismo algoritmo para no romper la paridad píxel a píxel.
+     */
     fun rellenar(x: Int, y: Int, color: Int) {
         if (!dentro(x, y)) return
         val origen = pixeles[y * ancho + x]
@@ -165,13 +175,29 @@ class Lienzo(
         while (pila.isNotEmpty()) {
             val i = pila.removeLast()
             if (pixeles[i] != origen) continue
-            pixeles[i] = color
-            val cx = i % ancho
             val cy = i / ancho
-            if (cx > 0) pila.add(i - 1)
-            if (cx < ancho - 1) pila.add(i + 1)
-            if (cy > 0) pila.add(i - ancho)
-            if (cy < alto - 1) pila.add(i + ancho)
+            val cx = i % ancho
+            var izq = cx
+            while (izq > 0 && pixeles[cy * ancho + izq - 1] == origen) izq--
+            var der = cx
+            while (der < ancho - 1 && pixeles[cy * ancho + der + 1] == origen) der++
+            val base = cy * ancho
+            for (xx in izq..der) pixeles[base + xx] = color
+            if (cy > 0) agregarTramos(pila, base - ancho, izq, der, origen)
+            if (cy < alto - 1) agregarTramos(pila, base + ancho, izq, der, origen)
+        }
+    }
+
+    /** Apila una semilla por cada tramo contiguo de [origen] en la fila [base]. */
+    private fun agregarTramos(pila: ArrayDeque<Int>, base: Int, izq: Int, der: Int, origen: Int) {
+        var x = izq
+        while (x <= der) {
+            if (pixeles[base + x] == origen) {
+                pila.add(base + x)
+                while (x <= der && pixeles[base + x] == origen) x++
+            } else {
+                x++
+            }
         }
     }
 

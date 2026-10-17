@@ -202,6 +202,55 @@ class MotorNativoTest {
     }
 
     @Test
+    fun rellenoParidadConBarreras() {
+        if (!NativeEngine.disponible()) return
+        val ancho = 32
+        val alto = 32
+        val azar = java.util.Random(20261017L)
+        // Mismas barreras para los dos motores: se generan una vez y se aplican
+        // idénticas (si no, el azar consumiría números distintos por motor).
+        val barreras = List(24) {
+            Pair(azar.nextInt(ancho).toFloat(), (azar.nextInt(alto - 2) + 1).toFloat())
+        }
+        val nativo = MotorNativo(ancho, alto)
+        val kotlin = MotorKotlin(ancho, alto)
+        for (m in listOf(nativo, kotlin)) {
+            // Líneas que parten la hoja en varias regiones cerradas.
+            m.configurarLapiz(Lapiz(color = Colores.NEGRO, grosor = 1))
+            for ((x, y) in barreras) {
+                m.iniciarTrazo(x, 0f)
+                m.continuarTrazo(x, y)
+                m.terminarTrazo()
+            }
+        }
+        val preA = IntArray(ancho * alto)
+        val preB = IntArray(ancho * alto)
+        assertTrue(nativo.copiarHoja(preA), "nativo: copiarHoja pre")
+        assertTrue(kotlin.copiarHoja(preB), "kotlin: copiarHoja pre")
+        for (i in preA.indices) {
+            assertEquals(preB[i], preA[i], "barreras: discrepancia en píxel $i")
+        }
+        for (m in listOf(nativo, kotlin)) {
+            m.configurarLapiz(
+                Lapiz(color = Colores.VERDE, grosor = 1, herramienta = Herramienta.PINTAR),
+            )
+            // Coordenada sin .5: `kotlin.math.round` empata al par y `std::lround`
+            // empata afuera, así que un .5 elegiría un píxel distinto por motor.
+            m.iniciarTrazo(15.25f, 15.25f)
+            assertTrue(m.terminarTrazo(), "${m.nombre}: balde")
+        }
+        val a = IntArray(ancho * alto)
+        val b = IntArray(ancho * alto)
+        assertTrue(nativo.copiarHoja(a), "nativo: copiarHoja")
+        assertTrue(kotlin.copiarHoja(b), "kotlin: copiarHoja")
+        for (i in a.indices) {
+            assertEquals(b[i], a[i], "relleno con barreras: discrepancia en píxel $i")
+        }
+        nativo.close()
+        kotlin.close()
+    }
+
+    @Test
     fun expandirParidadNativoKotlin() {
         if (!NativeEngine.disponible()) return
         val nativo = MotorNativo(8, 6)
@@ -239,6 +288,34 @@ class MotorNativoTest {
         for (i in a.indices) {
             assertEquals(b[i], a[i], "exterior: discrepancia en píxel $i")
         }
+        nativo.close()
+        kotlin.close()
+    }
+
+    @Test
+    fun copiarHojaParidadNativoKotlin() {
+        if (!NativeEngine.disponible()) return
+        val nativo = MotorNativo(20, 10)
+        val kotlin = MotorKotlin(20, 10)
+        for (m in listOf(nativo, kotlin)) {
+            m.configurarLapiz(Lapiz(color = Colores.VERDE, grosor = 3))
+            m.iniciarTrazo(2f, 5f)
+            m.continuarTrazo(17f, 5f)
+            assertTrue(m.terminarTrazo())
+            m.configurarLapiz(Lapiz(color = Colores.AZUL, grosor = 2, herramienta = Herramienta.PINTAR))
+            m.iniciarTrazo(9f, 9f)
+            assertTrue(m.terminarTrazo())
+        }
+        val a = IntArray(20 * 10)
+        val b = IntArray(20 * 10)
+        assertTrue(nativo.copiarHoja(a), "nativo: copiarHoja")
+        assertTrue(kotlin.copiarHoja(b), "kotlin: copiarHoja")
+        for (i in a.indices) {
+            assertEquals(b[i], a[i], "copiarHoja: discrepancia en píxel $i")
+        }
+        // Un destino más chico que la hoja se rechaza sin copiar.
+        assertTrue(!nativo.copiarHoja(IntArray(3)), "nativo: destino corto rechazado")
+        assertTrue(!kotlin.copiarHoja(IntArray(3)), "kotlin: destino corto rechazado")
         nativo.close()
         kotlin.close()
     }

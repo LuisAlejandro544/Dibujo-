@@ -24,10 +24,16 @@
             android:authorities="${applicationId}.monitor-debug"
             android:exported="false" />
 
+        <!-- Afinidad y launchMode propios: el panel de depuración tiene su
+             icono de launcher, pero debe abrir en su PROPIA tarea para no
+             reanudar la de la app principal (ni al revés). Ver el comentario
+             en `app/src/main/AndroidManifest.xml`. -->
         <activity
             android:name="com.dibujo.android.debug.PanelDebugActivity"
             android:configChanges="orientation|screenSize|screenLayout|keyboardHidden|uiMode"
             android:exported="true"
+            android:launchMode="singleTask"
+            android:taskAffinity="com.dibujo.android.debug"
             android:icon="@mipmap/ic_launcher_debug"
             android:label="@string/debug_app_name"
             android:roundIcon="@mipmap/ic_launcher_debug_round"

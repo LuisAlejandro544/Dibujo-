@@ -138,6 +138,23 @@ Java_com_dibujo_engine_NativeEngine_nativoRenderizar(
     env->ReleaseIntArrayElements(destino, px, 0);
 }
 
+JNIEXPORT jboolean JNICALL
+Java_com_dibujo_engine_NativeEngine_nativoCopiarHoja(
+        JNIEnv* env, jobject, jlong handle, jintArray destino) {
+    auto* e = peer(handle);
+    if (e == nullptr) return JNI_FALSE;
+    const jsize capacidad = env->GetArrayLength(destino);
+    const auto necesarios = static_cast<jsize>(e->ancho()) * static_cast<jsize>(e->alto());
+    if (capacidad < necesarios) return JNI_FALSE;
+    jint* px = env->GetIntArrayElements(destino, nullptr);
+    if (px == nullptr) return JNI_FALSE;
+    // `copiarHoja` devuelve 0 también en una hoja recién creada (revisión 0),
+    // así que la copia se considera válida por la capacidad, no por el valor.
+    e->copiarHoja(reinterpret_cast<uint32_t*>(px), static_cast<std::size_t>(capacidad));
+    env->ReleaseIntArrayElements(destino, px, 0);
+    return JNI_TRUE;
+}
+
 JNIEXPORT jstring JNICALL
 Java_com_dibujo_engine_NativeEngine_nativoVersion(JNIEnv* env, jobject) {
     return env->NewStringUTF("dibujo-engine-c++/1.0");

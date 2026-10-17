@@ -358,6 +358,13 @@ class DibujoViewModel(app: Application) : AndroidViewModel(app) {
         motor?.renderizar(destino, vw, vh)
     }
 
+    /**
+     * Copia la hoja completa (ancho * alto px ARGB) a [destino] para exportarla
+     * como imagen. Devuelve `false` si el motor no está listo o [destino] no
+     * alcanza. Es la misma hoja que ve el usuario, sin cámara.
+     */
+    fun copiarHoja(destino: IntArray): Boolean = motor?.copiarHoja(destino) ?: false
+
     override fun onCleared() {
         motor?.close()
         motor = null

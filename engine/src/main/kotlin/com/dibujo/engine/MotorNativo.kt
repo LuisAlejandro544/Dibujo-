@@ -87,6 +87,9 @@ class MotorNativo(
         NativeEngine.nativoRenderizar(handle, destino, vw, vh)
     }
 
+    override fun copiarHoja(destino: IntArray): Boolean =
+        NativeEngine.nativoCopiarHoja(handle, destino)
+
     override fun close() {
         NativeEngine.nativoDestruir(handle)
     }

@@ -90,6 +90,14 @@ del C++ deben mantener la paridad del conjunto rellenado. No usa grosor ni
 punta. En la app, un toque sin arrastre dispara `DibujoViewModel.tocarHoja`
 (punto con el lápiz, relleno con PINTAR).
 
+El relleno es por **tramos** ("spans"): al procesar una semilla se extiende el
+tramo horizontal contiguo de color `origen`, se rellena entero y sólo se apila
+una semilla por cada tramo nuevo arriba/abajo. Antes se apilaba píxel por píxel
+(~10^7 `push` en una hoja de pantalla), lo que hacía que el balde tardara 2-3 s.
+El algoritmo por tramos es lineal y da exactamente el mismo conjunto rellenado;
+el C++ y el Kotlin deben cambiarse juntos (`MotorTest.rellenoParidadConBarreras`
+verifica la paridad con barreras aleatorias).
+
 ### Historial
 Undo/redo por snapshots completos de la hoja. Límite de pasos: **30**
 (`Historial` en Kotlin y `kMaxHistorial` en C++ tienen que coincidir). El
@@ -160,6 +168,15 @@ Particularidades:
 - **Expandir hoja** (issue 18): diálogo con sliders de ancho/alto a añadir
   (hasta 4096 por lado); `DibujoViewModel.expandirHoja` llama a
   `MotorDibujo.expandir(0, 0, ancho, alto)`.
+- **Exportar a la galería** (issue 22): botón de guardar en la barra superior.
+  `MotorDibujo.copiarHoja(destino)` vuelca la hoja COMPLETA (ancho*alto ARGB,
+  sin cámara) y en Android se arma un `Bitmap` ARGB_8888; el copiado y la
+  compresión corren fuera del hilo principal. `ExportadorGaleria` (`:app`)
+  guarda con `MediaStore` (`RELATIVE_PATH=Pictures/Dibujo`, `IS_PENDING`) en
+  API 29+, sin permisos; en API 26–28 escribe en `Pictures/Dibujo` y pide
+  `WRITE_EXTERNAL_STORAGE` (`maxSdkVersion=28`). `copiarHoja` NO es
+  rasterizado: copia el mismo buffer en C++ (`DibujoEngine::copiarHoja`, ya
+  existía para el render GPU) y en Kotlin, cubierto por el test de paridad.
 - Icono de app: adaptive icon XML (sin PNG) con `monochrome`.
 
 ### Backend gráfico (OpenGL ES / Vulkan)
@@ -243,8 +260,11 @@ Es clave para trabajar desde el móvil, sin adb ni PC.
   - Los buffers son ring buffers acotados (`MAX_MUESTRAS`, `MAX_LOGS`, ...).
 - **`CapturaLogs`**: lee el logcat propio (`logcat -v threadtime`) en un hilo
   daemon y conserva W/E/F; de V/D/I solo tags de interés (dibujo, EGL, Vulkan,
-  OpenGL, GPU, LeakCanary). Si el dispositivo restringe `logcat`, el monitor
-  sigue con su buffer propio y el capturador de crashes.
+  OpenGL, GPU, LeakCanary). Descarta el ruido de firmware de proveedor
+  (`TAGS_RUIDO`: Transsion/TECNO — `TranClassInfo`, `TranChoreographerImpl`,
+  `AppResolutionTuner`, `FBI`, `QT`), que no es de la app y llenaba el reporte.
+  Si el dispositivo restringe `logcat`, el monitor sigue con su buffer propio y
+  el capturador de crashes.
 - **`MonitorProvider`**: `ContentProvider` sin datos en `src/debug`; su único
   rol es arrancar `MonitorDibujo` al crear el proceso (se instala antes de
   `Application.onCreate`), así "escucha" siempre, aunque no se abra el panel.
@@ -253,6 +273,11 @@ Es clave para trabajar desde el móvil, sin adb ni PC.
   Resumen / Memoria / Hilos / Registro / Entorno; se refresca cada segundo.
   Botones: abrir LeakCanary, copiar reporte al portapapeles y compartirlo
   (`construirReporte`). Todo texto por `stringResource` en `strings_debug.xml`.
+  **Tareas separadas** (issue 22): `MainActivity` y `PanelDebugActivity` llevan
+  `launchMode="singleTask"` y `taskAffinity` distinta
+  (`com.dibujo.android` vs `com.dibujo.android.debug`). Sin eso, al abrir un
+  icono el launcher reanudaba la última Activity de la tarea y "Dibujo" abría
+  el panel (y al revés).
 - **LeakCanary 2.14**: `debugImplementation`, auto-instalado por su
   `ContentProvider`. Su icono de launcher se **desactiva** (`bools_debug.xml`,
   `leak_canary_add_launcher_icon=false`) para dejar un único icono de depuración
@@ -268,8 +293,9 @@ Es clave para trabajar desde el móvil, sin adb ni PC.
   implementado, la app presenta la hoja como textura en GPU y sólo cae a CPU
   si el backend falla. Sin dispositivo Android en el runner, la corrección en
   runtime del render GPU (sobre todo Vulkan) sólo se valida compilando/enlazando.
-- No hay persistencia de la hoja (guardar PNG/deshacer entre sesiones): es la
-  tarea #1 del ROADMAP.
+- Se puede exportar el dibujo a la galería (PNG), pero no hay persistencia del
+  estado editable de la hoja (reabrir el proyecto/deshacer entre sesiones): es
+  la tarea #1 del ROADMAP.
 - Release de `:app` no está firmado para distribución (solo debug).
 - El historial es por snapshots: 30 pasos (compartidos C++/Kotlin) para
   acotar la RAM del dispositivo (ver "Historial").

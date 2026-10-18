@@ -1,14 +1,22 @@
 # Modelos de IA local
 
-`limpiar_trazos.tflite` **no se versiona** (ver `.gitignore`) para no engordar el
-repositorio. Se genera con `tools/entrenar_limpiar_trazos.py` sobre el dataset
-comercial del Plan B (`tools/preparar_dataset_limpiar_trazos_planb.py`, Quick,
-Draw! de Google, CC BY 4.0).
+`limpiar_trazos.tflite` (el modelo **Buril**) **no se versiona** (ver
+`.gitignore`) para no engordar el repositorio. Se genera con
+`tools/buril.py` sobre el dataset comercial del Plan B
+(`tools/preparar_dataset_limpiar_trazos_planb.py`, Quick, Draw! de Google,
+CC BY 4.0).
 
-- Entrenamiento: workflow `.github/workflows/entrenar-limpiar-trazos-planb.yml`
-  (cachea el `.tflite` y lo sube como artefacto, fuera de git).
-- Empaquetado: `.github/workflows/android-apk.yml` restaura ese cache y copia el
-  modelo a esta carpeta antes de `assembleDebug`.
+- Entrenamiento (recomendado): cuaderno de Google Colab
+  `tools/buril_colab.ipynb` (driver fino sobre los scripts). La celda 1 pide la
+  versión del `.npz` y la del modelo (por defecto `v1.0.0-experimental.1a`).
+  Como respaldo, el workflow `.github/workflows/entrenar-limpiar-trazos-planb.yml`.
+- Buzón del modelo: los dos publican `limpiar_trazos.tflite` + `limpiar_trazos.json` en la
+  **release `modelo-buril`** (fuera de git, con historial).
+- Buzón del dataset: el `.npz` se cachea en la **release `dataset-buril`**
+  (asset `pares_esq_lado{LADO}_pc{POR_CATEGORIA}_{VERSION}.npz`), así Colab no
+  vuelve a bajar/preprocesar en cada sesión.
+- Empaquetado: `.github/workflows/android-apk.yml` baja el modelo de esa release
+  y lo copia a esta carpeta antes de `assembleDebug`.
 
 Sin el archivo, `LimpiadorTrazosIa.disponible()` es `false` y la app cae al
 adelgazado algorítmico de Zhang-Suen; el APK sigue funcionando.

@@ -3,7 +3,7 @@
 
 Baja el dataset real, empareja cada boceto repasado con su version limpiada y
 guarda un `.npz` cacheado y determinista que consume el Paso B (entrenamiento,
-`tools/entrenar_limpiar_trazos.py --pares ...`).
+`tools/buril.py --pares ...`).
 
 Esta fase esta pensada para NO exceder el corte de ~1 h de CI: `descargar` y
 `preprocesar` son independientes y reanudables, y el resultado se cachea para

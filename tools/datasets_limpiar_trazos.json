@@ -57,7 +57,7 @@
     {
       "id": "simo-serra",
       "nombre": "Learning to Simplify (Simo-Serra et al., SIGGRAPH 2016)",
-      "razon": "El dataset de 68 pares NO se distribuye por copyright (bobbens/sketch_simplification TRAIN.md). Solo se puede usar si el usuario lo consigue por su cuenta; el script lo acepta como carpeta local via --reales en entrenar_limpiar_trazos.py."
+      "razon": "El dataset de 68 pares NO se distribuye por copyright (bobbens/sketch_simplification TRAIN.md). Solo se puede usar si el usuario lo consigue por su cuenta; el script lo acepta como carpeta local via --reales en buril.py."
     }
   ]
 }

@@ -23,7 +23,7 @@ import kotlin.math.abs
  *
  * Si el modelo no está empaquetado o algo falla, [limpiar] devuelve `null` y el
  * ViewModel cae al algoritmo determinista (`MotorDibujo.limpiarTrazos`).
- * Ver `tools/entrenar_limpiar_trazos.py` para reproducir el modelo.
+ * Ver `tools/buril.py` para reproducir el modelo.
  */
 object LimpiadorTrazosIa {
 

@@ -7,11 +7,14 @@
 # El script baja solo la cabecera de cada categoria (rango HTTP), fabrica los
 # pares (repasado -> limpio) por simulacion y cachea un `.npz` con el mismo
 # formato que el Plan A, que consume el entrenamiento:
-# `tools/entrenar_limpiar_trazos.py --pares ...`.
+# `tools/buril.py --pares ...`.
 #
-# Fases separadas y cacheadas: la cabecera de cada ndjson y el `.npz` viven en
-# la cache de Actions, asi que una corrida cortada se retoma. El `key` del cache
-# incluye el hash del script y del registro: si cambia la generacion, se rehace.
+# Fases separadas y cacheadas: la cabecera de cada ndjson vive en la cache de
+# Actions y el `.npz` se publica en la release `dataset-buril` (buzón compartido
+# con el cuaderno de Colab), asi que una corrida cortada se retoma y el
+# entrenamiento reusa el mismo dataset sin volver a bajarlo. El `key` del cache
+# de cabeceras incluye el hash del script y del registro: si cambia la
+# generacion, se rehace.
 #
 # Disparo: manual (workflow_dispatch) o al tocar los archivos del Plan B.
 
@@ -32,6 +35,10 @@ on:
         description: "Rehacer aunque ya exista la cache"
         type: boolean
         default: false
+      version:
+        description: "Version del dataset (release-cache)"
+        default: "v1.0.0-experimental.1a"
+        type: string
   push:
     paths:
       - "tools/datasets_limpiar_trazos_planb.json"
@@ -39,7 +46,7 @@ on:
       - ".github/workflows/preparar-dataset-limpiar-trazos-planb.yml"
 
 permissions:
-  contents: read
+  contents: write
 
 concurrency:
   group: preparar-dataset-limpiar-trazos-planb
@@ -55,6 +62,7 @@ jobs:
     env:
       LADO: ${{ inputs.lado || '512' }}
       POR_CATEGORIA: ${{ inputs.por_categoria || '100' }}
+      VERSION: ${{ inputs.version || 'v1.0.0-experimental.1a' }}
     steps:
       - name: Descargar el codigo
         uses: actions/checkout@v4
@@ -76,12 +84,6 @@ jobs:
           path: .cache/limpiar_trazos_planb/crudos
           key: dataset-planb-crudos-v1-${{ hashFiles('tools/datasets_limpiar_trazos_planb.json') }}
 
-      - name: Cache de pares procesados
-        uses: actions/cache@v4
-        with:
-          path: .cache/limpiar_trazos_planb/procesado
-          key: dataset-planb-pares-v1-${{ hashFiles('tools/datasets_limpiar_trazos_planb.json', 'tools/preparar_dataset_limpiar_trazos_planb.py') }}-${{ env.LADO }}-pc${{ env.POR_CATEGORIA }}
-
       - name: Bajar las cabeceras de Quick, Draw! (reanudable)
         run: |
           EXTRA=""
@@ -97,10 +99,23 @@ jobs:
             EXTRA="--forzar"
           fi
           python3 tools/preparar_dataset_limpiar_trazos_planb.py preprocesar \
-            --lado "$LADO" --por-categoria "$POR_CATEGORIA" $EXTRA
+            --lado "$LADO" --por-categoria "$POR_CATEGORIA" --version "$VERSION" $EXTRA
 
       - name: Estado del cache
         run: python3 tools/preparar_dataset_limpiar_trazos_planb.py estado
+
+      - name: Cachear el .npz en la release `dataset-buril`
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          ASSET="pares_esq_lado${LADO}_pc${POR_CATEGORIA}_${VERSION}.npz"
+          gh release view dataset-buril >/dev/null 2>&1 || \
+            gh release create dataset-buril \
+              --title "Dataset Buril (cache del .npz)" \
+              --notes "Cache del dataset comercial (Quick, Draw!, CC BY 4.0) que usa \`tools/buril.py\`. Buzón compartido con el cuaderno de Colab \`tools/buril_colab.ipynb\` y el workflow de entrenamiento."
+          gh release upload dataset-buril \
+            ".cache/limpiar_trazos_planb/procesado/pares_esq_lado${LADO}.npz#${ASSET}" \
+            --clobber
 
       - name: Subir los pares como artefacto
         uses: actions/upload-artifact@v4

@@ -34,6 +34,13 @@ solo sobre la entrada (difuminado, engrosado/adelgazado, contraste, ruido) para
 simular más grosores de repase. `--aumentos N` agrega N copias aumentadas por
 muestra (por defecto 3).
 
+**Memoria (arreglo de OOM).** La aumentación se aplica **al vuelo** con
+`tf.data` (una pasada extra por `--aumentos`, en `Dataset.map` con
+`num_parallel_calls`), no materializando el set completo en RAM. Antes
+`aumentar_conjunto` creaba `1 + aumentos` copias en float32 y las concatenaba:
+con hojas de 512 px y muchos parches eso pasaba de 10 GB y el proceso moría con
+`SIGKILL: 9` (el OOM killer del kernel), no por el tamaño del modelo.
+
 La **pérdida** es BCE + Dice + **clDice** (Shit et al., CVPR'21): clDice es
 diferenciable (esqueleto morfológico blando) y empuja a preservar la topología
 de la línea, no sólo la superposición. El **LR** usa decaimiento coseno
@@ -311,19 +318,42 @@ def cargar_reales(carpeta):
     return np.stack(xs), np.stack(ys)
 
 
-def aumentar_conjunto(x, y, rng, copias):
-    """Agrega [copias] versiones aumentadas de cada muestra al conjunto."""
-    if copias <= 0:
-        return x, y
-    xa, ya = [x], [y]
-    for _ in range(copias):
-        ax = np.empty_like(x)
-        ay = np.empty_like(y)
-        for i in range(x.shape[0]):
-            ax[i], ay[i] = aumentar(x[i], y[i], rng)
-        xa.append(ax)
-        ya.append(ay)
-    return np.concatenate(xa, 0), np.concatenate(ya, 0)
+def _aumentar_uno(x, y, semilla):
+    """Aumenta un par con una semilla propia (seguro para `tf.data` paralelo)."""
+    rng = np.random.default_rng(int(semilla))
+    xa, ya = aumentar(x, y, rng)
+    return xa.astype(np.float32), ya.astype(np.float32)
+
+
+def _map_aumento(x, y):
+    """Aplica `aumentar` a un par dentro de un `Dataset.map`."""
+    semilla = tf.random.uniform([], 0, 2 ** 31 - 1, dtype=tf.int64)
+    xa, ya = tf.numpy_function(
+        _aumentar_uno, [x, y, semilla], [tf.float32, tf.float32]
+    )
+    xa.set_shape([LADO, LADO, 1])
+    ya.set_shape([LADO, LADO, 1])
+    return xa, ya
+
+
+def flujo(x, y, lote, aumentos=0, entrenando=False, semilla=1):
+    """Arma un `tf.data.Dataset` que aumenta al vuelo, sin copiar el set en RAM.
+
+    Antes `aumentar_conjunto` materializaba `1 + aumentos` copias del set
+    completo en float32 y las concatenaba: con hojas de 512 px y muchos parches
+    eso pasaba de 10 GB y el proceso moría por OOM del kernel (`SIGKILL: 9`), no
+    por el tamaño del modelo. Acá cada muestra se aumenta en `map` (con semilla
+    por llamada), así la memoria es del orden del lote y no del set entero. La
+    pasada extra por `--aumentos` mantiene la misma cantidad de ejemplos por
+    época que antes.
+    """
+    ds = tf.data.Dataset.from_tensor_slices((x, y))
+    if entrenando and aumentos > 0:
+        ds = ds.repeat(int(aumentos) + 1)
+        ds = ds.shuffle(min(int(x.shape[0]), 8192), seed=semilla,
+                        reshuffle_each_iteration=True)
+        ds = ds.map(_map_aumento, num_parallel_calls=tf.data.AUTOTUNE)
+    return ds.batch(lote).prefetch(tf.data.AUTOTUNE)
 
 
 def cargar_pares_cache(ruta, lado=LADO, paso=32, max_por_imagen=16, min_tinta=4, semilla=1):
@@ -618,15 +648,18 @@ def main():
     ytr = banda(ytr, args.banda)
     yva = banda(yva, args.banda)
 
-    xtr, ytr = aumentar_conjunto(xtr, ytr, rng, args.aumentos)
+    # Aumentación al vuelo con tf.data: no se materializa el set ×(1+aumentos)
+    # en RAM (eso causaba el OOM / SIGKILL). Ver `flujo`.
+    print(f"entrenamiento: {xtr.shape[0]} pares x{args.aumentos + 1} (aumento al "
+          f"vuelo) | validación: {xva.shape[0]} pares | objetivo: banda de "
+          f"{2 * args.banda + 1} px")
 
-    orden = rng.permutation(xtr.shape[0])
-    xtr, ytr = xtr[orden], ytr[orden]
-    print(f"entrenamiento: {xtr.shape[0]} pares | validación: {xva.shape[0]} pares "
-          f"| objetivo: banda de {2 * args.banda + 1} px")
+    tren = flujo(xtr, ytr, args.lote,
+                 aumentos=args.aumentos, entrenando=True, semilla=args.semilla)
+    val = flujo(xva, yva, args.lote) if xva.shape[0] else None
 
     red = modelo()
-    pasos = max(1, int(np.ceil(xtr.shape[0] / args.lote)))
+    pasos = max(1, int(np.ceil(xtr.shape[0] * (args.aumentos + 1) / args.lote)))
     plan_lr = tf.keras.optimizers.schedules.CosineDecay(
         initial_learning_rate=args.lr,
         decay_steps=max(1, pasos * args.epocas),
@@ -640,8 +673,8 @@ def main():
     parametros = int(red.count_params())
     print(f"modelo: {parametros:,} parametros (~{parametros * 2 / 1e6:.2f} MB en float16)")
     red.fit(
-        xtr, ytr, validation_data=(xva, yva),
-        epochs=args.epocas, batch_size=args.lote, verbose=2,
+        tren, validation_data=val,
+        epochs=args.epocas, verbose=2,
     )
 
     conv = tf.lite.TFLiteConverter.from_keras_model(red)

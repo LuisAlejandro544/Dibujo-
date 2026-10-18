@@ -16,6 +16,11 @@ import kotlin.math.abs
  * hoja completa. Cada píxel limpio toma el color de la tinta original más
  * cercana, así se conserva el color del trazo del usuario.
  *
+ * El modelo es float16 (I/O float32): se intenta primero el **delegado GPU**,
+ * que acelera bastante las hojas grandes, y se cae a CPU si el equipo no lo
+ * admite. El `.tflite` NO se versiona (pesa): lo inyecta el CI en el APK; ver
+ * `app/src/main/assets/modelos/LEEME.md`.
+ *
  * Si el modelo no está empaquetado o algo falla, [limpiar] devuelve `null` y el
  * ViewModel cae al algoritmo determinista (`MotorDibujo.limpiarTrazos`).
  * Ver `tools/entrenar_limpiar_trazos.py` para reproducir el modelo.
@@ -52,16 +57,21 @@ object LimpiadorTrazosIa {
     private fun cargar(context: Context): CompiledModel? {
         modelo?.let { return it }
         if (fallo) return null
-        return try {
-            CompiledModel.create(
-                context.assets,
-                RUTA_MODELO,
-                CompiledModel.Options(Accelerator.CPU),
-            ).also { modelo = it }
-        } catch (_: Exception) {
-            fallo = true
-            null
+        // GPU primero (acelera las hojas grandes); si el delegado no arranca con
+        // este modelo/equipo, se cae a CPU con el mismo binario float16.
+        for (acelerador in listOf(Accelerator.GPU, Accelerator.CPU)) {
+            try {
+                return CompiledModel.create(
+                    context.assets,
+                    RUTA_MODELO,
+                    CompiledModel.Options(acelerador),
+                ).also { modelo = it }
+            } catch (_: Exception) {
+                // Se prueba el siguiente acelerador.
+            }
         }
+        fallo = true
+        return null
     }
 
     /**

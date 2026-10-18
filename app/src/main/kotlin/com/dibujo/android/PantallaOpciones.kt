@@ -36,8 +36,9 @@ import com.dibujo.core.BackendRender
 /**
  * Pantalla "Opciones": antes la configuración era un diálogo dentro de la
  * pantalla de dibujo; ahora tiene su propia pantalla, accesible desde el menú
- * principal y desde la barra superior del lienzo. Por ahora reúne la elección
- * del motor gráfico (OpenGL ES / Vulkan / automático).
+ * principal y desde la barra superior del lienzo. Reúne la elección del motor
+ * gráfico (OpenGL ES / Vulkan / automático) y los créditos de IA (atribución
+ * del dataset de entrenamiento, exigida por su licencia CC BY 4.0).
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -120,6 +121,16 @@ fun PantallaOpciones(
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
+            Spacer(Modifier.height(16.dp))
+            Text(
+                stringResource(R.string.config_atribucion_titulo),
+                style = MaterialTheme.typography.titleSmall,
+            )
+            Text(
+                stringResource(R.string.config_atribucion_quickdraw),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
         }
     }
 }

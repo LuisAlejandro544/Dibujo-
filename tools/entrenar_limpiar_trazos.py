@@ -36,10 +36,18 @@ para SketchBench, `tools/preparar_dataset_limpiar_trazos_planb.py` para Quick, D
 hojas completas emparejadas (boceto -> limpiado) de las que se recortan parches
 64x64 con tinta, separando entrenamiento/validacion por boceto.
 
-Escribe `app/src/main/assets/modelos/limpiar_trazos.tflite`.
+Al final exporta un `.tflite` float16 (apto para el delegado GPU) y evalua IoU y
+PSNR sobre validacion con el modelo ya exportado, guardando un manifiesto `.json`
+con las metricas y la atribucion del dataset.
+
+Escribe `app/src/main/assets/modelos/limpiar_trazos.tflite` (y su `.json`). Esa
+ruta esta en `.gitignore`: el modelo NO se versiona para no engordar el repo; el
+workflow `entrenar-limpiar-trazos-planb.yml` lo cachea y `android-apk.yml` lo
+inyecta en los assets antes de armar el APK.
 """
 
 import argparse
+import json
 import os
 import numpy as np
 import tensorflow as tf
@@ -311,6 +319,47 @@ def dice(y_true, y_pred):
     return 1.0 - (2.0 * inter + 1.0) / (tf.reduce_sum(y_true) + tf.reduce_sum(y_pred) + 1.0)
 
 
+def psnr(y_true, y_pred):
+    """PSNR de la mascara limpia (y binaria) contra la probabilidad predicha."""
+    yt = np.asarray(y_true, dtype=np.float64)
+    yp = np.asarray(y_pred, dtype=np.float64)
+    mse = float(np.mean((yt - yp) ** 2))
+    if mse <= 1e-12:
+        return 99.0
+    return float(10.0 * np.log10(1.0 / mse))
+
+
+def evaluar(tflite, x, y, max_muestras=48):
+    """IoU y PSNR promedio del modelo exportado sobre [x]/[y] (esqueleto vs ideal).
+
+    Se usa el propio `.tflite` (no Keras) para medir exactamente lo que corre en
+    el movil, incluida la cuantizacion float16.
+    """
+    if x.shape[0] == 0:
+        return {"iou": 0.0, "psnr": 0.0, "muestras": 0}
+    interp = tf.lite.Interpreter(model_content=tflite)
+    interp.allocate_tensors()
+    det_in = interp.get_input_details()[0]
+    det_out = interp.get_output_details()[0]
+    n = min(max_muestras, x.shape[0])
+    ious, psnrs = [], []
+    for i in range(n):
+        interp.set_tensor(det_in["index"], x[i : i + 1].astype(np.float32))
+        interp.invoke()
+        pred = interp.get_tensor(det_out["index"])[0, ..., 0]
+        binp = pred > 0.5
+        gt = y[i, ..., 0] > 0.5
+        inter = np.logical_and(binp, gt).sum()
+        union = np.logical_or(binp, gt).sum()
+        ious.append(float(inter) / max(float(union), 1.0))
+        psnrs.append(psnr(gt.astype(np.float32), pred))
+    return {
+        "iou": float(np.mean(ious)),
+        "psnr": float(np.mean(psnrs)),
+        "muestras": n,
+    }
+
+
 def argumentos():
     p = argparse.ArgumentParser(description="Entrena el limpiador de trazos.")
     p.add_argument("--muestras", type=int, default=1400, help="pares sintéticos de entrenamiento")
@@ -386,20 +435,29 @@ def main():
         f.write(tflite)
     print("modelo guardado:", args.salida, len(tflite), "bytes")
 
-    # Chequeo rápido: solapamiento del esqueleto aprendido con el objetivo.
-    interp = tf.lite.Interpreter(model_content=tflite)
-    interp.allocate_tensors()
-    det_in = interp.get_input_details()[0]
-    det_out = interp.get_output_details()[0]
-    for i in range(min(3, xva.shape[0])):
-        interp.set_tensor(det_in["index"], xva[i : i + 1])
-        interp.invoke()
-        pred = interp.get_tensor(det_out["index"])[0, ..., 0]
-        binp = pred > 0.5
-        gt = yva[i, ..., 0] > 0.5
-        inter = np.logical_and(binp, gt).sum()
-        union = np.logical_or(binp, gt).sum()
-        print(f"muestra {i}: IoU={inter / max(union, 1):.3f}")
+    # Evaluacion final sobre validacion con el modelo exportado (float16), que es
+    # lo que de verdad corre en el telefono.
+    metricas = evaluar(tflite, xva, yva)
+    print(f"validacion: IoU={metricas['iou']:.3f} PSNR={metricas['psnr']:.2f} dB "
+          f"({metricas['muestras']} muestras)")
+
+    # Manifiesto con metricas + licencia/atribucion del dataset (Plan B).
+    manifiesto = {
+        "descripcion": "limpiador de trazos (entrada 64x64x1 -> esqueleto 64x64x1)",
+        "formato": "tflite float16",
+        "bytes": len(tflite),
+        "epocas": args.epocas,
+        "aumentos": args.aumentos,
+        "pares": args.pares,
+        "reales": args.reales,
+        "validacion": metricas,
+        "licencia_datos": "CC BY 4.0 - Quick, Draw! (Google, Inc.)",
+        "atribucion": "The Quick, Draw! dataset by Google, Inc. (CC BY 4.0).",
+    }
+    ruta_manifiesto = os.path.splitext(args.salida)[0] + ".json"
+    with open(ruta_manifiesto, "w", encoding="utf-8") as f:
+        json.dump(manifiesto, f, ensure_ascii=False, indent=2)
+    print("metricas guardadas:", ruta_manifiesto)
 
 
 if __name__ == "__main__":

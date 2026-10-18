@@ -150,6 +150,10 @@ class DibujoViewModel(app: Application) : AndroidViewModel(app) {
                 motorNombre = m.nombre,
                 hojaAncho = m.ancho,
                 hojaAlto = m.alto,
+                // El motor recién creado/abierto arranca con la cámara centrada:
+                // se refleja en el estado para que la vista previa y botones como
+                // "enderezar" no queden con la cámara del dibujo anterior.
+                camara = m.camara(),
                 modeloIaDisponible = LimpiadorTrazosIa.disponible(aplicacion),
                 gpuDisponible = hayGpu,
                 gpuCargando = hayGpu && !it.gpuFallo,
@@ -167,28 +171,20 @@ class DibujoViewModel(app: Application) : AndroidViewModel(app) {
 
     /**
      * Abre un dibujo guardado: reemplaza la hoja por [pixeles] (de tamaño
-     * [ancho] × [alto]). Si el motor actual ya tiene ese tamaño, sólo reemplaza
-     * el contenido; si no, lo recrea (la app conmuta a la hoja guardada y el
-     * render GPU se reasigna al nuevo tamaño). El historial arranca limpio: la
-     * hoja abierta es el nuevo punto de partida.
+     * [ancho] × [alto]). Siempre se recrea el motor con el tamaño guardado (el
+     * render GPU se reasigna al nuevo). El historial arranca limpio, también
+     * cuando el tamaño coincide con el del motor actual: la hoja abierta es el
+     * nuevo punto de partida y deshacer/rehacer no deben volver al dibujo
+     * anterior.
      */
     fun abrirDibujo(ancho: Int, alto: Int, pixeles: IntArray) {
         if (ancho <= 0 || alto <= 0 || pixeles.size < ancho * alto) return
-        val actual = motor
-        val m: MotorDibujo
-        if (actual != null && actual.ancho == ancho && actual.alto == alto) {
-            actual.cancelarTrazo()
-            actual.reemplazarHoja(pixeles)
-            m = actual
-        } else {
-            actual?.close()
-            val nuevo = Motores.crear(ancho.coerceIn(1, MAX_LADO), alto.coerceIn(1, MAX_LADO))
-            nuevo.configurarLapiz(_estado.value.lapiz)
-            nuevo.reemplazarHoja(pixeles)
-            motor = nuevo
-            m = nuevo
-        }
-        publicarContenido(m, modificado = true)
+        motor?.close()
+        val nuevo = Motores.crear(ancho.coerceIn(1, MAX_LADO), alto.coerceIn(1, MAX_LADO))
+        nuevo.configurarLapiz(_estado.value.lapiz)
+        nuevo.reemplazarHoja(pixeles)
+        motor = nuevo
+        publicarContenido(nuevo, modificado = true)
     }
 
     /**
@@ -225,29 +221,27 @@ class DibujoViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     /**
-     * Empieza un dibujo **desde cero**: descarta el borrador en curso (lo deja
-     * en blanco si el motor ya existe) y borra el autoguardado, para que
-     * "Continuar dibujando" no reanude el dibujo anterior. Si todavía no hay
-     * motor, se creará vacío al medirse la pantalla de dibujo. Las copias de la
-     * biblioteca no se tocan. El historial sí conserva el estado anterior
-     * (se puede deshacer si fue un error).
+     * Empieza un dibujo **desde cero**: descarta el motor en curso para que la
+     * próxima vez que se muestre la pantalla de dibujo se cree una hoja en
+     * blanco con el tamaño por defecto (el de la vista). Así no se arrastra ni
+     * el tamaño de la hoja anterior (expandida o redimensionada) ni su
+     * historial de deshacer/rehacer. También borra el autoguardado, para que
+     * "Continuar dibujando" no reanude el dibujo anterior. Las copias de la
+     * biblioteca no se tocan.
      */
     fun nuevoDibujo() {
-        val m = motor
-        if (m != null) {
-            m.cancelarTrazo()
-            m.limpiarHoja()
-            m.centrarVista()
-            _estado.update {
-                it.copy(
-                    trazoEnCurso = null,
-                    puedeDeshacer = m.puedeDeshacer(),
-                    puedeRehacer = m.puedeRehacer(),
-                    modificado = false,
-                    camara = m.camara(),
-                    marco = it.marco + 1,
-                )
-            }
+        motor?.close()
+        motor = null
+        _estado.update {
+            it.copy(
+                motorNombre = "",
+                trazoEnCurso = null,
+                puedeDeshacer = false,
+                puedeRehacer = false,
+                modificado = false,
+                camara = Camara(0f, 0f, 1f),
+                marco = it.marco + 1,
+            )
         }
         viewModelScope.launch(Dispatchers.IO) { AlmacenDibujos.borrarActual(aplicacion) }
     }

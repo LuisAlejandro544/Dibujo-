@@ -5,7 +5,7 @@ name: OpenCode Assistant (Zen & Muse Spark)
 #   (external_directory/doom_loop/question default "ask" en modo headless).
 #   Se agregan: (a) bloque "permission" en opencode.json del repo,
 #   (b) config global de respaldo escrito en ~/.config/opencode/opencode.json,
-#   (c) timeout-minutes: 30 para fallar rápido si algo vuelve a atascarse,
+#   (c) timeout-minutes: 100 para fallar rápido si algo vuelve a atascarse,
 #   (d) cancel-in-progress: true para que un comando humano nuevo cancele
 #   un run zombie en vez de encolarse detrás de él para siempre.
 
@@ -103,9 +103,9 @@ jobs:
     name: OpenCode Agent (Muse Spark 1.3 Multimodal)
     needs: guard
     if: needs.guard.outputs.should_run == 'true'
-    # (c) Si el agente vuelve a atascarse, el run falla a los 30 min en vez
+    # (c) Si el agente vuelve a atascarse, el run falla a los 100 min en vez
     # de consumir las 6 h por defecto de GitHub y bloquear el grupo.
-    timeout-minutes: 30
+    timeout-minutes: 100
     # (d) Un comando humano nuevo cancela el run anterior del mismo issue
     # (antes se encolaba detrás de un run zombie para siempre).
     # La deduplicación por PR sigue protegiendo contra duplicados.

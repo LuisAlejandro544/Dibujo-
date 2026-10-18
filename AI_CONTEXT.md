@@ -232,7 +232,13 @@ Ver `app/src/main/assets/modelos/LEEME.md`.
   et al. CVPR'21, se calcula con un esqueleto morfológico blando diferenciable,
   así que premia la conectividad y no sólo la superposición). El **LR decae en
   coseno** (`--lr`, por defecto `1e-3`) y por defecto se corren **60 épocas** con
-  **`--aumentos 3`**.
+  **`--aumentos 3`**. La **aumentación es al vuelo** con `tf.data` (`flujo`:
+  `repeat(aumentos+1)` + `Dataset.map` con `num_parallel_calls`, semilla por
+  llamada), no materializando el set ×(1+aumentos) en RAM. Antes
+  `aumentar_conjunto` creaba las copias en float32 y las concatenaba: con
+  `pc=200`/`aumentos=3` y hojas de 512 px eso pasaba de 10 GB y el proceso moría
+  con **`SIGKILL: 9`** (OOM del kernel), no por el tamaño del modelo. La
+  memoria ahora es del orden del lote.
   Exporta `.tflite` **float16** (I/O float32, corre en GPU y CPU),
   evalúa **IoU y PSNR** sobre validación con el modelo exportado y guarda un
   `.json` de métricas + atribución (con `"modelo": "Buril <version>"`). La vía

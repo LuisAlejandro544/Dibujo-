@@ -1,0 +1,86 @@
+{
+  "version": 1,
+  "descripcion": "Plan B: registro de datasets para limpiar trazos con licencia que permite uso comercial y NO obliga a que la app sea open source. A diferencia del Plan A (SketchBench, con una parte solo academica), aca solo entran fuentes 100% comerciales. El script tools/preparar_dataset_limpiar_trazos_planb.py baja trazos vectoriales reales y fabrica los pares (repasado -> limpio) por simulacion, igual que hace Simo-Serra con su 'inverse dataset construction', pero sobre datos con licencia compatible con monetizacion.",
+  "fuente_por_defecto": "quickdraw",
+  "fuentes": [
+    {
+      "id": "quickdraw",
+      "nombre": "Quick, Draw! (Google) - trazos vectoriales reales",
+      "pagina": "https://quickdraw.withgoogle.com/data",
+      "repo": "https://github.com/googlecreativelab/quickdraw-dataset",
+      "licencia": "CC BY 4.0",
+      "licencia_url": "https://creativecommons.org/licenses/by/4.0/",
+      "comercial": true,
+      "obliga_opensource": false,
+      "atribucion": "The Quick, Draw! dataset by Google, Inc. (CC BY 4.0).",
+      "url_plantilla": "https://storage.googleapis.com/quickdraw_dataset/full/simplified/{categoria}.ndjson",
+      "categorias": [
+        "cat",
+        "dog",
+        "house",
+        "tree",
+        "flower",
+        "car",
+        "fish",
+        "bird",
+        "face",
+        "sun",
+        "cloud",
+        "sailboat"
+      ],
+      "drawings_esperados_por_categoria": 120000,
+      "bytes_aprox": 76676944,
+      "max_bytes_por_categoria": 12000000,
+      "formato": "ndjson",
+      "coordenadas": "0..255 (simplificado: alineado arriba-izquierda y escalado a 255)",
+      "nota_descarga": "Cada categoria pesa ~40-100 MB, pero para el modelo alcanza con la cabecera: se baja solo un rango HTTP (bytes=0..max_bytes) y se usa como maximo --por-categoria dibujos. Con 'accept-ranges: bytes' el host de Google Cloud Storage lo sirve parcial.",
+      "nota_datos": "Son trazos humanos reales (dominio del usuario), lo que cierra la brecha respecto de las curvas Bezier sinteticas. El 'repasado' (entrada) se simula engrosando y repasando el trazo limpio; el objetivo es el trazo de 1 px."
+    }
+  ],
+  "descartadas": [
+    {
+      "id": "sketchbench",
+      "nombre": "SketchBench (Yan et al., TOG 2020)",
+      "razon": "La mayoria de los bocetos es CC, pero 18 (6 en el subconjunto curado) son solo de permiso academico. Un modelo entrenado con ellos queda contaminado para uso comercial: no apto como Plan B. Sigue disponible en tools/datasets_limpiar_trazos.json solo para investigacion/evaluacion."
+    },
+    {
+      "id": "simo-serra",
+      "nombre": "Learning to Simplify (Simo-Serra et al., SIGGRAPH 2016)",
+      "razon": "Codigo y modelos bajo CC BY-NC-SA 4.0 (No Comercial) y los 68 pares no se redistribuyen. Inservible para monetizar."
+    },
+    {
+      "id": "sketchcleannet",
+      "nombre": "SketchCleanNet (Manda et al., 3DOR 2022)",
+      "razon": "Licencia CC BY-NC-SA 4.0 (No Comercial). Descartado."
+    },
+    {
+      "id": "tu-berlin",
+      "nombre": "TU-Berlin Sketch Dataset",
+      "razon": "Solo uso academico/no comercial. Descartado."
+    },
+    {
+      "id": "sketchy",
+      "nombre": "Sketchy Database",
+      "razon": "Solo investigacion. Descartado."
+    }
+  ],
+  "alternativas_comerciales": [
+    {
+      "id": "openclipart",
+      "nombre": "Openclipart (CC0 / dominio publico)",
+      "licencia": "CC0 1.0",
+      "comercial": true,
+      "obliga_opensource": false,
+      "atribucion": "No exige atribucion.",
+      "nota": "Miles de SVG. Requiere rasterizar SVG (cairosvg/Inkscape) y no trae pares; el repasado se simularia igual. Sin implementar todavia: QuickDraw ya cubre la necesidad con trazos humanos sin dependencias extra."
+    },
+    {
+      "id": "quickdraw-sketchrnn",
+      "nombre": "Quick, Draw! - Sketch-RNN (.npz)",
+      "licencia": "CC BY 4.0",
+      "comercial": true,
+      "obliga_opensource": false,
+      "nota": "Mismos trazos que Quick Draw en formato dx/dy de pluma; alternativa si algun dia se quiere entrenar el orden de trazo."
+    }
+  ]
+}

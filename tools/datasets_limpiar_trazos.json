@@ -1,0 +1,63 @@
+{
+  "version": 1,
+  "descripcion": "Registro de datasets reales para limpiar trazos (Paso A). El script tools/preparar_dataset_limpiar_trazos.py los baja, empareja (boceto -> limpiado) y cachea un .npz. Pensado para no exceder el corte de ~1 h de CI: descargar y preprocesar son fases separadas y reanudables.",
+  "nota_comercial": "SketchBench es comodo para investigacion/evaluacion, PERO no es 100% comercial: una parte de los bocetos solo permite uso academico. Para entrenar el modelo que va en la app (que se quiere monetizar) usar el Plan B: tools/datasets_limpiar_trazos_planb.json (Quick, Draw!, CC BY 4.0).",
+  "plan_b": "tools/datasets_limpiar_trazos_planb.json",
+  "fuente_por_defecto": "sketchbench",
+  "fuentes": [
+    {
+      "id": "sketchbench",
+      "nombre": "SketchBench - A Benchmark for Rough Sketch Cleanup (Yan, Vanderhaeghe, Gingold; TOG 2020 / SIGGRAPH Asia)",
+      "pagina": "https://cragl.cs.gmu.edu/sketchbench/",
+      "articulo": "https://doi.org/10.1145/3414685.3417784",
+      "url": "https://cragl.cs.gmu.edu/sketchbench/Benchmark_Testset.zip",
+      "bytes": 817525282,
+      "sha256": "7f59c9326f4618439811fc9cfe6a069736e28eff0010c42aa51a3e44ea846903",
+      "formato": "zip",
+      "inseguro": true,
+      "nota_tls": "El host de GMU sirve un certificado que no valida con la CA del runner; se baja con verificacion TLS desactivada PERO se comprueba tamano + sha256 (el archivo es publico y el hash es fijo).",
+      "licencia": "Mayoria Creative Commons; el resto solo uso academico. Ver sketch_tags.csv en Benchmark_Dataset.zip. Para uso comercial, filtrar por licencia.",
+      "comercial": false,
+      "nota_comercial": "18 bocetos (6 en el subconjunto curado) son solo de permiso academico: un modelo entrenado con ellos no es limpio para monetizar. Por eso el Plan B usa Quick, Draw!",
+      "estructura": {
+        "bocetos": "Benchmark_Testset/rough/pixel/<base>_<variante>[_res].png",
+        "objetivo": "Benchmark_Testset/gt/pixel/<base>_<artista>_norm_cleaned[_res].png",
+        "variante_preferida": "norm_full",
+        "variantes": ["norm_full", "norm_rough", "cb", ""],
+        "resoluciones": ["500", "1000", "2000", ""],
+        "objetivo_binario_umbral": 128
+      }
+    },
+    {
+      "id": "sketchbench-dataset",
+      "nombre": "SketchBench - Benchmark_Dataset (bocetos + GT vectorial SVG + sketch_tags.csv con licencias)",
+      "pagina": "https://cragl.cs.gmu.edu/sketchbench/",
+      "url": "https://cragl.cs.gmu.edu/sketchbench/Benchmark_Dataset.zip",
+      "bytes": 951272680,
+      "sha256": null,
+      "formato": "zip",
+      "inseguro": true,
+      "opcional": true,
+      "nota": "Todavia no lo consume el Paso A; sirve para rasterizar los SVG limpios (requiere CairoSVG/Inkscape) y para leer las licencias por boceto."
+    },
+    {
+      "id": "sketchbench-eval",
+      "nombre": "SketchBench - Evaluation_Data (metricas y manifiesto de emparejamiento authoritative)",
+      "pagina": "https://cragl.cs.gmu.edu/sketchbench/",
+      "url": "https://cragl.cs.gmu.edu/sketchbench/Evaluation_Data.zip",
+      "bytes": 20644839,
+      "sha256": null,
+      "formato": "zip",
+      "inseguro": true,
+      "opcional": true,
+      "nota": "Contiene Auto_to_GT.csv (emparejamiento input<->artista) por si el emparejamiento por nombre no alcanza."
+    }
+  ],
+  "descartadas": [
+    {
+      "id": "simo-serra",
+      "nombre": "Learning to Simplify (Simo-Serra et al., SIGGRAPH 2016)",
+      "razon": "El dataset de 68 pares NO se distribuye por copyright (bobbens/sketch_simplification TRAIN.md). Solo se puede usar si el usuario lo consigue por su cuenta; el script lo acepta como carpeta local via --reales en entrenar_limpiar_trazos.py."
+    }
+  ]
+}

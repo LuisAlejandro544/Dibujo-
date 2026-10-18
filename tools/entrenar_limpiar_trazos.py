@@ -13,6 +13,10 @@ Datos:
     con subcarpetas `entrada/` y `objetivo/` (o `input/`/`output/`) y archivos
     con el mismo nombre base en ambas.
 
+    Para un modelo que se pueda vender usá el **Plan B** (licencia comercial):
+    `tools/preparar_dataset_limpiar_trazos_planb.py` arma pares a partir de
+    Quick, Draw! (CC BY 4.0) y su `.npz` se pasa igual a `--pares`.
+
 Además se aumenta el set de entrenamiento con transformaciones que no mueven la
 etiqueta (volteos, giros de 90 grados, desplazamientos) y de forma/fotometría
 solo sobre la entrada (difuminado, engrosado/adelgazado, contraste, ruido) para
@@ -23,13 +27,27 @@ El modelo se exporta a .tflite (float16) para correrlo en el móvil con LiteRT.
 Uso (desde la raíz del repo, con `tensorflow-cpu` + `numpy` instalados):
 
     python3 tools/entrenar_limpiar_trazos.py
+    python3 tools/entrenar_limpiar_trazos.py --pares .cache/limpiar_trazos/procesado/pares_esq_lado512.npz
     python3 tools/entrenar_limpiar_trazos.py --reales ~/datos/sketchbench
     python3 tools/entrenar_limpiar_trazos.py --epocas 30 --aumentos 2
 
-Escribe `app/src/main/assets/modelos/limpiar_trazos.tflite`.
+`--pares` consume el cache de un plan de dataset (`tools/preparar_dataset_limpiar_trazos.py`
+para SketchBench, `tools/preparar_dataset_limpiar_trazos_planb.py` para Quick, Draw!):
+hojas completas emparejadas (boceto -> limpiado) de las que se recortan parches
+64x64 con tinta, separando entrenamiento/validacion por boceto.
+
+Al final exporta un `.tflite` float16 (apto para el delegado GPU) y evalua IoU y
+PSNR sobre validacion con el modelo ya exportado, guardando un manifiesto `.json`
+con las metricas y la atribucion del dataset.
+
+Escribe `app/src/main/assets/modelos/limpiar_trazos.tflite` (y su `.json`). Esa
+ruta esta en `.gitignore`: el modelo NO se versiona para no engordar el repo; el
+workflow `entrenar-limpiar-trazos-planb.yml` lo cachea y `android-apk.yml` lo
+inyecta en los assets antes de armar el APK.
 """
 
 import argparse
+import json
 import os
 import numpy as np
 import tensorflow as tf
@@ -225,6 +243,53 @@ def aumentar_conjunto(x, y, rng, copias):
     return np.concatenate(xa, 0), np.concatenate(ya, 0)
 
 
+def cargar_pares_cache(ruta, lado=LADO, paso=32, max_por_imagen=16, min_tinta=4, semilla=1):
+    """Extrae parches [lado]x[lado] del cache del Paso A (`--pares`).
+
+    El cache guarda hojas completas (p. ej. 512x512) con `x` en grises
+    [0,255] y `y` binaria {0,1}, mas un `split` agrupado por base (sin fuga).
+    Aca se recortan parches con algo de tinta y se devuelven ya en el formato
+    del entrenamiento (float32, canal 1).
+    """
+    datos = np.load(ruta)
+    equis = datos["x"]
+    ye = datos["y"]
+    if "split" in datos:
+        split = datos["split"]
+    else:
+        split = np.array(["entrenamiento"] * len(equis))
+    rng = np.random.default_rng(semilla)
+
+    acumulado = {"entrenamiento": ([], []), "validacion": ([], [])}
+    alto, ancho = equis.shape[1], equis.shape[2]
+    for i in range(len(equis)):
+        candidatos = []
+        for fy in range(0, alto - lado + 1, paso):
+            for fx in range(0, ancho - lado + 1, paso):
+                if int(ye[i, fy:fy + lado, fx:fx + lado].sum()) >= min_tinta:
+                    candidatos.append((fy, fx))
+        if not candidatos:
+            continue
+        rng.shuffle(candidatos)
+        destino = str(split[i])
+        for fy, fx in candidatos[:max_por_imagen]:
+            xs, ys = acumulado[destino]
+            xs.append(equis[i, fy:fy + lado, fx:fx + lado, None].astype(np.float32) / 255.0)
+            ys.append(ye[i, fy:fy + lado, fx:fx + lado, None].astype(np.float32))
+
+    def _apila(par):
+        xs, ys = par
+        if not xs:
+            return (np.empty((0, lado, lado, 1), np.float32),
+                    np.empty((0, lado, lado, 1), np.float32))
+        return np.stack(xs, 0), np.stack(ys, 0)
+
+    xtr, ytr = _apila(acumulado["entrenamiento"])
+    xva, yva = _apila(acumulado["validacion"])
+    print(f"[pares] {len(xtr)} parches de entrenamiento y {len(xva)} de validacion de {ruta}")
+    return xtr, ytr, xva, yva
+
+
 def modelo():
     # Mini U-Net de 2 niveles. Un poco más ancha que la v1 (16/24/32) pero
     # sigue siendo chica para el móvil (float16, unos cientos de KB).
@@ -254,11 +319,56 @@ def dice(y_true, y_pred):
     return 1.0 - (2.0 * inter + 1.0) / (tf.reduce_sum(y_true) + tf.reduce_sum(y_pred) + 1.0)
 
 
+def psnr(y_true, y_pred):
+    """PSNR de la mascara limpia (y binaria) contra la probabilidad predicha."""
+    yt = np.asarray(y_true, dtype=np.float64)
+    yp = np.asarray(y_pred, dtype=np.float64)
+    mse = float(np.mean((yt - yp) ** 2))
+    if mse <= 1e-12:
+        return 99.0
+    return float(10.0 * np.log10(1.0 / mse))
+
+
+def evaluar(tflite, x, y, max_muestras=48):
+    """IoU y PSNR promedio del modelo exportado sobre [x]/[y] (esqueleto vs ideal).
+
+    Se usa el propio `.tflite` (no Keras) para medir exactamente lo que corre en
+    el movil, incluida la cuantizacion float16.
+    """
+    if x.shape[0] == 0:
+        return {"iou": 0.0, "psnr": 0.0, "muestras": 0}
+    interp = tf.lite.Interpreter(model_content=tflite)
+    interp.allocate_tensors()
+    det_in = interp.get_input_details()[0]
+    det_out = interp.get_output_details()[0]
+    n = min(max_muestras, x.shape[0])
+    ious, psnrs = [], []
+    for i in range(n):
+        interp.set_tensor(det_in["index"], x[i : i + 1].astype(np.float32))
+        interp.invoke()
+        pred = interp.get_tensor(det_out["index"])[0, ..., 0]
+        binp = pred > 0.5
+        gt = y[i, ..., 0] > 0.5
+        inter = np.logical_and(binp, gt).sum()
+        union = np.logical_or(binp, gt).sum()
+        ious.append(float(inter) / max(float(union), 1.0))
+        psnrs.append(psnr(gt.astype(np.float32), pred))
+    return {
+        "iou": float(np.mean(ious)),
+        "psnr": float(np.mean(psnrs)),
+        "muestras": n,
+    }
+
+
 def argumentos():
     p = argparse.ArgumentParser(description="Entrena el limpiador de trazos.")
     p.add_argument("--muestras", type=int, default=1400, help="pares sintéticos de entrenamiento")
     p.add_argument("--validacion", type=int, default=200, help="pares sintéticos de validación")
     p.add_argument("--reales", type=str, default=None, help="carpeta con pares reales entrada/objetivo")
+    p.add_argument("--pares", type=str, default=None,
+                   help="cache .npz de un plan de dataset (tools/preparar_dataset_limpiar_trazos*.py)")
+    p.add_argument("--parches-por-imagen", type=int, default=16,
+                   help="parches 64x64 maximos por hoja del cache --pares")
     p.add_argument("--aumentos", type=int, default=1, help="copias aumentadas por muestra de entrenamiento")
     p.add_argument("--epocas", type=int, default=20)
     p.add_argument("--lote", type=int, default=32)
@@ -287,6 +397,17 @@ def main():
                 xva = np.concatenate([xva, xr[corte:]], 0)
                 yva = np.concatenate([yva, yr[corte:]], 0)
 
+    if args.pares:
+        xp_tr, yp_tr, xp_va, yp_va = cargar_pares_cache(
+            args.pares, LADO,
+            max_por_imagen=args.parches_por_imagen,
+            semilla=args.semilla,
+        )
+        xtr = np.concatenate([xtr, xp_tr], 0)
+        ytr = np.concatenate([ytr, yp_tr], 0)
+        xva = np.concatenate([xva, xp_va], 0)
+        yva = np.concatenate([yva, yp_va], 0)
+
     xtr, ytr = aumentar_conjunto(xtr, ytr, rng, args.aumentos)
 
     orden = rng.permutation(xtr.shape[0])
@@ -314,20 +435,29 @@ def main():
         f.write(tflite)
     print("modelo guardado:", args.salida, len(tflite), "bytes")
 
-    # Chequeo rápido: solapamiento del esqueleto aprendido con el objetivo.
-    interp = tf.lite.Interpreter(model_content=tflite)
-    interp.allocate_tensors()
-    det_in = interp.get_input_details()[0]
-    det_out = interp.get_output_details()[0]
-    for i in range(min(3, xva.shape[0])):
-        interp.set_tensor(det_in["index"], xva[i : i + 1])
-        interp.invoke()
-        pred = interp.get_tensor(det_out["index"])[0, ..., 0]
-        binp = pred > 0.5
-        gt = yva[i, ..., 0] > 0.5
-        inter = np.logical_and(binp, gt).sum()
-        union = np.logical_or(binp, gt).sum()
-        print(f"muestra {i}: IoU={inter / max(union, 1):.3f}")
+    # Evaluacion final sobre validacion con el modelo exportado (float16), que es
+    # lo que de verdad corre en el telefono.
+    metricas = evaluar(tflite, xva, yva)
+    print(f"validacion: IoU={metricas['iou']:.3f} PSNR={metricas['psnr']:.2f} dB "
+          f"({metricas['muestras']} muestras)")
+
+    # Manifiesto con metricas + licencia/atribucion del dataset (Plan B).
+    manifiesto = {
+        "descripcion": "limpiador de trazos (entrada 64x64x1 -> esqueleto 64x64x1)",
+        "formato": "tflite float16",
+        "bytes": len(tflite),
+        "epocas": args.epocas,
+        "aumentos": args.aumentos,
+        "pares": args.pares,
+        "reales": args.reales,
+        "validacion": metricas,
+        "licencia_datos": "CC BY 4.0 - Quick, Draw! (Google, Inc.)",
+        "atribucion": "The Quick, Draw! dataset by Google, Inc. (CC BY 4.0).",
+    }
+    ruta_manifiesto = os.path.splitext(args.salida)[0] + ".json"
+    with open(ruta_manifiesto, "w", encoding="utf-8") as f:
+        json.dump(manifiesto, f, ensure_ascii=False, indent=2)
+    print("metricas guardadas:", ruta_manifiesto)
 
 
 if __name__ == "__main__":

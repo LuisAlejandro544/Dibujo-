@@ -108,6 +108,8 @@
     <string name="backend_automatico">Automático</string>
     <string name="backend_opengl">OpenGL ES</string>
     <string name="backend_vulkan">Vulkan</string>
+    <string name="config_atribucion_titulo">Créditos de IA</string>
+    <string name="config_atribucion_quickdraw">El modelo de limpieza de trazos se entrenó con el dataset Quick, Draw! de Google, Inc. (CC BY 4.0).</string>
     <string name="cerrar">Cerrar</string>
     <string name="cancelar">Cancelar</string>
 

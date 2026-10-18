@@ -7,6 +7,11 @@
 # en :app) e ingresa al APK como libdibujo_engine.so, de modo que en el
 # dispositivo corre el motor nativo (MotorNativo por JNI) y no el respaldo.
 #
+# El modelo IA de limpiar trazos NO vive en git (pesa); este workflow lo
+# restaura de la cache que llena `entrenar-limpiar-trazos-planb.yml` y lo copia
+# a `app/src/main/assets/modelos/` antes de compilar. Si la cache no existe, el
+# APK se arma igual y la app cae al adelgazado algorítmico.
+#
 # Se activa manualmente (workflow_dispatch) y en cada PR contra main,
 # así el APK que sale del repo siempre es compilable y verificable.
 
@@ -49,6 +54,25 @@ jobs:
         with:
           cache-disabled: ${{ !inputs.usar_cache }}
 
+      - name: Restaurar el modelo IA entrenado (cache, fuera de git)
+        id: modelo
+        uses: actions/cache/restore@v4
+        with:
+          path: .cache/modelos
+          key: modelo-limpiar-trazos-v1-${{ github.run_id }}
+          restore-keys: |
+            modelo-limpiar-trazos-v1-
+
+      - name: Inyectar el modelo IA en los assets del APK
+        run: |
+          mkdir -p app/src/main/assets/modelos
+          if [ -f .cache/modelos/limpiar_trazos.tflite ]; then
+            cp .cache/modelos/limpiar_trazos.tflite app/src/main/assets/modelos/
+            echo "Modelo IA inyectado: $(stat -c%s app/src/main/assets/modelos/limpiar_trazos.tflite) bytes"
+          else
+            echo "::warning::No hay modelo IA en la cache; el APK se arma sin el modelo entrenado y la app cae al adelgazado algorítmico. Corre el workflow 'Entrenar limpiador de trazos (Plan B)' para generarlo."
+          fi
+
       - name: Compilar la app Android (Gradle + Compose + motor C++ con NDK)
         run: |
           chmod +x gradlew
@@ -58,6 +82,7 @@ jobs:
         run: |
           ls -la app/build/outputs/apk/debug
           find app/build/intermediates/stripped_native_libs -name "libdibujo_engine.so" -exec ls -la {} \;
+          ls -la app/src/main/assets/modelos || true
 
       - name: Subir artefacto (APK debug firmado)
         uses: actions/upload-artifact@v4

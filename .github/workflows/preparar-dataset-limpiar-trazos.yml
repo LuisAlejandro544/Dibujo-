@@ -1,0 +1,111 @@
+# Paso A - Dataset real para limpiar trazos (SketchBench).
+#
+# Baja el dataset real, empareja cada boceto repasado con su version limpiada
+# y cachea un `.npz` que consume el Paso B (entrenamiento:
+# `tools/entrenar_limpiar_trazos.py --pares ...`).
+#
+# Fases reanudables y cacheadas: los `.zip` crudos y el `.npz` procesado viven
+# en la cache de Actions, asi que una corrida cortada por el limite de ~1 h se
+# retoma (no vuelve a bajar los 817 MB). El `key` del cache de pares incluye el
+# hash del script y del registro: si cambia el pairing, se rehace solo.
+#
+# Disparo: manual (workflow_dispatch) o al tocar los archivos del Paso A.
+
+name: "Paso A - dataset limpiar trazos (SketchBench)"
+
+on:
+  workflow_dispatch:
+    inputs:
+      lado:
+        description: "Lado del cache en px (hojas completas; los parches siguen siendo 64)"
+        default: "512"
+        type: string
+      esqueleto:
+        description: "Adelgazar el objetivo a 1 px (si/no)"
+        default: "si"
+        type: string
+      forzar:
+        description: "Rehacer aunque ya exista la cache"
+        type: boolean
+        default: false
+  push:
+    paths:
+      - "tools/datasets_limpiar_trazos.json"
+      - "tools/preparar_dataset_limpiar_trazos.py"
+      - ".github/workflows/preparar-dataset-limpiar-trazos.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: preparar-dataset-limpiar-trazos
+  cancel-in-progress: false
+
+jobs:
+  dataset:
+    name: Descargar y preprocesar SketchBench
+    runs-on: ubuntu-latest
+    # El corte real del runner es ~1 h; 90 min deja margen para que la fase
+    # que arranque tenga tiempo de guardar su cache antes de morir.
+    timeout-minutes: 90
+    env:
+      LADO: ${{ inputs.lado || '512' }}
+      ETIQUETA: ${{ (inputs.esqueleto || 'si') == 'no' && 'linea' || 'esq' }}
+    steps:
+      - name: Descargar el codigo
+        uses: actions/checkout@v4
+
+      - name: Preparar Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Instalar dependencias del Paso A (numpy + pillow)
+        run: python -m pip install --upgrade pip numpy pillow
+
+      - name: Autoprueba del emparejamiento (sin red)
+        run: python3 tools/preparar_dataset_limpiar_trazos.py autoprueba
+
+      - name: Cache de descargas crudas (zips de SketchBench)
+        uses: actions/cache@v4
+        with:
+          path: .cache/limpiar_trazos/crudos
+          key: dataset-limpiar-crudos-v1-${{ hashFiles('tools/datasets_limpiar_trazos.json') }}
+
+      - name: Cache de pares procesados
+        uses: actions/cache@v4
+        with:
+          path: .cache/limpiar_trazos/procesado
+          key: dataset-limpiar-pares-v1-${{ hashFiles('tools/datasets_limpiar_trazos.json', 'tools/preparar_dataset_limpiar_trazos.py') }}-${{ env.ETIQUETA }}-lado${{ env.LADO }}
+
+      - name: Bajar el dataset real (reanudable, verificado por sha256)
+        run: |
+          EXTRA=""
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ "${{ inputs.forzar }}" = "true" ]; then
+            EXTRA="--forzar"
+          fi
+          python3 tools/preparar_dataset_limpiar_trazos.py descargar $EXTRA
+
+      - name: Preprocesar (empareja boceto -> limpiado)
+        run: |
+          EXTRA=""
+          if [ "$ETIQUETA" = "linea" ]; then
+            EXTRA="--sin-esqueleto"
+          fi
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ "${{ inputs.forzar }}" = "true" ]; then
+            EXTRA="$EXTRA --forzar"
+          fi
+          python3 tools/preparar_dataset_limpiar_trazos.py preprocesar --lado "$LADO" $EXTRA
+
+      - name: Estado del cache
+        run: python3 tools/preparar_dataset_limpiar_trazos.py estado
+
+      - name: Subir los pares como artefacto
+        uses: actions/upload-artifact@v4
+        with:
+          name: dataset-limpiar-trazos-${{ env.ETIQUETA }}-lado${{ env.LADO }}
+          path: |
+            .cache/limpiar_trazos/procesado/*.npz
+            .cache/limpiar_trazos/procesado/*.json
+          if-no-files-found: error
+          retention-days: 14

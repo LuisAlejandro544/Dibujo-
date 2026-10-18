@@ -1,0 +1,125 @@
+# Plan B - entrena el limpiador de trazos con datos comerciales (Quick, Draw!).
+#
+# El modelo `.tflite` NO se versiona en el repo (ver `.gitignore`): este workflow
+# lo entrena, lo guarda en la cache de Actions y lo sube como artefacto. El
+# workflow `android-apk.yml` restaura esa cache y lo inyecta en
+# `app/src/main/assets/modelos/` antes de `assembleDebug`, asi el APK lo incluye
+# sin que la rama main cargue el binario.
+#
+# Datos: `tools/preparar_dataset_limpiar_trazos_planb.py` fabrica los pares
+# (repasado -> limpio) desde Quick, Draw! (CC BY 4.0), y
+# `tools/entrenar_limpiar_trazos.py --pares ...` recorta los parches y entrena.
+# El dataset se cachea aparte (misma key que el workflow del Plan B), asi que
+# reentrenar no vuelve a bajar ni preprocesar.
+#
+# Disparo: manual (workflow_dispatch) o al tocar los archivos del pipeline.
+
+name: "Entrenar limpiador de trazos (Plan B, Quick Draw)"
+
+on:
+  workflow_dispatch:
+    inputs:
+      lado:
+        description: "Lado del cache del dataset en px"
+        default: "512"
+        type: string
+      por_categoria:
+        description: "Dibujos maximos por categoria"
+        default: "100"
+        type: string
+      epocas:
+        description: "Epocas de entrenamiento"
+        default: "30"
+        type: string
+      aumentos:
+        description: "Copias aumentadas por muestra de entrenamiento"
+        default: "1"
+        type: string
+      parches_por_imagen:
+        description: "Parches 64x64 maximos por hoja del dataset"
+        default: "16"
+        type: string
+  push:
+    paths:
+      - "tools/entrenar_limpiar_trazos.py"
+      - "tools/preparar_dataset_limpiar_trazos_planb.py"
+      - "tools/datasets_limpiar_trazos_planb.json"
+      - ".github/workflows/entrenar-limpiar-trazos-planb.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: entrenar-limpiar-trazos-planb
+  cancel-in-progress: false
+
+jobs:
+  entrenar:
+    name: Entrenar y cachear el modelo (fuera de git)
+    runs-on: ubuntu-latest
+    # El dataset es liviano (cabeceras de Quick Draw) y la red es chica; sobra
+    # margen frente al corte del runner.
+    timeout-minutes: 90
+    env:
+      LADO: ${{ inputs.lado || '512' }}
+      POR_CATEGORIA: ${{ inputs.por_categoria || '100' }}
+      EPOCAS: ${{ inputs.epocas || '30' }}
+      AUMENTOS: ${{ inputs.aumentos || '1' }}
+      PARCHES: ${{ inputs.parches_por_imagen || '16' }}
+    steps:
+      - name: Descargar el codigo
+        uses: actions/checkout@v4
+
+      - name: Preparar Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Instalar dependencias (numpy + tensorflow-cpu)
+        run: python -m pip install --upgrade pip numpy tensorflow-cpu
+
+      - name: Autoprueba del pipeline de datos (sin red)
+        run: python3 tools/preparar_dataset_limpiar_trazos_planb.py autoprueba
+
+      - name: Restaurar el dataset del Plan B (cache)
+        id: dataset
+        uses: actions/cache@v4
+        with:
+          path: .cache/limpiar_trazos_planb/procesado
+          key: dataset-planb-pares-v1-${{ hashFiles('tools/datasets_limpiar_trazos_planb.json', 'tools/preparar_dataset_limpiar_trazos_planb.py') }}-${{ env.LADO }}-pc${{ env.POR_CATEGORIA }}
+          restore-keys: |
+            dataset-planb-pares-v1-
+
+      - name: Preparar el dataset si falta el npz
+        run: |
+          NPZ=".cache/limpiar_trazos_planb/procesado/pares_esq_lado${LADO}.npz"
+          if [ ! -f "$NPZ" ]; then
+            python3 tools/preparar_dataset_limpiar_trazos_planb.py todo \
+              --lado "$LADO" --por-categoria "$POR_CATEGORIA"
+          else
+            echo "Dataset ya disponible: $NPZ"
+          fi
+
+      - name: Entrenar el limpiador de trazos
+        run: |
+          python3 tools/entrenar_limpiar_trazos.py \
+            --pares ".cache/limpiar_trazos_planb/procesado/pares_esq_lado${LADO}.npz" \
+            --salida "$GITHUB_WORKSPACE/.cache/modelos/limpiar_trazos.tflite" \
+            --epocas "$EPOCAS" --aumentos "$AUMENTOS" \
+            --parches-por-imagen "$PARCHES"
+
+      - name: Subir el modelo como artefacto (fuera de git)
+        uses: actions/upload-artifact@v4
+        with:
+          name: modelo-limpiar-trazos-planb
+          path: |
+            .cache/modelos/limpiar_trazos.tflite
+            .cache/modelos/limpiar_trazos.json
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Guardar el modelo en la cache (lo usa android-apk.yml)
+        uses: actions/cache/save@v4
+        with:
+          path: .cache/modelos
+          key: modelo-limpiar-trazos-v1-${{ github.run_id }}

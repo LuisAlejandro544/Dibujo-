@@ -146,17 +146,22 @@ exactamente el mismo resultado; `MotorTest.limpiarTrazosParidadNativoKotlin` lo
 verifica. Si la hoja está vacía devuelve `false` y no ensucia el historial.
 
 ### Limpiar trazos con modelo (IA local, LiteRT)
-Además del adelgazado algorítmico, `:app` trae un **modelo chico propio** que
-limpia los repases con una red: `app/src/main/assets/modelos/limpiar_trazos.tflite`
-(~105 KB, float16). Es una U-Net mínima (entrada `[1,64,64,1]`: máscara binaria
-de tinta; salida `[1,64,64,1]`: esqueleto limpio) entrenada en el repo con datos
-sintéticos (curvas Bezier gruesas + repases → esqueleto fino). El modelo pesa
-poco y la inferencia va por CPU, así que no hace falta GPU ni descargar nada.
+Además del adelgazado algorítmico, `:app` trae un **modelo propio** que limpia
+los repases con una red: `app/src/main/assets/modelos/limpiar_trazos.tflite`
+(U-Net mínima: entrada `[1,64,64,1]` máscara binaria de tinta; salida
+`[1,64,64,1]` esqueleto limpio). Es chico (float16, unos cientos de KB) y la
+inferencia corre **en el equipo**: no descarga nada.
+
+**Ese `.tflite` NO se versiona** (`.gitignore`): para no engordar el repo, el CI
+lo entrena con el dataset comercial del Plan B y lo **inyecta en el APK** antes
+de `assembleDebug`. Ver `app/src/main/assets/modelos/LEEME.md`.
 
 - `LimpiadorTrazosIa` (`:app`) carga el modelo con **LiteRT**
   (`com.google.ai.edge.litert:litert`, patrón `CompiledModel.create(assets,
-  ruta, Options(Accelerator.CPU))` + `createInputBuffers`/`createOutputBuffers`/
-  `writeFloat`/`run`/`readFloat`), lo corre por parches 64×64 con paso 48
+  ruta, Options(acelerador))` + `createInputBuffers`/`createOutputBuffers`/
+  `writeFloat`/`run`/`readFloat`). Prueba **GPU primero** (`Accelerator.GPU`) y,
+  si el equipo o el modelo no lo admiten, **cae a CPU** (`Accelerator.CPU`) con
+  el mismo binario float16 (I/O float32). Lo corre por parches 64×64 con paso 48
   (solape 16 px) recomponiendo por máximo, y redibuja el esqueleto con
   `Lienzo.RADIO_LIMPIEZA`. Cada píxel limpio toma el color de la tinta original
   más cercana (búsqueda en un radio de 6 px) para conservar el color del trazo.
@@ -169,8 +174,9 @@ poco y la inferencia va por CPU, así que no hace falta GPU ni descargar nada.
   `null` y `DibujoViewModel.limpiarTrazosConModelo` cae al adelgazado algorítmico.
   `DibujoEstado.modeloIaDisponible` decide si se ofrece el botón en el diálogo.
 - Reproducir el modelo: `tools/entrenar_limpiar_trazos.py` (requiere
-  `tensorflow-cpu` + `numpy`; escribe el `.tflite` en assets). No se ejecuta en
-  el build; el binario ya va versionado.
+  `tensorflow-cpu` + `numpy`; escribe el `.tflite` y su `.json` de métricas en
+  assets). **No se ejecuta en el build**: el binario lo produce el CI y lo
+  inyecta en el APK (ver arriba), así el repo no carga el modelo.
 - Datos reales (opcional): `--reales <carpeta>` carga pares reales
   `entrada/`+`objetivo/` (p. ej. SketchBench o el set de Simo-Serra) y los
   mezcla con los sintéticos; `--aumentos N` agrega copias aumentadas (volteos,
@@ -178,6 +184,62 @@ poco y la inferencia va por CPU, así que no hace falta GPU ni descargar nada.
   engrosado/adelgazado, contraste y ruido). La red es una mini U-Net un poco más
   ancha (24/32/48) pero sigue siendo chica para el móvil. Sigue leyendo y
   escribiendo parches `64×64×1`, así que no hay que tocar `LimpiadorTrazosIa`.
+  Al terminar evalúa **IoU y PSNR** sobre validación con el `.tflite` exportado y
+  guarda un manifiesto con las métricas y la atribución del dataset.
+- **Paso A — dataset real cacheado (`tools/preparar_dataset_limpiar_trazos.py`)**:
+  baja **SketchBench** (Yan et al., TOG 2020; el benchmark de limpieza de bocetos
+  con ground truth de artistas), empareja `rough/pixel` con `gt/pixel`
+  (variante `norm_cleaned`), binariza el objetivo con **Otsu** y lo **adelgaza a
+  1 px** (Zhang-Suen), y guarda `.cache/limpiar_trazos/procesado/pares_esq_lado512.npz`
+  (425 pares de 141 bocetos, ~21 MB) + `manifiesto_*.json`. Fases `descargar` /
+  `preprocesar` / `todo` / `estado` / `autoprueba`, reanudables y cacheadas, para
+  no exceder el corte de ~1 h de CI: el `.zip` de 817 MB se verifica por
+  `sha256` (el host de GMU sirve un certificado que no valida, por eso `--inseguro`
+  + hash fijo). El workflow `.github/workflows/preparar-dataset-limpiar-trazos.yml`
+  lo corre y sube el `.npz` como artefacto. **Ojo licencias**: la mayoría de los
+  bocetos son CC y el resto sólo uso académico (`sketch_tags.csv`); para uso
+  comercial hay que filtrar. El set de Simo-Serra (68 pares) NO se redistribuye
+  por copyright, sólo se puede usar `--reales` con una copia propia.
+- **Paso B (entrenamiento) — listo**: `entrenar_limpiar_trazos.py --pares <npz>`
+  recorta parches `64×64` con tinta del cache (`--parches-por-imagen`) y los
+  mezcla con los sintéticos, separando entrenamiento/validación **por boceto**
+  (sin fuga). Exporta `.tflite` **float16** (I/O float32, corre en GPU y CPU),
+  evalúa **IoU y PSNR** sobre validación con el modelo exportado y guarda un
+  `.json` de métricas + atribución. El workflow
+  `.github/workflows/entrenar-limpiar-trazos-planb.yml` lo entrena con el `.npz`
+  del Plan B, lo **cachea** y lo sube como artefacto; `android-apk.yml` restaura
+  esa cache y copia el `.tflite` a `app/src/main/assets/modelos/` antes de
+  `assembleDebug`. Por eso el binario **no se versiona** (ver `LEEME.md`).
+- **Plan B — dataset comercial (Quick, Draw!)**:
+  `tools/preparar_dataset_limpiar_trazos_planb.py` +
+  `tools/datasets_limpiar_trazos_planb.json`. Nace de una razón de licencias:
+  SketchBench tiene bocetos **solo de uso académico**, así que un modelo
+  entrenado con él no es limpio para vender la app (Plan A queda sólo para
+  investigación/evaluación). El Plan B usa **Quick, Draw!** (Google), **CC BY
+  4.0**: permite uso comercial y **no obliga a abrir el código**, sólo pide
+  atribución (`"The Quick, Draw! dataset by Google, Inc. (CC BY 4.0)."`).
+  - `descargar` baja **sólo la cabecera** de cada categoría (rango HTTP
+    `bytes=0..max_bytes`, el host de Cloud Storage lo sirve con
+    `accept-ranges`; cada categoría completa pesa ~40-100 MB y no hace falta) y
+    es reanudable. `preprocesar` lee los trazos vectoriales reales (0..255,
+    simplificados), los centra/escala en la hoja y **fabrica los pares**:
+    `y` = trazo limpio de 1 px (polilínea de Bresenham) y `x` = el mismo trazo
+    **repasado a mano simulado** (varias pasadas, jitter perpendicular, radios
+    1.5-4.5 px y manchas sueltas), el mismo *inverse dataset construction* de
+    Simo-Serra pero sobre datos comerciales. La rasterización es propia (sólo
+    `numpy`, sin Pillow ni CairoSVG); los puntos se **densifican** antes de
+    estampar para que ningún trazo quede punteado.
+  - El `.npz` usa el **mismo formato que el Plan A** (x grises uint8, y binaria
+    {0,1}, split por `key_id`), así que el entrenamiento lo consume sin cambios
+    (`entrenar_limpiar_trazos.py --pares <npz>`). Fases `descargar` /
+    `preprocesar` / `todo` / `estado` / `autoprueba` (sin red) y workflow
+    `.github/workflows/preparar-dataset-limpiar-trazos-planb.yml` (cachea las
+    cabeceras y el `.npz`, sube artefacto). Todo es rápido (~0.02 s por par en
+    512).
+  - La **atribución** que exige la licencia se muestra en la pantalla de
+    *Opciones* (`config_atribucion_quickdraw`). Se eligió float16 (no int8)
+    porque el delegado GPU del móvil trabaja con float; a este tamaño la
+    ganancia de int8 no compensa perder la GPU.
 
 ### Paleta del calco (color local, sin red neuronal)
 `Cuantizador` (`:core`) implementa k-medias (k-means++ con semilla fija, por eso
@@ -205,7 +267,7 @@ durante la composición; si no, undo/redo cambian el motor pero no repintan
 | AGP | 9.4.1 (con *built-in Kotlin*: NO aplicar `org.jetbrains.kotlin.android` en `:app`) |
 | Compose | BOM 2026.09.00 + `kotlin.plugin.compose` 2.4.21 |
 | LeakCanary | 2.14 (solo `debugImplementation` en `:app`) |
-| LiteRT | `com.google.ai.edge.litert:litert` 2.3.0 (Google Maven; runtime del modelo IA de `:app`; trae `&lt;abi&gt;/libLiteRt.so` + `liblitert_jni.so`) |
+| LiteRT | `com.google.ai.edge.litert:litert` 2.3.0 (Google Maven; runtime del modelo IA de `:app`; delegado GPU con caída a CPU; trae `&lt;abi&gt;/libLiteRt.so` + `liblitert_jni.so`) |
 | SDK | compileSdk 37, minSdk 26, targetSdk 37, ABIs arm64-v8a + x86_64 |
 | NDK en `:app` | `externalNativeBuild` → `engine/src/main/cpp/CMakeLists.txt` (versión CMake 3.31.5, `ndkVersion 27.3.13750724`) |
 | Motor escritorio | tareas `configureNative`/`buildNative` de `:engine` (requiere cmake + g++; si no hay, tests y app usan el respaldo) |
@@ -361,9 +423,10 @@ principal** con cuatro accesos, cada uno en su propio archivo/pantalla.
   permite abrir (carga los píxeles y llama `DibujoViewModel.abrirDibujo`) o
   borrar (con confirmación).
 - **`PantallaOpciones.kt`** (`PantallaOpciones`): la configuración dejó de ser un
-  diálogo dentro del lienzo y tiene **pantalla dedicada**. Por ahora reúne la
-  elección de backend (reusa `OpcionBackend` y `BackendRender.recursoNombre()`,
-  ahora `internal` en este archivo).
+  diálogo dentro del lienzo y tiene **pantalla dedicada**. Reúne la elección de
+  backend (reusa `OpcionBackend` y `BackendRender.recursoNombre()`, ahora
+  `internal` en este archivo) y los **créditos de IA** (atribución de Quick,
+  Draw! que exige la licencia CC BY 4.0 del dataset de entrenamiento).
 - **`AlmacenDibujos.kt`**: persistencia en `filesDir/dibujos` como PNG (ARGB sin
   pérdida), sin permisos.
   - **Borrador en curso** (`actual.png`, [AlmacenDibujos.SLOT_ACTUAL]): el dibujo
@@ -514,6 +577,6 @@ Es clave para trabajar desde el móvil, sin adb ni PC.
 
 - Horario del usuario: America/Caracas; respondé en español nativo, fixeáte en `opencode.json`.
 - Tests: JUnit Platform; paridad en `engine/src/test/kotlin/com/dibujo/engine/MotorTest.kt` (incluye paridad de undo/redo con `historialParidad` y de `reemplazarHoja`). El antialiasing entra en esa paridad: si tocás `disco`/`pintarMezcla` en un lado, corré `:engine:test`.
-- Modelo IA: el `.tflite` se regenera con `tools/entrenar_limpiar_trazos.py` (Python + `tensorflow-cpu` + `numpy`); el resultado va a `app/src/main/assets/modelos/`. El build NO lo entrena, sólo empaqueta el binario versionado.
+- Modelo IA: el `.tflite` se regenera con `tools/entrenar_limpiar_trazos.py` (Python + `tensorflow-cpu` + `numpy`). **No se versiona** (`.gitignore`): lo produce `.github/workflows/entrenar-limpiar-trazos-planb.yml` (entrena con el `.npz` del Plan B, cachea el binario y sube artefacto) y `android-apk.yml` lo inyecta en `app/src/main/assets/modelos/` antes de armar el APK. Los datasets reales viven en dos planes: **Plan A** (SketchBench, investigación) en `tools/preparar_dataset_limpiar_trazos.py` + `.github/workflows/preparar-dataset-limpiar-trazos.yml`, y **Plan B** (Quick, Draw!, CC BY 4.0, apto para monetizar) en `tools/preparar_dataset_limpiar_trazos_planb.py` + `.github/workflows/preparar-dataset-limpiar-trazos-planb.yml`. Los dos producen el mismo `.npz`, que se consume con `entrenar_limpiar_trazos.py --pares <npz>`.
 - El workflow `android-apk.yml` corre manual (`workflow_dispatch`) y en cada PR contra main; el workflow falso `build-debug-apk.yml` (APK placeholder aapt2/d8) fue eliminado.
 - Commits: esperar orden explícita del usuario (nunca commit proactivo).

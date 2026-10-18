@@ -47,6 +47,13 @@ data class DibujoEstado(
     val calcoVisible: Boolean = false,
     /** Opacidad de la imagen de calco (0..1). */
     val calcoAlfa: Float = 0.45f,
+    /** Desplazamiento del calco respecto al centro de la hoja (px de hoja). */
+    val calcoOffsetX: Float = 0f,
+    val calcoOffsetY: Float = 0f,
+    /** Escala del calco sobre su ajuste automático (1 = ajustado a la hoja). */
+    val calcoEscala: Float = 1f,
+    /** Se están ajustando la posición y el tamaño del calco con los gestos. */
+    val calcoEnEdicion: Boolean = false,
     /** Backend gráfico elegido por el usuario (persistido). */
     val backendSeleccionado: BackendRender = BackendRender.AUTOMATICO,
     /** Backend que realmente corre según la selección y el soporte del equipo. */
@@ -75,6 +82,8 @@ data class DibujoEstado(
     val analizandoCalco: Boolean = false,
     /** Hay cambios sin guardar desde el último autoguardado o "Guardar". */
     val modificado: Boolean = false,
+    /** Se está recortando o redimensionando el lienzo (operación pesada). */
+    val ajustandoLienzo: Boolean = false,
 )
 
 /**
@@ -412,7 +421,16 @@ class DibujoViewModel(app: Application) : AndroidViewModel(app) {
         val m = motor ?: return
         m.cancelarTrazo()
         val nuevo = if (_estado.value.modo == Modo.EDICION) Modo.MOVER else Modo.EDICION
-        _estado.update { it.copy(modo = nuevo, trazoEnCurso = null, marco = it.marco + 1) }
+        _estado.update {
+            it.copy(
+                modo = nuevo,
+                trazoEnCurso = null,
+                // Cambiar de modo sale del ajuste del calco: no tiene sentido
+                // editar el calco y mover la hoja a la vez.
+                calcoEnEdicion = false,
+                marco = it.marco + 1,
+            )
+        }
     }
 
     fun deshacer() {
@@ -610,6 +628,90 @@ class DibujoViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     /**
+     * Recorta el lienzo al contenido dibujado: descarta los márgenes que son
+     * sólo fondo y rehace la hoja con el tamaño del dibujo. No pierde ningún
+     * trazo (sólo elimina fondo, porque el recuadro es el de la tinta). Al
+     * cambiar el tamaño el historial arranca limpio, igual que al expandir. Si
+     * la hoja está vacía o ya está ajustada, no hace nada.
+     */
+    fun recortarAlDibujo() {
+        procesarLienzo(recortar = true, nuevoAncho = 0, nuevoAlto = 0)
+    }
+
+    /**
+     * Redimensiona el lienzo a [nuevoAncho] × [nuevoAlto] px, centrando el
+     * dibujo actual: lo que no entra se recorta y lo que falta se rellena con
+     * el fondo. El historial arranca limpio (los snapshots viejos tienen otras
+     * dimensiones, como al expandir).
+     */
+    fun redimensionarLienzo(nuevoAncho: Int, nuevoAlto: Int) {
+        procesarLienzo(recortar = false, nuevoAncho = nuevoAncho, nuevoAlto = nuevoAlto)
+    }
+
+    private fun procesarLienzo(recortar: Boolean, nuevoAncho: Int, nuevoAlto: Int) {
+        val m = motor ?: return
+        if (_estado.value.ajustandoLienzo) return
+        val ancho = m.ancho
+        val alto = m.alto
+        _estado.update { it.copy(ajustandoLienzo = true) }
+        viewModelScope.launch {
+            val resultado = withContext(Dispatchers.Default) {
+                val pixeles = IntArray(ancho * alto)
+                if (!m.copiarHoja(pixeles)) return@withContext null
+                if (recortar) {
+                    val recorte = recortarAlContenido(pixeles, ancho, alto, Colores.BLANCO)
+                        ?: return@withContext null
+                    if (recorte.first == ancho && recorte.second == alto) {
+                        return@withContext null
+                    }
+                    recorte
+                } else {
+                    val na = nuevoAncho.coerceIn(1, MAX_LADO)
+                    val nb = nuevoAlto.coerceIn(1, MAX_LADO)
+                    if (na == ancho && nb == alto) return@withContext null
+                    Triple(na, nb, lienzoCentrado(pixeles, ancho, alto, na, nb))
+                }
+            }
+            _estado.update { it.copy(ajustandoLienzo = false) }
+            // Recrea/reemplaza la hoja con el nuevo tamaño (reutiliza la ruta de
+            // apertura de un dibujo: asigna la textura GPU al tamaño nuevo).
+            if (resultado != null) {
+                abrirDibujo(resultado.first, resultado.second, resultado.third)
+            }
+        }
+    }
+
+    /**
+     * Copia el dibujo ([ancho] × [alto]) centrado dentro de una hoja nueva de
+     * [na] × [nb] px llena con el fondo. Lo que no entra se recorta y lo que
+     * falta queda en blanco.
+     */
+    private fun lienzoCentrado(
+        pixeles: IntArray,
+        ancho: Int,
+        alto: Int,
+        na: Int,
+        nb: Int,
+    ): IntArray {
+        val destino = IntArray(na * nb) { Colores.BLANCO }
+        val offX = (na - ancho) / 2
+        val offY = (nb - alto) / 2
+        val x0 = maxOf(0, -offX)
+        val x1 = minOf(ancho, na - offX)
+        if (x1 <= x0) return destino
+        val anchoCopia = x1 - x0
+        for (y in 0 until alto) {
+            val dy = y + offY
+            if (dy !in 0 until nb) continue
+            System.arraycopy(
+                pixeles, y * ancho + x0,
+                destino, dy * na + offX + x0, anchoCopia,
+            )
+        }
+        return destino
+    }
+
+    /**
      * Toque sin arrastre: pinta un punto con el lápiz o rellena una región con
      * la herramienta PINTAR. Un arrastre (trazo) lo maneja la capa de gestos.
      */
@@ -635,6 +737,17 @@ class DibujoViewModel(app: Application) : AndroidViewModel(app) {
             it.copy(
                 calcoUri = uri,
                 calcoVisible = uri != null,
+                // Al poner una imagen nueva se auto-centra SIEMPRE y se ajusta
+                // a su tamaño natural; recién después el usuario la mueve o
+                // escala. Además se entra en modo ajuste para que pueda
+                // ubicarla enseguida.
+                calcoOffsetX = 0f,
+                calcoOffsetY = 0f,
+                calcoEscala = 1f,
+                calcoEnEdicion = uri != null,
+                // La paleta sugerida era de la imagen anterior.
+                coloresCalco = if (uri != it.calcoUri) emptyList() else it.coloresCalco,
+                marco = it.marco + 1,
             )
         }
     }
@@ -647,6 +760,92 @@ class DibujoViewModel(app: Application) : AndroidViewModel(app) {
 
     fun cambiarCalcoAlfa(alfa: Float) {
         _estado.update { it.copy(calcoAlfa = alfa.coerceIn(0f, 1f)) }
+    }
+
+    /** Activa/desactiva el ajuste del calco (mover/escalar con los gestos). */
+    fun alternarEdicionCalco() {
+        if (_estado.value.calcoUri == null) return
+        _estado.update {
+            it.copy(
+                calcoEnEdicion = !it.calcoEnEdicion,
+                // Al entrar en ajuste se asegura de que la imagen se vea.
+                calcoVisible = if (!it.calcoEnEdicion) true else it.calcoVisible,
+            )
+        }
+    }
+
+    /** Sale del ajuste del calco sin tocar su posición ni su escala. */
+    fun terminarEdicionCalco() {
+        if (!_estado.value.calcoEnEdicion) return
+        _estado.update { it.copy(calcoEnEdicion = false) }
+    }
+
+    /**
+     * Vuelve el calco a su estado automático: centrado en la hoja y ajustado a
+     * su tamaño natural. Es el botón "Centrar" del diálogo de calco.
+     */
+    fun centrarCalco() {
+        if (_estado.value.calcoUri == null) return
+        _estado.update {
+            it.copy(
+                calcoOffsetX = 0f,
+                calcoOffsetY = 0f,
+                calcoEscala = 1f,
+                marco = it.marco + 1,
+            )
+        }
+    }
+
+    /**
+     * Mueve el calco [dxPantalla]/[dyPantalla] píxeles de pantalla. El
+     * desplazamiento se pasa a coordenadas de hoja con la cámara (rotación
+     * incluida): el offset del calco vive en el espacio de la hoja, así que
+     * queda anclado a la hoja y no a la pantalla.
+     */
+    fun moverCalco(dxPantalla: Float, dyPantalla: Float) {
+        val m = motor ?: return
+        if (!_estado.value.calcoEnEdicion) return
+        val cam = m.camara()
+        val c = kotlin.math.cos(cam.rotacion.toDouble()).toFloat()
+        val s = kotlin.math.sin(cam.rotacion.toDouble()).toFloat()
+        val hx = (c * dxPantalla + s * dyPantalla) / cam.zoom
+        val hy = (-s * dxPantalla + c * dyPantalla) / cam.zoom
+        _estado.update {
+            it.copy(
+                calcoOffsetX = it.calcoOffsetX + hx,
+                calcoOffsetY = it.calcoOffsetY + hy,
+                marco = it.marco + 1,
+            )
+        }
+    }
+
+    /**
+     * Escala el calco [factor] anclado al punto de pantalla ([focoX], [focoY]):
+     * el punto de la imagen bajo los dedos queda quieto. El calco se escala
+     * alrededor de su centro en coordenadas de hoja.
+     */
+    fun escalarCalco(factor: Float, focoX: Float, focoY: Float) {
+        val m = motor ?: return
+        if (!_estado.value.calcoEnEdicion || factor <= 0f) return
+        val foco = aHoja(m, focoX, focoY)
+        _estado.update {
+            val vieja = it.calcoEscala
+            val nueva = (vieja * factor).coerceIn(CALCO_ESCALA_MIN, CALCO_ESCALA_MAX)
+            val ratio = if (vieja > 0f) nueva / vieja else 1f
+            val centroX = it.hojaAncho / 2f
+            val centroY = it.hojaAlto / 2f
+            val cX = centroX + it.calcoOffsetX
+            val cY = centroY + it.calcoOffsetY
+            // Escalar alrededor del foco: el centro C pasa a F + ratio·(C − F).
+            val nuevoCX = foco.first + ratio * (cX - foco.first)
+            val nuevoCY = foco.second + ratio * (cY - foco.second)
+            it.copy(
+                calcoEscala = nueva,
+                calcoOffsetX = nuevoCX - centroX,
+                calcoOffsetY = nuevoCY - centroY,
+                marco = it.marco + 1,
+            )
+        }
     }
 
     /** Rasteriza la vista (vw x vh px) con la cámara aplicada, para el lienzo. */
@@ -729,5 +928,9 @@ class DibujoViewModel(app: Application) : AndroidViewModel(app) {
 
         /** Lado de la grilla de muestras del calco (64×64 = 4096 muestras). */
         const val MUESTRAS_LADO = 64
+
+        /** Límites de escala del calco sobre su ajuste automático. */
+        const val CALCO_ESCALA_MIN = 0.1f
+        const val CALCO_ESCALA_MAX = 20f
     }
 }

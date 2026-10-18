@@ -476,8 +476,11 @@ principal** con cuatro accesos, cada uno en su propio archivo/pantalla.
   hoja **sobrevive** al ir y volver del menú (no se recrea el motor).
 - **`PantallaMenu.kt`** (`PantallaMenu`): cuatro tarjetas grandes.
   - *Nuevo dibujo*: empieza una hoja en blanco desde cero. Llama
-    `DibujoViewModel.nuevoDibujo()`, que limpia la hoja (si el motor ya existe),
-    recentra la vista y borra el autoguardado (`AlmacenDibujos.borrarActual()`);
+    `DibujoViewModel.nuevoDibujo()`, que **descarta el motor** (`close()` y
+    `motor = null`) para que al volver al lienzo se cree una hoja nueva con el
+    tamaño por defecto de la vista y el historial limpio (no arrastra el tamaño
+    de una hoja expandida/redimensionada ni el deshacer del dibujo anterior),
+    y borra el autoguardado (`AlmacenDibujos.borrarActual()`);
     la biblioteca no se toca. Si hay un dibujo en curso (`hayBorrador`), pide
     confirmación antes de descartarlo.
   - *Continuar dibujando*: si el motor ya está en memoria, sólo vuelve al
@@ -503,11 +506,13 @@ principal** con cuatro accesos, cada uno en su propio archivo/pantalla.
   - **Biblioteca**: "Guardar en la app" (menú "más opciones" del lienzo) crea una
     copia con marca de tiempo; son las que lista *Cargar dibujo*. El export a la
     galería sigue existiendo y es aparte.
-- **Carga en el `DibujoViewModel`** (`abrirDibujo(ancho, alto, pixeles)`): si el
-  motor ya tiene ese tamaño, sólo `reemplazarHoja`; si no, lo recrea con el
-  tamaño guardado y el render GPU se reasigna (el `key` de `SuperficieGpu` ya
-  incluye `hojaAncho`/`hojaAlto`). El historial arranca limpio. La pantalla de
-  dibujo vuelve al menú con flecha/atrás (`BackHandler`).
+- **Carga en el `DibujoViewModel`** (`abrirDibujo(ancho, alto, pixeles)`):
+  siempre **recrea el motor** con el tamaño guardado y publica la hoja nueva
+  (el render GPU se reasigna: el `key` de `SuperficieGpu` incluye
+  `hojaAncho`/`hojaAlto`). El historial arranca limpio, también cuando el tamaño
+  coincide con el motor actual. `publicarContenido` refleja la cámara (centrada)
+  del motor nuevo. La pantalla de dibujo vuelve al menú con flecha/atrás
+  (`BackHandler`).
 - Estados nuevos en `DibujoEstado`: `modificado` (hay cambios sin autoguardar).
   `abrirDibujo` lo deja en `true` (lo abierto pasa a ser el borrador en curso).
   Nota de concurrencia: `autoguardarActual` copia la hoja **en el hilo que llama**

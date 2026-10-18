@@ -31,14 +31,16 @@ inline float separacionDoble(int grosor) {
 // coincidir con `MotorKotlin.FUERA` para que el render no dependa del backend.
 constexpr uint32_t kFuera = 0xFFECECECu;
 
-// Apila una semilla por cada tramo contiguo de `origen` en la fila `base`
-// (índice del primer píxel de la fila). Es la clave del relleno por "spans":
-// apilar un punto por tramo en lugar de un punto por píxel.
-void agregarTramos(std::vector<uint32_t>& hoja, std::vector<int>& pila,
-                   int base, int izq, int der, uint32_t origen) {
+// Apila una semilla por cada tramo contiguo de `origen` sin marcar en la fila
+// `base` (índice del primer píxel de la fila). Es la clave del relleno por
+// "spans": apilar un punto por tramo en lugar de un punto por píxel.
+void agregarTramos(std::vector<uint32_t>& hoja, const std::vector<uint8_t>& marca,
+                   std::vector<int>& pila, int base, int izq, int der,
+                   uint32_t origen) {
     int x = izq;
     while (x <= der) {
-        if (hoja[static_cast<std::size_t>(base) + x] == origen) {
+        const std::size_t i = static_cast<std::size_t>(base) + x;
+        if (!marca[i] && hoja[i] == origen) {
             pila.push_back(base + x);
             while (x <= der && hoja[static_cast<std::size_t>(base) + x] == origen) ++x;
         } else {
@@ -47,22 +49,30 @@ void agregarTramos(std::vector<uint32_t>& hoja, std::vector<int>& pila,
     }
 }
 
-// Relleno por inundación a partir de (x, y). Cuatro vecinos, igualdad exacta de
-// color. Versión por "spans" (tramos horizontales): replica `Lienzo.rellenar`
-// de Kotlin, que usa el mismo algoritmo, para mantener la paridad píxel a
-// píxel; el conjunto rellenado es el mismo que la versión ingenua, pero lineal
-// y con mucha menos pila (la causa de que el balde tardara segundos).
-void rellenar(std::vector<uint32_t>& hoja, int ancho, int alto,
+// Relleno por inundación a partir de (x, y), limitado a la región CERRADA que
+// lo contiene. Si la región alcanza el borde de la hoja (fondo abierto) no se
+// pinta nada y devuelve false: tocar afuera de una figura no inunda la hoja.
+// Cuatro vecinos, igualdad exacta de color. Versión por "spans" (tramos
+// horizontales): replica `Lienzo.rellenar` de Kotlin, que usa el mismo
+// algoritmo, para mantener la paridad píxel a píxel.
+bool rellenar(std::vector<uint32_t>& hoja, int ancho, int alto,
               int x, int y, uint32_t color) {
-    if (x < 0 || y < 0 || x >= ancho || y >= alto) return;
+    if (x < 0 || y < 0 || x >= ancho || y >= alto) return false;
     const uint32_t origen = hoja[static_cast<std::size_t>(y) * ancho + x];
-    if (origen == color) return;
+    if (origen == color) return false;
+    std::vector<uint8_t> marca(static_cast<std::size_t>(ancho) *
+                                   static_cast<std::size_t>(alto),
+                               0);
     std::vector<int> pila;
     pila.push_back(y * ancho + x);
+    bool tocaBorde = false;
     while (!pila.empty()) {
         const int i = pila.back();
         pila.pop_back();
-        if (hoja[static_cast<std::size_t>(i)] != origen) continue;
+        if (marca[static_cast<std::size_t>(i)] ||
+            hoja[static_cast<std::size_t>(i)] != origen) {
+            continue;
+        }
         const int cy = i / ancho;
         const int cx = i % ancho;
         int izq = cx;
@@ -71,11 +81,17 @@ void rellenar(std::vector<uint32_t>& hoja, int ancho, int alto,
         while (der < ancho - 1 && hoja[static_cast<std::size_t>(cy) * ancho + der + 1] == origen) ++der;
         const int base = cy * ancho;
         for (int xx = izq; xx <= der; ++xx) {
-            hoja[static_cast<std::size_t>(base) + xx] = color;
+            marca[static_cast<std::size_t>(base) + xx] = 1;
         }
-        if (cy > 0) agregarTramos(hoja, pila, base - ancho, izq, der, origen);
-        if (cy < alto - 1) agregarTramos(hoja, pila, base + ancho, izq, der, origen);
+        if (izq == 0 || der == ancho - 1 || cy == 0 || cy == alto - 1) tocaBorde = true;
+        if (cy > 0) agregarTramos(hoja, marca, pila, base - ancho, izq, der, origen);
+        if (cy < alto - 1) agregarTramos(hoja, marca, pila, base + ancho, izq, der, origen);
     }
+    if (tocaBorde) return false;
+    for (std::size_t i = 0; i < marca.size(); ++i) {
+        if (marca[i]) hoja[i] = color;
+    }
+    return true;
 }
 
 // Condiciones comunes del adelgazado de Zhang-Suen: 2 <= B <= 6 y exactamente

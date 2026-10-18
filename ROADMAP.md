@@ -26,6 +26,7 @@ mencionarla en el PR.
 
 - [x] **IA local ligera (issue 25)**: herramienta **limpiar trazos** (adelgazado de Zhang-Suen, con paridad C++/Kotlin cubierta por `MotorTest.limpiarTrazosParidadNativoKotlin`) para los trazos repasados; **paleta del calco** (`Cuantizador` con k-medias en `:core`, sin dependencias: analiza la imagen que calcas y sugiere sus colores para colorear); y **paleta ampliada a 58 colores**, con brillos (neón), metálicos y pasteles.
 - [x] **Limpiar trazos con modelo IA local (issue 25)**: además del adelgazado algorítmico, `:app` trae un **modelo propio chico** (~105 KB, float16, `app/src/main/assets/modelos/limpiar_trazos.tflite`) entrenado con datos sintéticos (`tools/entrenar_limpiar_trazos.py`, reproducible); `LimpiadorTrazosIa` lo corre por CPU con **LiteRT** (dependencia nueva), `MotorDibujo.reemplazarHoja` (C++ y Kotlin en paridad, `MotorTest.reemplazarHojaParidadNativoKotlin`) aplica el resultado con undo y, si el modelo falta o falla, se cae al algoritmo. También en este PR: **menú "más opciones"** en la barra superior (corrige el título que se dibujaba en vertical) y **pinch de zoom sin giro accidental** (`panZoomLock = true`).
+- [x] **Mejora de IA, balde y exportación (issue 28)**: el **balde** ahora sólo rellena la región **cerrada** tocada (si alcanza el borde de la hoja no pinta nada; antes inundaba todo el fondo blanco), en C++ y Kotlin con paridad (`MotorTest`); el script de entrenamiento acepta **datasets reales** (`--reales entrada/objetivo`, p. ej. SketchBench) y **aumentación** de dominio, con una mini U-Net algo más ancha (sigue 64×64×1, sin tocar la app); la **exportación** muestra un diálogo con el **peso del PNG** y ofrece **guardar en galería o compartir** en cualquier app (`FileProvider`, sin permisos); y el **icono del borrador** pasó a un borrador real (Material Symbols `ink_eraser`).
 
 ## En curso
 
@@ -37,7 +38,7 @@ mencionarla en el PR.
 2. **Firma de release**: keystore de release + `assembleRelease` firmado en CI (hoy solo debug).
 3. **Rasterizado en GPU**: hoy la GPU sólo presenta la hoja como textura con la cámara en el shader; el trazo y su antialiasing siguen en CPU. Moverlos a GPU (tiles/VBOs) manteniendo paridad con `MotorTest`.
 4. **Cámara al abrir**: modo MOVER centrado con zoom inicial para hojas más grandes que la pantalla.
-5. **Exportar/importar dibujos**: compartir imagen (Intent SHARE) y abrir desde archivos.
+5. **Abrir dibujos desde archivos** (importar): compartir imagen ya está hecho (issue 28); falta abrir/importar un PNG del dispositivo.
 6. **Rueda de herramienta**: selector rápido tipo popover al mantener presionado el chip del modo.
 7. **i18n**: strings.xml ya preparado; evaluar inglés si el usuario lo pide.
 
@@ -47,6 +48,8 @@ mencionarla en el PR.
 - iOS: el motor dual ya admite un front-end nuevo (el C++ es portable); Compose Multiplatform / KMP como candidata.
 - Borrador por capas/bitmaps (destination-out) si algún día la hoja deja de ser opaca.
 - **IA aprendida (hecho, ampliable)**: el *sketch cleanup* ya usa un modelo
-  propio con LiteRT (issue 25). Se puede seguir mejorando el modelo (más
-  resolución dato, otros efectos) o sumar segmentación; el resto de las
-  herramientas de IA siguen siendo algoritmos locales (visión + k-medias).
+  propio con LiteRT (issue 25). El entrenamiento ya acepta datasets reales
+  (`--reales`) y aumentación (issue 28); lo siguiente sería empaquetar el
+  modelo más grande entrenado así y evaluar cuantización int8 + delegado
+  GPU/NPU. El resto de las herramientas de IA siguen siendo algoritmos locales
+  (visión + k-medias).

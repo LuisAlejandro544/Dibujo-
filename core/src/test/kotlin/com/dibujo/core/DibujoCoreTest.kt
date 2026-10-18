@@ -2,6 +2,7 @@ package com.dibujo.core
 
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
 class LienzoTest {
@@ -37,21 +38,33 @@ class LienzoTest {
     }
 
     @Test
-    fun rellenarInundaRegion() {
-        val l = Lienzo(3, 3)
-        l.lineaGruesa(0f, 1f, 2f, 1f, 1, redonda = true, color = Colores.NEGRO)
-        l.rellenar(0, 0, Colores.AMARILLO)
-        assertTrue((0 until 3).all { l.pixel(it, 0) == Colores.AMARILLO })
-        assertTrue((0 until 3).all { l.pixel(it, 1) == Colores.NEGRO })
+    fun rellenarInundaRegionCerrada() {
+        val l = Lienzo(5, 5)
+        // Anillo cerrado de negro en el borde de la hoja.
+        for (i in 0 until 5) {
+            l.pintar(i, 0, Colores.NEGRO)
+            l.pintar(i, 4, Colores.NEGRO)
+            l.pintar(0, i, Colores.NEGRO)
+            l.pintar(4, i, Colores.NEGRO)
+        }
+        assertTrue(l.rellenar(2, 2, Colores.AMARILLO))
+        assertEquals(Colores.AMARILLO, l.pixel(1, 1))
+        assertEquals(Colores.AMARILLO, l.pixel(3, 3))
+        // El anillo no se pinta con el balde.
+        assertEquals(Colores.NEGRO, l.pixel(0, 0))
     }
 
     @Test
-    fun rellenarNoCruzaBorde() {
+    fun rellenarNoInundaFondoAbierto() {
         val l = Lienzo(3, 3)
         l.lineaGruesa(0f, 1f, 2f, 1f, 1, redonda = true, color = Colores.NEGRO)
-        l.rellenar(0, 2, Colores.AMARILLO)
-        assertEquals(Colores.AMARILLO, l.pixel(0, 2))
+        // La región superior toca el borde de la hoja: es fondo abierto.
+        assertFalse(l.rellenar(0, 0, Colores.AMARILLO))
+        assertEquals(Colores.BLANCO, l.pixel(0, 0))
         assertEquals(Colores.NEGRO, l.pixel(0, 1))
+        // La región inferior también es abierta.
+        assertFalse(l.rellenar(0, 2, Colores.AMARILLO))
+        assertEquals(Colores.BLANCO, l.pixel(0, 2))
     }
 
     @Test

@@ -37,6 +37,11 @@
     <string name="exportado_ok">Dibujo guardado en la galería</string>
     <string name="exportado_error">No se pudo guardar el dibujo</string>
     <string name="exportado_sin_permiso">Hace falta permiso para guardar en la galería</string>
+    <string name="exportar_titulo">Exportar dibujo</string>
+    <string name="exportar_peso">La imagen pesa aproximadamente %1$s (PNG). ¿Qué quieres hacer?</string>
+    <string name="exportar_guardar">Guardar en galería</string>
+    <string name="exportar_compartir">Compartir</string>
+    <string name="compartir_error">No se pudo compartir el dibujo</string>
 
     <!-- Estado -->
     <string name="estado_motor">Motor: %1$s</string>

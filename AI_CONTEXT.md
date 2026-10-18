@@ -108,13 +108,19 @@ del C++ deben mantener la paridad del conjunto rellenado. No usa grosor ni
 punta. En la app, un toque sin arrastre dispara `DibujoViewModel.tocarHoja`
 (punto con el lápiz, relleno con PINTAR).
 
+El balde sólo pinta la región **cerrada** que contiene el toque. Si la región
+alcanza el borde de la hoja (fondo abierto), no pinta nada y devuelve `false`:
+así tocar afuera de una figura no inunda toda la hoja en blanco. La detección
+marca el tramo que toca `x==0`, `x==ancho-1`, `y==0` o `y==alto-1`.
+
 El relleno es por **tramos** ("spans"): al procesar una semilla se extiende el
-tramo horizontal contiguo de color `origen`, se rellena entero y sólo se apila
+tramo horizontal contiguo de color `origen`, se marca entero y sólo se apila
 una semilla por cada tramo nuevo arriba/abajo. Antes se apilaba píxel por píxel
 (~10^7 `push` en una hoja de pantalla), lo que hacía que el balde tardara 2-3 s.
 El algoritmo por tramos es lineal y da exactamente el mismo conjunto rellenado;
 el C++ y el Kotlin deben cambiarse juntos (`MotorTest.rellenoParidadConBarreras`
-verifica la paridad con barreras aleatorias).
+verifica la paridad con barreras aleatorias). Como la región se marca antes de
+pintar, el aborto por borde tampoco modifica la hoja.
 
 ### Limpiar trazos (visión por computadora local)
 `MotorDibujo.limpiarTrazos()` adelgaza **toda** la tinta de la hoja a un
@@ -153,6 +159,13 @@ poco y la inferencia va por CPU, así que no hace falta GPU ni descargar nada.
 - Reproducir el modelo: `tools/entrenar_limpiar_trazos.py` (requiere
   `tensorflow-cpu` + `numpy`; escribe el `.tflite` en assets). No se ejecuta en
   el build; el binario ya va versionado.
+- Datos reales (opcional): `--reales <carpeta>` carga pares reales
+  `entrada/`+`objetivo/` (p. ej. SketchBench o el set de Simo-Serra) y los
+  mezcla con los sintéticos; `--aumentos N` agrega copias aumentadas (volteos,
+  giros de 90°, desplazamientos y, sólo sobre la entrada, difuminado,
+  engrosado/adelgazado, contraste y ruido). La red es una mini U-Net un poco más
+  ancha (24/32/48) pero sigue siendo chica para el móvil. Sigue leyendo y
+  escribiendo parches `64×64×1`, así que no hay que tocar `LimpiadorTrazosIa`.
 
 ### Paleta del calco (color local, sin red neuronal)
 `Cuantizador` (`:core`) implementa k-medias (k-means++ con semilla fija, por eso
@@ -262,6 +275,19 @@ Particularidades:
   `WRITE_EXTERNAL_STORAGE` (`maxSdkVersion=28`). `copiarHoja` NO es
   rasterizado: copia el mismo buffer en C++ (`DibujoEngine::copiarHoja`, ya
   existía para el render GPU) y en Kotlin, cubierto por el test de paridad.
+- **Diálogo de exportación + compartir** (issue 28): antes de guardar, al
+  tocar exportar se codifica el PNG (`ExportadorGaleria.codificarPng`) fuera
+  del hilo principal y `PantallaDibujo` muestra `DialogoExportar` con el peso
+  (`formatearTamano`, KB/MB) y dos acciones: **Guardar en galería**
+  (`guardarBytes`, pide permiso sólo en API<29) y **Compartir**
+  (`ExportadorGaleria.compartir`, `ACTION_SEND` de un PNG temporal en caché via
+  `FileProvider` con autoridad `${applicationId}.fileprovider`; declarado en el
+  manifest con `res/xml/file_paths.xml`). Compartir no pide permisos. Se
+  evitan los bytes duplicados: se codifica una vez y se decide después.
+- **Icono de borrador**: `IconosDibujo.IconoBorrador` es un `ImageVector`
+  propio con el path oficial de Material Symbols `ink_eraser` (el
+  `material-icons-extended` del BOM actual no lo trae). Reemplaza al de
+  escoba (`CleaningServices`) en la barra de herramientas.
 - Icono de app: adaptive icon XML (sin PNG) con `monochrome`.
 
 ### Backend gráfico (OpenGL ES / Vulkan)

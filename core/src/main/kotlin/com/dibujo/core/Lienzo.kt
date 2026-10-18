@@ -187,25 +187,33 @@ class Lienzo(
     }
 
     /**
-     * Relleno por inundación a partir de (x, y).
+     * Relleno por inundación a partir de (x, y), limitado a la región
+     * **cerrada** que lo contiene.
+     *
+     * El balde sólo debe colorear lo que el usuario encerró con un trazo: si
+     * la región alcanza el borde de la hoja (es fondo abierto), no se pinta
+     * nada y se devuelve `false`. Así tocar afuera de una figura no inunda
+     * toda la hoja. Devuelve `true` si cambió algún píxel.
      *
      * En vez de apilar cada píxel vecino (lo que hacía millones de `push` y
      * tardaba segundos en hojas grandes), apila **tramos horizontales**: al
      * procesar una semilla se extiende el tramo contiguo de [origen] a
-     * izquierda y derecha, se rellena entero y sólo se apila una semilla por
+     * izquierda y derecha, se marca entero y sólo se apila una semilla por
      * cada tramo nuevo en las filas de arriba y abajo. El resultado es el
      * mismo conjunto rellenado (4 vecinos, igualdad exacta) que el C++, que
      * replica este mismo algoritmo para no romper la paridad píxel a píxel.
      */
-    fun rellenar(x: Int, y: Int, color: Int) {
-        if (!dentro(x, y)) return
+    fun rellenar(x: Int, y: Int, color: Int): Boolean {
+        if (!dentro(x, y)) return false
         val origen = pixeles[y * ancho + x]
-        if (origen == color) return
+        if (origen == color) return false
+        val marca = BooleanArray(pixeles.size)
         val pila = ArrayDeque<Int>()
         pila.add(y * ancho + x)
+        var tocaBorde = false
         while (pila.isNotEmpty()) {
             val i = pila.removeLast()
-            if (pixeles[i] != origen) continue
+            if (marca[i] || pixeles[i] != origen) continue
             val cy = i / ancho
             val cx = i % ancho
             var izq = cx
@@ -213,17 +221,28 @@ class Lienzo(
             var der = cx
             while (der < ancho - 1 && pixeles[cy * ancho + der + 1] == origen) der++
             val base = cy * ancho
-            for (xx in izq..der) pixeles[base + xx] = color
-            if (cy > 0) agregarTramos(pila, base - ancho, izq, der, origen)
-            if (cy < alto - 1) agregarTramos(pila, base + ancho, izq, der, origen)
+            for (xx in izq..der) marca[base + xx] = true
+            if (izq == 0 || der == ancho - 1 || cy == 0 || cy == alto - 1) tocaBorde = true
+            if (cy > 0) agregarTramos(pila, marca, base - ancho, izq, der, origen)
+            if (cy < alto - 1) agregarTramos(pila, marca, base + ancho, izq, der, origen)
         }
+        if (tocaBorde) return false
+        for (i in marca.indices) if (marca[i]) pixeles[i] = color
+        return true
     }
 
-    /** Apila una semilla por cada tramo contiguo de [origen] en la fila [base]. */
-    private fun agregarTramos(pila: ArrayDeque<Int>, base: Int, izq: Int, der: Int, origen: Int) {
+    /** Apila una semilla por cada tramo contiguo de [origen] sin marcar en la fila [base]. */
+    private fun agregarTramos(
+        pila: ArrayDeque<Int>,
+        marca: BooleanArray,
+        base: Int,
+        izq: Int,
+        der: Int,
+        origen: Int,
+    ) {
         var x = izq
         while (x <= der) {
-            if (pixeles[base + x] == origen) {
+            if (!marca[base + x] && pixeles[base + x] == origen) {
                 pila.add(base + x)
                 while (x <= der && pixeles[base + x] == origen) x++
             } else {

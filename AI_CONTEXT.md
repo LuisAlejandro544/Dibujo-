@@ -277,9 +277,14 @@ no comercial**), **Anime2Sketch** (MIT), **Informative Drawings** (MIT),
 algorítmico **Zhang-Suen**. Es honesto *sólo* como comparación de forma con
 protocolo fijo: Buril es un especialista en esqueleto de 1 px para el móvil, no un
 limpiador general; no busca un "ganador" universal. Salidas en `.cache/benchmark/`
-(`resultados.json` + `rejilla.png`, no versionados). Autoprueba sin red:
+(`resultados.json`, `rejilla.png` y `corrida.npz` con entradas/GT/predicciones, no
+versionados). La celda de Gradio **recupera `corrida.npz`** si Colab reinició la
+sesión (ahí se pierden las variables aunque la salida siga visible) y, si no hay
+nada guardado, vuelve a ejecutar el benchmark: así la comparación nunca queda en
+"Corré primero la celda 5". Autoprueba sin red:
 `python3 tools/benchmark_limpiar_trazos.py autoprueba` (el cuaderno corre la misma
-autoprueba embebida antes de medir).
+autoprueba embebida antes de medir; también verifica el ida y vuelta de
+`guardar_corrida`/`cargar_corrida`).
 
 ### Paleta del calco (color local, sin red neuronal)
 `Cuantizador` (`:core`) implementa k-medias (k-means++ con semilla fija, por eso

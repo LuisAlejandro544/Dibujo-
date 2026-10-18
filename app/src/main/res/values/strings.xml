@@ -1,6 +1,38 @@
 <resources>
     <string name="app_name">Dibujo</string>
 
+    <!-- Menú principal (pantalla de inicio) -->
+    <string name="menu_subtitulo">¿Qué querés hacer?</string>
+    <string name="menu_nuevo">Nuevo dibujo</string>
+    <string name="menu_nuevo_desc">Empezá una hoja en blanco desde cero</string>
+    <string name="menu_continuar">Continuar dibujando</string>
+    <string name="menu_continuar_desc">Retomá el dibujo en el que estabas trabajando</string>
+    <string name="menu_cargar">Cargar dibujo</string>
+    <string name="menu_cargar_desc">Abrí un dibujo que guardaste antes</string>
+    <string name="menu_opciones">Opciones</string>
+    <string name="menu_opciones_desc">Motor gráfico y configuración de la app</string>
+
+    <!-- Guardar / cargar dibujos en la app -->
+    <string name="guardar_en_app">Guardar en la app</string>
+    <string name="guardado_ok">Dibujo guardado en la app</string>
+    <string name="guardado_error">No se pudo guardar el dibujo</string>
+    <string name="cargar_titulo">Cargar dibujo</string>
+    <string name="cargar_vacio">No hay dibujos guardados</string>
+    <string name="cargar_vacio_desc">Los dibujos que guardes con «Guardar en la app» van a aparecer acá.</string>
+    <string name="cargar_dimensiones">%1$d × %2$d px</string>
+    <string name="cargar_error">No se pudo abrir el dibujo</string>
+    <string name="cargar_borrar_titulo">Borrar dibujo</string>
+    <string name="cargar_borrar_confirmacion">Se borrará este dibujo de la app. No se puede deshacer.</string>
+    <string name="cd_abrir_dibujo">Abrir dibujo</string>
+    <string name="cd_borrar_dibujo">Borrar dibujo</string>
+    <string name="cd_volver">Volver</string>
+    <string name="borrar">Borrar</string>
+
+    <!-- Empezar un dibujo nuevo desde cero -->
+    <string name="nuevo_titulo">Nuevo dibujo</string>
+    <string name="nuevo_confirmacion">Se reemplazará el borrador actual por una hoja en blanco. Las copias guardadas en la biblioteca no se tocan.</string>
+    <string name="nuevo_confirmar">Empezar de cero</string>
+
     <!-- Barra de herramientas -->
     <string name="modo_editar">Dibujar</string>
     <string name="modo_mover">Mover</string>

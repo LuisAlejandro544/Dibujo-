@@ -73,6 +73,8 @@ data class DibujoEstado(
     val coloresCalco: List<Int> = emptyList(),
     /** Se está analizando la imagen de calco para sacar su paleta. */
     val analizandoCalco: Boolean = false,
+    /** Hay cambios sin guardar desde el último autoguardado o "Guardar". */
+    val modificado: Boolean = false,
 )
 
 /**
@@ -94,6 +96,7 @@ class DibujoViewModel(app: Application) : AndroidViewModel(app) {
     private var motor: MotorDibujo? = null
     private var vistaAncho = 0
     private var vistaAlto = 0
+    private var guardandoActual = false
     private val seleccionInicial = leerBackend()
     private val _estado = MutableStateFlow(
         DibujoEstado(
@@ -110,10 +113,28 @@ class DibujoViewModel(app: Application) : AndroidViewModel(app) {
         if (vw <= 0 || vh <= 0) return
         vistaAncho = vw
         vistaAlto = vh
-        if (motor != null) return
-        val m = Motores.crear(vw.coerceIn(1, MAX_LADO), vh.coerceIn(1, MAX_LADO))
-        motor = m
-        m.configurarLapiz(_estado.value.lapiz)
+        val actual = motor
+        if (actual == null) {
+            val m = Motores.crear(vw.coerceIn(1, MAX_LADO), vh.coerceIn(1, MAX_LADO))
+            m.configurarLapiz(_estado.value.lapiz)
+            motor = m
+            publicarContenido(m)
+        } else if (_estado.value.motorNombre.isEmpty()) {
+            // El motor ya lo creó una carga hecha antes de que la pantalla de
+            // dibujo se midiera (al abrir un dibujo desde el menú): se publica
+            // ahora, cuando ya se conocen las dimensiones de la vista.
+            publicarContenido(actual)
+        }
+    }
+
+    /**
+     * El motor ya está listo (creado o cargado): refleja sus datos en el
+     * estado y arranca la pantalla de carga si hay render GPU. Se usa tanto al
+     * crear el motor en blanco como al abrir un dibujo guardado. [modificado]
+     * indica si el contenido debe considerarse pendiente de autoguardado: al
+     * abrir un dibujo guardado, sí (pasa a ser el borrador en curso).
+     */
+    private fun publicarContenido(m: MotorDibujo, modificado: Boolean = false) {
         val hayGpu = m.handleNativo != 0L
         _estado.update {
             it.copy(
@@ -122,11 +143,104 @@ class DibujoViewModel(app: Application) : AndroidViewModel(app) {
                 hojaAlto = m.alto,
                 modeloIaDisponible = LimpiadorTrazosIa.disponible(aplicacion),
                 gpuDisponible = hayGpu,
-                // Con GPU disponible arranca la pantalla de carga hasta que el
-                // renderizador nativo confirme (`gpuListo`) o falle (`gpuFracaso`).
-                gpuCargando = hayGpu,
+                gpuCargando = hayGpu && !it.gpuFallo,
+                trazoEnCurso = null,
+                puedeDeshacer = false,
+                puedeRehacer = false,
+                modificado = modificado,
+                marco = it.marco + 1,
             )
         }
+    }
+
+    /** ¿Ya se creó el motor (hay una hoja en memoria)? */
+    fun motorListo(): Boolean = motor != null
+
+    /**
+     * Abre un dibujo guardado: reemplaza la hoja por [pixeles] (de tamaño
+     * [ancho] × [alto]). Si el motor actual ya tiene ese tamaño, sólo reemplaza
+     * el contenido; si no, lo recrea (la app conmuta a la hoja guardada y el
+     * render GPU se reasigna al nuevo tamaño). El historial arranca limpio: la
+     * hoja abierta es el nuevo punto de partida.
+     */
+    fun abrirDibujo(ancho: Int, alto: Int, pixeles: IntArray) {
+        if (ancho <= 0 || alto <= 0 || pixeles.size < ancho * alto) return
+        val actual = motor
+        val m: MotorDibujo
+        if (actual != null && actual.ancho == ancho && actual.alto == alto) {
+            actual.cancelarTrazo()
+            actual.reemplazarHoja(pixeles)
+            m = actual
+        } else {
+            actual?.close()
+            val nuevo = Motores.crear(ancho.coerceIn(1, MAX_LADO), alto.coerceIn(1, MAX_LADO))
+            nuevo.configurarLapiz(_estado.value.lapiz)
+            nuevo.reemplazarHoja(pixeles)
+            motor = nuevo
+            m = nuevo
+        }
+        publicarContenido(m, modificado = true)
+    }
+
+    /**
+     * Autoguarda el borrador en curso (slot "actual") si hubo cambios, para que
+     * "Continuar dibujando" lo reanude. La copia se hace en el hilo que llama
+     * (la hoja vive en el motor y no debe leerse tras cerrarlo); la compresión
+     * PNG, que es lo pesado, va fuera del hilo principal.
+     */
+    fun autoguardarActual() {
+        val m = motor ?: return
+        val estado = _estado.value
+        if (!estado.modificado || estado.hojaAncho <= 0 || estado.hojaAlto <= 0) return
+        if (guardandoActual) return
+        val ancho = m.ancho
+        val alto = m.alto
+        val pixeles = IntArray(ancho * alto)
+        if (!m.copiarHoja(pixeles)) return
+        guardandoActual = true
+        // Se marca como guardado ya: si el usuario dibuja mientras se escribe,
+        // esas marcas lo vuelven a poner en "modificado" y no se pierden.
+        _estado.update { it.copy(modificado = false) }
+        viewModelScope.launch {
+            val guardado = withContext(Dispatchers.IO) {
+                AlmacenDibujos.guardarActual(aplicacion, ancho, alto, pixeles)
+            }
+            guardandoActual = false
+            if (!guardado) _estado.update { it.copy(modificado = true) }
+        }
+    }
+
+    /** Marca el dibujo como guardado (tras una copia explícita en la app). */
+    fun marcarGuardado() {
+        _estado.update { it.copy(modificado = false) }
+    }
+
+    /**
+     * Empieza un dibujo **desde cero**: descarta el borrador en curso (lo deja
+     * en blanco si el motor ya existe) y borra el autoguardado, para que
+     * "Continuar dibujando" no reanude el dibujo anterior. Si todavía no hay
+     * motor, se creará vacío al medirse la pantalla de dibujo. Las copias de la
+     * biblioteca no se tocan. El historial sí conserva el estado anterior
+     * (se puede deshacer si fue un error).
+     */
+    fun nuevoDibujo() {
+        val m = motor
+        if (m != null) {
+            m.cancelarTrazo()
+            m.limpiarHoja()
+            m.centrarVista()
+            _estado.update {
+                it.copy(
+                    trazoEnCurso = null,
+                    puedeDeshacer = m.puedeDeshacer(),
+                    puedeRehacer = m.puedeRehacer(),
+                    modificado = false,
+                    camara = m.camara(),
+                    marco = it.marco + 1,
+                )
+            }
+        }
+        viewModelScope.launch(Dispatchers.IO) { AlmacenDibujos.borrarActual(aplicacion) }
     }
 
     /** Handle nativo del motor para el render GPU (0 si no aplica). */
@@ -218,6 +332,7 @@ class DibujoViewModel(app: Application) : AndroidViewModel(app) {
                 trazoEnCurso = null,
                 puedeDeshacer = m.puedeDeshacer(),
                 puedeRehacer = m.puedeRehacer(),
+                modificado = true,
                 marco = it.marco + 1,
             )
         }
@@ -307,6 +422,7 @@ class DibujoViewModel(app: Application) : AndroidViewModel(app) {
             it.copy(
                 puedeDeshacer = m.puedeDeshacer(),
                 puedeRehacer = m.puedeRehacer(),
+                modificado = true,
                 marco = it.marco + 1,
             )
         }
@@ -319,6 +435,7 @@ class DibujoViewModel(app: Application) : AndroidViewModel(app) {
             it.copy(
                 puedeDeshacer = m.puedeDeshacer(),
                 puedeRehacer = m.puedeRehacer(),
+                modificado = true,
                 marco = it.marco + 1,
             )
         }
@@ -331,6 +448,7 @@ class DibujoViewModel(app: Application) : AndroidViewModel(app) {
             it.copy(
                 puedeDeshacer = m.puedeDeshacer(),
                 puedeRehacer = m.puedeRehacer(),
+                modificado = true,
                 marco = it.marco + 1,
             )
         }
@@ -358,6 +476,7 @@ class DibujoViewModel(app: Application) : AndroidViewModel(app) {
                     limpiando = false,
                     puedeDeshacer = m.puedeDeshacer(),
                     puedeRehacer = m.puedeRehacer(),
+                    modificado = it.modificado || cambio,
                     marco = if (cambio) it.marco + 1 else it.marco,
                 )
             }
@@ -398,6 +517,7 @@ class DibujoViewModel(app: Application) : AndroidViewModel(app) {
                     limpiando = false,
                     puedeDeshacer = m.puedeDeshacer(),
                     puedeRehacer = m.puedeRehacer(),
+                    modificado = it.modificado || cambio,
                     marco = if (cambio) it.marco + 1 else it.marco,
                 )
             }
@@ -480,6 +600,7 @@ class DibujoViewModel(app: Application) : AndroidViewModel(app) {
                 hojaAlto = m.alto,
                 puedeDeshacer = m.puedeDeshacer(),
                 puedeRehacer = m.puedeRehacer(),
+                modificado = true,
                 // Sólo se muestra la pantalla de carga si el render GPU se va a
                 // recrear (si falló, se sigue por CPU y no hay nada que esperar).
                 gpuCargando = it.gpuDisponible && !it.gpuFallo,
@@ -502,6 +623,7 @@ class DibujoViewModel(app: Application) : AndroidViewModel(app) {
             it.copy(
                 puedeDeshacer = m.puedeDeshacer(),
                 puedeRehacer = m.puedeRehacer(),
+                modificado = true,
                 marco = it.marco + 1,
             )
         }

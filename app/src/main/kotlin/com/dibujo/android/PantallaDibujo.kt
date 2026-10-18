@@ -10,6 +10,7 @@ import android.os.Bundle
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.SystemBarStyle
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
@@ -38,10 +39,9 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.selection.selectable
-import androidx.compose.foundation.selection.selectableGroup
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.automirrored.rounded.Redo
 import androidx.compose.material.icons.automirrored.rounded.Undo
 import androidx.compose.material.icons.rounded.Add
@@ -59,6 +59,7 @@ import androidx.compose.material.icons.rounded.MoreVert
 import androidx.compose.material.icons.rounded.OpenInFull
 import androidx.compose.material.icons.rounded.PanTool
 import androidx.compose.material.icons.rounded.Remove
+import androidx.compose.material.icons.rounded.Save
 import androidx.compose.material.icons.rounded.SaveAlt
 import androidx.compose.material.icons.rounded.ScreenRotation
 import androidx.compose.material.icons.rounded.Settings
@@ -76,7 +77,6 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.IconButtonDefaults
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Surface
@@ -86,6 +86,7 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.State
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -109,7 +110,6 @@ import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.Density
@@ -118,6 +118,9 @@ import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.dibujo.core.BackendRender
 import com.dibujo.core.Camara
@@ -154,7 +157,7 @@ class MainActivity : ComponentActivity() {
         )
         setContent {
             TemaDibujo {
-                PantallaDibujo()
+                AppDibujo()
             }
         }
     }
@@ -180,16 +183,38 @@ fun TemaDibujo(content: @Composable () -> Unit) {
 
 /** Pantalla principal: barra superior (acciones) + hoja táctil + herramientas. */
 @Composable
-fun PantallaDibujo(vm: DibujoViewModel = viewModel()) {
+fun PantallaDibujo(
+    vm: DibujoViewModel = viewModel(),
+    alVolver: () -> Unit = {},
+    alAbrirOpciones: () -> Unit = {},
+) {
     val estadoState = vm.estado.collectAsState()
     val estado = estadoState.value
-    var mostrarConfig by remember { mutableStateOf(false) }
     var mostrarExpandir by remember { mutableStateOf(false) }
     var mostrarCalco by remember { mutableStateOf(false) }
     var mostrarIa by remember { mutableStateOf(false) }
     // Limpiar la hoja borra todo y es irreversible si no se deshace: se pide
     // confirmación (ahora vive dentro del menú de la barra superior).
     var mostrarLimpiar by remember { mutableStateOf(false) }
+
+    // Volver al menú principal (botón atrás del sistema o de la barra).
+    BackHandler(onBack = alVolver)
+
+    // Autoguardado al salir de la app (pantalla de fondo): así "Continuar
+    // dibujando" retoma el borrador tal como quedó, aunque Android mate el proceso.
+    val duenoCiclo = LocalLifecycleOwner.current
+    DisposableEffect(duenoCiclo) {
+        val observador = LifecycleEventObserver { _, evento ->
+            if (evento == Lifecycle.Event.ON_STOP) vm.autoguardarActual()
+        }
+        duenoCiclo.lifecycle.addObserver(observador)
+        onDispose {
+            duenoCiclo.lifecycle.removeObserver(observador)
+            // Al salir del lienzo (al menú o a opciones) también se autoguarda:
+            // la navegación interna no dispara ON_STOP.
+            vm.autoguardarActual()
+        }
+    }
 
     // Selector de imagen del sistema (Photo Picker): no requiere permisos.
     val elegirImagen = rememberLauncherForActivityResult(
@@ -209,6 +234,8 @@ fun PantallaDibujo(vm: DibujoViewModel = viewModel()) {
     val textoExportadoError = stringResource(R.string.exportado_error)
     val textoExportadoSinPermiso = stringResource(R.string.exportado_sin_permiso)
     val textoCompartirError = stringResource(R.string.compartir_error)
+    val textoGuardadoOk = stringResource(R.string.guardado_ok)
+    val textoGuardadoError = stringResource(R.string.guardado_error)
 
     // Copia la hoja a un Bitmap, la codifica a PNG y la deja lista para
     // guardar/compartir. El copiado y la compresión van fuera del hilo
@@ -296,18 +323,42 @@ fun PantallaDibujo(vm: DibujoViewModel = viewModel()) {
         }
     }
 
+    // Copia el dibujo en la biblioteca de la app (filesDir/dibujos): queda
+    // disponible en "Cargar dibujo". El copiado y la compresión van fuera del
+    // hilo principal.
+    fun guardarEnApp() {
+        val ancho = estadoState.value.hojaAncho
+        val alto = estadoState.value.hojaAlto
+        if (ancho <= 0 || alto <= 0) return
+        alcance.launch {
+            val pixeles = IntArray(ancho * alto)
+            val leida = withContext(Dispatchers.Default) { vm.copiarHoja(pixeles) }
+            val guardado = leida && withContext(Dispatchers.IO) {
+                AlmacenDibujos.guardarCopia(contexto, ancho, alto, pixeles) != null
+            }
+            if (guardado) {
+                vm.marcarGuardado()
+                Toast.makeText(contexto, textoGuardadoOk, Toast.LENGTH_SHORT).show()
+            } else {
+                Toast.makeText(contexto, textoGuardadoError, Toast.LENGTH_SHORT).show()
+            }
+        }
+    }
+
     Scaffold(
         topBar = {
             BarraSuperior(
                 estado = estado,
+                alVolver = alVolver,
                 alDeshacer = vm::deshacer,
                 alRehacer = vm::rehacer,
                 alCentrar = vm::centrar,
                 alEnderezar = vm::enderezar,
                 alLimpiar = { mostrarLimpiar = true },
+                alGuardar = { guardarEnApp() },
                 alExportar = alExportar,
                 exportando = exportando,
-                alAbrirConfig = { mostrarConfig = true },
+                alAbrirConfig = alAbrirOpciones,
             )
         },
         bottomBar = {
@@ -341,14 +392,6 @@ fun PantallaDibujo(vm: DibujoViewModel = viewModel()) {
         // completa), y el trazo cae justo donde se dibuja. Las barras se pintan
         // encima y siguen recibiendo el toque.
         AreaDibujo(estadoState, vm, Modifier.fillMaxSize())
-    }
-
-    if (mostrarConfig) {
-        DialogoConfiguracion(
-            estado = estado,
-            alElegirBackend = vm::elegirBackend,
-            alCerrar = { mostrarConfig = false },
-        )
     }
 
     if (mostrarExpandir) {
@@ -420,11 +463,13 @@ fun PantallaDibujo(vm: DibujoViewModel = viewModel()) {
 @Composable
 private fun BarraSuperior(
     estado: DibujoEstado,
+    alVolver: () -> Unit,
     alDeshacer: () -> Unit,
     alRehacer: () -> Unit,
     alCentrar: () -> Unit,
     alEnderezar: () -> Unit,
     alLimpiar: () -> Unit,
+    alGuardar: () -> Unit,
     alExportar: () -> Unit,
     exportando: Boolean,
     alAbrirConfig: () -> Unit,
@@ -432,6 +477,14 @@ private fun BarraSuperior(
     var menuAbierto by remember { mutableStateOf(false) }
     TopAppBar(
         modifier = Modifier.absorberToque(),
+        navigationIcon = {
+            IconButton(onClick = alVolver) {
+                Icon(
+                    Icons.AutoMirrored.Rounded.ArrowBack,
+                    contentDescription = stringResource(R.string.cd_volver),
+                )
+            }
+        },
         title = {
             Column {
                 Text(
@@ -490,6 +543,16 @@ private fun BarraSuperior(
                         onClick = {
                             menuAbierto = false
                             alLimpiar()
+                        },
+                    )
+                    DropdownMenuItem(
+                        text = { Text(stringResource(R.string.guardar_en_app)) },
+                        leadingIcon = {
+                            Icon(Icons.Rounded.Save, contentDescription = null)
+                        },
+                        onClick = {
+                            menuAbierto = false
+                            alGuardar()
                         },
                     )
                     DropdownMenuItem(
@@ -1234,118 +1297,6 @@ private fun DialogoIa(
             }
         },
     )
-}
-
-@Composable
-private fun DialogoConfiguracion(
-    estado: DibujoEstado,
-    alElegirBackend: (BackendRender) -> Unit,
-    alCerrar: () -> Unit,
-) {
-    AlertDialog(
-        onDismissRequest = alCerrar,
-        title = { Text(stringResource(R.string.config_titulo)) },
-        text = {
-            Column {
-                Text(
-                    stringResource(R.string.config_backend),
-                    style = MaterialTheme.typography.titleSmall,
-                )
-                Column(Modifier.selectableGroup()) {
-                    BackendRender.entries.forEach { backend ->
-                        OpcionBackend(
-                            backend = backend,
-                            seleccionado = estado.backendSeleccionado == backend,
-                            habilitado = backend.disponible(estado.vulkanSoportado),
-                            alElegir = { alElegirBackend(backend) },
-                        )
-                    }
-                }
-                Spacer(Modifier.size(8.dp))
-                Text(
-                    stringResource(
-                        R.string.config_backend_efectivo,
-                        stringResource(estado.backendEfectivo.recursoNombre()),
-                    ),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-                Text(
-                    stringResource(R.string.config_opengl_version, estado.openglEsVersion),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-                Text(
-                    stringResource(
-                        when {
-                            estado.gpuActivo -> R.string.config_render_gpu
-                            estado.gpuFallo -> R.string.config_render_cpu_fallo
-                            else -> R.string.config_render_cpu
-                        },
-                        estado.gpuDescripcion,
-                    ),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-                if (!estado.vulkanSoportado) {
-                    Text(
-                        stringResource(R.string.config_vulkan_no_soportado),
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
-            }
-        },
-        confirmButton = {
-            TextButton(onClick = alCerrar) {
-                Text(stringResource(R.string.cerrar))
-            }
-        },
-    )
-}
-
-@Composable
-private fun OpcionBackend(
-    backend: BackendRender,
-    seleccionado: Boolean,
-    habilitado: Boolean,
-    alElegir: () -> Unit,
-) {
-    val etiqueta = stringResource(backend.recursoNombre())
-    Row(
-        Modifier
-            .fillMaxWidth()
-            .selectable(
-                selected = seleccionado,
-                enabled = habilitado,
-                role = Role.RadioButton,
-                onClick = alElegir,
-            )
-            .padding(vertical = 4.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        RadioButton(
-            selected = seleccionado,
-            onClick = null,
-            enabled = habilitado,
-        )
-        Spacer(Modifier.width(8.dp))
-        Text(
-            etiqueta,
-            style = MaterialTheme.typography.bodyMedium,
-            color = if (habilitado) {
-                MaterialTheme.colorScheme.onSurface
-            } else {
-                MaterialTheme.colorScheme.onSurfaceVariant
-            },
-        )
-    }
-}
-
-private fun BackendRender.recursoNombre(): Int = when (this) {
-    BackendRender.AUTOMATICO -> R.string.backend_automatico
-    BackendRender.OPENGL -> R.string.backend_opengl
-    BackendRender.VULKAN -> R.string.backend_vulkan
 }
 
 /**

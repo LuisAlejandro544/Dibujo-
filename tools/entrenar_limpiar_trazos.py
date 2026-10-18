@@ -3,17 +3,33 @@
 Entrada: parche 64x64x1 con la tinta gruesa/irregular (varios repases).
 Salida:  parche 64x64x1 con el esqueleto limpio de 1 px.
 
-Los datos son sintéticos (curvas Bezier gruesas + repases -> curva fina),
-así que no hace falta ningún dataset externo ni licencias. El modelo se
-exporta a .tflite (float16) para correrlo en el móvil con LiteRT.
+Datos:
+  - Sintéticos (curvas Bezier gruesas + repases -> curva fina), sin licencias.
+  - Reales opcionales: pares (entrada, objetivo) en disco, para cerrar el
+    "domain gap" entre la Bezier sintética y el trazo escaneado/repasado real.
+    El estándar de la industria es SketchBench (Yan et al., SIGGRAPH Asia 2020)
+    y el set de Simo-Serra et al. (SIGGRAPH 2016); revisá la licencia de cada
+    uno (la mayoría CC, algunos solo uso académico). Pasá `--reales <carpeta>`
+    con subcarpetas `entrada/` y `objetivo/` (o `input/`/`output/`) y archivos
+    con el mismo nombre base en ambas.
+
+Además se aumenta el set de entrenamiento con transformaciones que no mueven la
+etiqueta (volteos, giros de 90 grados, desplazamientos) y de forma/fotometría
+solo sobre la entrada (difuminado, engrosado/adelgazado, contraste, ruido) para
+simular más grosores de repase.
+
+El modelo se exporta a .tflite (float16) para correrlo en el móvil con LiteRT.
 
 Uso (desde la raíz del repo, con `tensorflow-cpu` + `numpy` instalados):
 
     python3 tools/entrenar_limpiar_trazos.py
+    python3 tools/entrenar_limpiar_trazos.py --reales ~/datos/sketchbench
+    python3 tools/entrenar_limpiar_trazos.py --epocas 30 --aumentos 2
 
 Escribe `app/src/main/assets/modelos/limpiar_trazos.tflite`.
 """
 
+import argparse
 import os
 import numpy as np
 import tensorflow as tf
@@ -21,8 +37,8 @@ import tensorflow as tf
 # Raíz del repo (este archivo vive en <raíz>/tools/).
 RAIZ = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
+# Lado del parche. Debe coincidir con `LimpiadorTrazosIa.LADO` en la app.
 LADO = 64
-RNG = np.random.default_rng(1234)
 
 yy, xx = np.mgrid[0:LADO, 0:LADO].astype(np.float32)
 
@@ -84,30 +100,149 @@ def muestra(rng):
     return entrada[..., None], objetivo[..., None]
 
 
-def dataset(n):
+def _vecinos(v):
+    return [
+        np.roll(np.roll(v, dy, axis=0), dx, axis=1)
+        for dy in (-1, 0, 1)
+        for dx in (-1, 0, 1)
+    ]
+
+
+def _difuminar(v):
+    return sum(_vecinos(v)) / 9.0
+
+
+def _engrosar(v):
+    return np.maximum.reduce(_vecinos(v))
+
+
+def _adelgazar(v):
+    return np.minimum.reduce(_vecinos(v))
+
+
+def aumentar(x, y, rng):
+    """Aumenta un par (entrada, objetivo) sin mover la etiqueta.
+
+    La geometría se aplica a ambos; la forma/fotometría solo a la entrada, que
+    es lo que queremos que el modelo tolere (más grosores, más ruido).
+    """
+    # Geometría que preserva la etiqueta.
+    if rng.random() < 0.5:
+        x, y = x[:, ::-1], y[:, ::-1]
+    if rng.random() < 0.5:
+        x, y = x[::-1, :], y[::-1, :]
+    giro = int(rng.integers(0, 4))
+    if giro:
+        x, y = np.rot90(x, giro), np.rot90(y, giro)
+    dy, dx = int(rng.integers(-3, 4)), int(rng.integers(-3, 4))
+    if dy or dx:
+        x = np.roll(np.roll(x, dy, axis=0), dx, axis=1)
+        y = np.roll(np.roll(y, dy, axis=0), dx, axis=1)
+
+    # Forma/fotometría solo en la entrada.
+    if rng.random() < 0.4:
+        x = _difuminar(x)
+    if rng.random() < 0.4:
+        x = _engrosar(x)
+    if rng.random() < 0.3:
+        x = _adelgazar(x)
+    if rng.random() < 0.5:
+        gamma = rng.uniform(0.7, 1.4)
+        x = np.clip(x ** gamma, 0.0, 1.0)
+    if rng.random() < 0.5:
+        x = np.clip(x + rng.normal(0.0, rng.uniform(0.0, 0.06), x.shape), 0.0, 1.0)
+
+    return x.astype(np.float32), y.astype(np.float32)
+
+
+def dataset(n, rng):
     x = np.empty((n, LADO, LADO, 1), np.float32)
     y = np.empty((n, LADO, LADO, 1), np.float32)
     for i in range(n):
-        x[i], y[i] = muestra(np.random.default_rng(1000 + i))
+        x[i], y[i] = muestra(np.random.default_rng(int(rng.integers(0, 2**31 - 1))))
     return x, y
 
 
+def _leer_gris(ruta):
+    """Lee una imagen como (LADO, LADO, 1) float32 en [0, 1]."""
+    datos = tf.io.read_file(ruta)
+    img = tf.io.decode_image(datos, channels=1, expand_animations=False)
+    img = tf.image.resize(img, [LADO, LADO], method="area")
+    return (tf.cast(img, tf.float32).numpy() / 255.0).reshape(LADO, LADO, 1)
+
+
+def cargar_reales(carpeta):
+    """Carga pares reales (entrada, objetivo) de [carpeta].
+
+    Espera subcarpetas `entrada`/`objetivo` (o `input`/`output`). El objetivo se
+    binariza a 0/1 (esqueleto limpio); la entrada conserva grises.
+    Devuelve (x, y) o `None` si la carpeta no tiene el formato esperado.
+    """
+    def _sub(*nombres):
+        for n in nombres:
+            p = os.path.join(carpeta, n)
+            if os.path.isdir(p):
+                return p
+        return None
+
+    dir_in = _sub("entrada", "input")
+    dir_out = _sub("objetivo", "output")
+    if dir_in is None or dir_out is None:
+        print(f"[reales] {carpeta} no tiene subcarpetas entrada/objetivo; se ignora.")
+        return None
+
+    objetivos = {}
+    for nombre in os.listdir(dir_out):
+        base, _ = os.path.splitext(nombre)
+        objetivos[base] = os.path.join(dir_out, nombre)
+
+    xs, ys = [], []
+    for nombre in sorted(os.listdir(dir_in)):
+        base, _ = os.path.splitext(nombre)
+        if base not in objetivos:
+            continue
+        xs.append(_leer_gris(os.path.join(dir_in, nombre)))
+        ys.append((_leer_gris(objetivos[base]) >= 0.5).astype(np.float32))
+    if not xs:
+        print(f"[reales] {carpeta}: no se encontraron pares con el mismo nombre.")
+        return None
+    print(f"[reales] {len(xs)} pares cargados de {carpeta}")
+    return np.stack(xs), np.stack(ys)
+
+
+def aumentar_conjunto(x, y, rng, copias):
+    """Agrega [copias] versiones aumentadas de cada muestra al conjunto."""
+    if copias <= 0:
+        return x, y
+    xa, ya = [x], [y]
+    for _ in range(copias):
+        ax = np.empty_like(x)
+        ay = np.empty_like(y)
+        for i in range(x.shape[0]):
+            ax[i], ay[i] = aumentar(x[i], y[i], rng)
+        xa.append(ax)
+        ya.append(ay)
+    return np.concatenate(xa, 0), np.concatenate(ya, 0)
+
+
 def modelo():
+    # Mini U-Net de 2 niveles. Un poco más ancha que la v1 (16/24/32) pero
+    # sigue siendo chica para el móvil (float16, unos cientos de KB).
     inp = tf.keras.Input((LADO, LADO, 1))
-    x = tf.keras.layers.Conv2D(16, 3, padding="same", activation="relu")(inp)
-    x = tf.keras.layers.Conv2D(16, 3, padding="same", activation="relu")(x)
-    s1 = x
-    x = tf.keras.layers.Conv2D(24, 3, strides=2, padding="same", activation="relu")(x)
+    x = tf.keras.layers.Conv2D(24, 3, padding="same", activation="relu")(inp)
     x = tf.keras.layers.Conv2D(24, 3, padding="same", activation="relu")(x)
-    s2 = x
+    s1 = x
     x = tf.keras.layers.Conv2D(32, 3, strides=2, padding="same", activation="relu")(x)
     x = tf.keras.layers.Conv2D(32, 3, padding="same", activation="relu")(x)
-    x = tf.keras.layers.Conv2DTranspose(24, 2, strides=2, padding="same", activation="relu")(x)
+    s2 = x
+    x = tf.keras.layers.Conv2D(48, 3, strides=2, padding="same", activation="relu")(x)
+    x = tf.keras.layers.Conv2D(48, 3, padding="same", activation="relu")(x)
+    x = tf.keras.layers.Conv2DTranspose(32, 2, strides=2, padding="same", activation="relu")(x)
     x = tf.keras.layers.Concatenate()([x, s2])
-    x = tf.keras.layers.Conv2D(24, 3, padding="same", activation="relu")(x)
-    x = tf.keras.layers.Conv2DTranspose(16, 2, strides=2, padding="same", activation="relu")(x)
+    x = tf.keras.layers.Conv2D(32, 3, padding="same", activation="relu")(x)
+    x = tf.keras.layers.Conv2DTranspose(24, 2, strides=2, padding="same", activation="relu")(x)
     x = tf.keras.layers.Concatenate()([x, s1])
-    x = tf.keras.layers.Conv2D(16, 3, padding="same", activation="relu")(x)
+    x = tf.keras.layers.Conv2D(24, 3, padding="same", activation="relu")(x)
     out = tf.keras.layers.Conv2D(1, 1, activation="sigmoid")(x)
     return tf.keras.Model(inp, out)
 
@@ -119,10 +254,44 @@ def dice(y_true, y_pred):
     return 1.0 - (2.0 * inter + 1.0) / (tf.reduce_sum(y_true) + tf.reduce_sum(y_pred) + 1.0)
 
 
+def argumentos():
+    p = argparse.ArgumentParser(description="Entrena el limpiador de trazos.")
+    p.add_argument("--muestras", type=int, default=1400, help="pares sintéticos de entrenamiento")
+    p.add_argument("--validacion", type=int, default=200, help="pares sintéticos de validación")
+    p.add_argument("--reales", type=str, default=None, help="carpeta con pares reales entrada/objetivo")
+    p.add_argument("--aumentos", type=int, default=1, help="copias aumentadas por muestra de entrenamiento")
+    p.add_argument("--epocas", type=int, default=20)
+    p.add_argument("--lote", type=int, default=32)
+    p.add_argument("--semilla", type=int, default=1)
+    p.add_argument("--salida", type=str, default=os.path.join(
+        RAIZ, "app", "src", "main", "assets", "modelos", "limpiar_trazos.tflite"))
+    return p.parse_args()
+
+
 def main():
-    tf.random.set_seed(1)
-    xtr, ytr = dataset(900)
-    xva, yva = dataset(120)
+    args = argumentos()
+    tf.random.set_seed(args.semilla)
+    rng = np.random.default_rng(args.semilla)
+
+    xtr, ytr = dataset(args.muestras, rng)
+    xva, yva = dataset(args.validacion, rng)
+
+    if args.reales:
+        reales = cargar_reales(args.reales)
+        if reales is not None:
+            xr, yr = reales
+            corte = max(1, int(len(xr) * 0.8)) if len(xr) > 1 else len(xr)
+            xtr = np.concatenate([xtr, xr[:corte]], 0)
+            ytr = np.concatenate([ytr, yr[:corte]], 0)
+            if corte < len(xr):
+                xva = np.concatenate([xva, xr[corte:]], 0)
+                yva = np.concatenate([yva, yr[corte:]], 0)
+
+    xtr, ytr = aumentar_conjunto(xtr, ytr, rng, args.aumentos)
+
+    orden = rng.permutation(xtr.shape[0])
+    xtr, ytr = xtr[orden], ytr[orden]
+    print(f"entrenamiento: {xtr.shape[0]} pares | validación: {xva.shape[0]} pares")
 
     red = modelo()
     red.compile(
@@ -130,27 +299,27 @@ def main():
         loss=tf.keras.losses.BinaryCrossentropy(),
         metrics=[dice],
     )
-    red.fit(xtr, ytr, validation_data=(xva, yva), epochs=14, batch_size=24, verbose=2)
+    red.fit(
+        xtr, ytr, validation_data=(xva, yva),
+        epochs=args.epocas, batch_size=args.lote, verbose=2,
+    )
 
     conv = tf.lite.TFLiteConverter.from_keras_model(red)
     conv.optimizations = [tf.lite.Optimize.DEFAULT]
     conv.target_spec.supported_types = [tf.float16]
     tflite = conv.convert()
 
-    salida = os.path.join(
-        RAIZ, "app", "src", "main", "assets", "modelos", "limpiar_trazos.tflite"
-    )
-    os.makedirs(os.path.dirname(salida), exist_ok=True)
-    with open(salida, "wb") as f:
+    os.makedirs(os.path.dirname(args.salida), exist_ok=True)
+    with open(args.salida, "wb") as f:
         f.write(tflite)
-    print("modelo guardado:", salida, len(tflite), "bytes")
+    print("modelo guardado:", args.salida, len(tflite), "bytes")
 
     # Chequeo rápido: solapamiento del esqueleto aprendido con el objetivo.
     interp = tf.lite.Interpreter(model_content=tflite)
     interp.allocate_tensors()
     det_in = interp.get_input_details()[0]
     det_out = interp.get_output_details()[0]
-    for i in range(3):
+    for i in range(min(3, xva.shape[0])):
         interp.set_tensor(det_in["index"], xva[i : i + 1])
         interp.invoke()
         pred = interp.get_tensor(det_out["index"])[0, ..., 0]

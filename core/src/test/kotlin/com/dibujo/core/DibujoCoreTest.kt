@@ -2,6 +2,7 @@ package com.dibujo.core
 
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
 class LienzoTest {
@@ -37,21 +38,71 @@ class LienzoTest {
     }
 
     @Test
-    fun rellenarInundaRegion() {
-        val l = Lienzo(3, 3)
-        l.lineaGruesa(0f, 1f, 2f, 1f, 1, redonda = true, color = Colores.NEGRO)
-        l.rellenar(0, 0, Colores.AMARILLO)
-        assertTrue((0 until 3).all { l.pixel(it, 0) == Colores.AMARILLO })
-        assertTrue((0 until 3).all { l.pixel(it, 1) == Colores.NEGRO })
+    fun rellenarInundaRegionCerrada() {
+        val l = Lienzo(5, 5)
+        // Anillo cerrado de negro en el borde de la hoja.
+        for (i in 0 until 5) {
+            l.pintar(i, 0, Colores.NEGRO)
+            l.pintar(i, 4, Colores.NEGRO)
+            l.pintar(0, i, Colores.NEGRO)
+            l.pintar(4, i, Colores.NEGRO)
+        }
+        assertTrue(l.rellenar(2, 2, Colores.AMARILLO))
+        assertEquals(Colores.AMARILLO, l.pixel(1, 1))
+        assertEquals(Colores.AMARILLO, l.pixel(3, 3))
+        // El anillo no se pinta con el balde.
+        assertEquals(Colores.NEGRO, l.pixel(0, 0))
     }
 
     @Test
-    fun rellenarNoCruzaBorde() {
+    fun rellenarNoInundaFondoAbierto() {
         val l = Lienzo(3, 3)
         l.lineaGruesa(0f, 1f, 2f, 1f, 1, redonda = true, color = Colores.NEGRO)
-        l.rellenar(0, 2, Colores.AMARILLO)
-        assertEquals(Colores.AMARILLO, l.pixel(0, 2))
+        // La región superior toca el borde de la hoja: es fondo abierto.
+        assertFalse(l.rellenar(0, 0, Colores.AMARILLO))
+        assertEquals(Colores.BLANCO, l.pixel(0, 0))
         assertEquals(Colores.NEGRO, l.pixel(0, 1))
+        // La región inferior también es abierta.
+        assertFalse(l.rellenar(0, 2, Colores.AMARILLO))
+        assertEquals(Colores.BLANCO, l.pixel(0, 2))
+    }
+
+    @Test
+    fun rellenarCierraHuecoPequenoDelContorno() {
+        val l = Lienzo(27, 27)
+        // Cuadrado del contorno (3,3)-(23,23) con un hueco de 2 px arriba.
+        for (x in 3..23) {
+            if (x != 12 && x != 13) l.pintar(x, 3, Colores.NEGRO)
+            l.pintar(x, 23, Colores.NEGRO)
+        }
+        for (y in 3..23) {
+            l.pintar(3, y, Colores.NEGRO)
+            l.pintar(23, y, Colores.NEGRO)
+        }
+        // El trazo no cierra el contorno, pero el balde tapa el hueco.
+        assertTrue(l.rellenar(13, 13, Colores.AMARILLO))
+        assertEquals(Colores.AMARILLO, l.pixel(13, 13))
+        assertEquals(Colores.AMARILLO, l.pixel(8, 8))
+        // El fondo de afuera sigue blanco: no se escapó.
+        assertEquals(Colores.BLANCO, l.pixel(0, 0))
+        assertEquals(Colores.BLANCO, l.pixel(25, 25))
+    }
+
+    @Test
+    fun rellenarNoCierraHuecoGrandeYNoPinta() {
+        val l = Lienzo(31, 31)
+        // Mismo cuadrado pero con una apertura grande (8 px): fondo abierto.
+        for (x in 4..26) {
+            if (x in 14..21) continue
+            l.pintar(x, 4, Colores.NEGRO)
+            l.pintar(x, 26, Colores.NEGRO)
+        }
+        for (y in 4..26) {
+            l.pintar(4, y, Colores.NEGRO)
+            l.pintar(26, y, Colores.NEGRO)
+        }
+        assertFalse(l.rellenar(15, 15, Colores.AMARILLO))
+        assertEquals(Colores.BLANCO, l.pixel(15, 15))
     }
 
     @Test

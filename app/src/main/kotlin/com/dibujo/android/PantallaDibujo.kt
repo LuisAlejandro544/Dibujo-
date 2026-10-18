@@ -49,8 +49,6 @@ import androidx.compose.material.icons.rounded.AddPhotoAlternate
 import androidx.compose.material.icons.rounded.AutoFixHigh
 import androidx.compose.material.icons.rounded.Brush
 import androidx.compose.material.icons.rounded.CenterFocusWeak
-import androidx.compose.material.icons.rounded.CleaningServices
-import androidx.compose.material.icons.rounded.ContentCopy
 import androidx.compose.material.icons.rounded.Delete
 import androidx.compose.material.icons.rounded.Draw
 import androidx.compose.material.icons.rounded.FormatColorFill
@@ -202,42 +200,57 @@ fun PantallaDibujo(vm: DibujoViewModel = viewModel()) {
     val contexto = LocalContext.current
     val alcance = rememberCoroutineScope()
     var exportando by remember { mutableStateOf(false) }
+    // PNG ya codificado: mientras no sea null se muestra el diálogo con el peso
+    // y las opciones de guardar o compartir.
+    var imagenLista by remember { mutableStateOf<ExportadorGaleria.Imagen?>(null) }
     // Los textos se leen en composición (no con `context.getString` dentro de
     // la corrutina) para que respeten cambios de configuración.
     val textoExportadoOk = stringResource(R.string.exportado_ok)
     val textoExportadoError = stringResource(R.string.exportado_error)
     val textoExportadoSinPermiso = stringResource(R.string.exportado_sin_permiso)
+    val textoCompartirError = stringResource(R.string.compartir_error)
 
-    // Copia la hoja a un Bitmap y la guarda en la galería. El copiado y la
-    // compresión van fuera del hilo principal (hojas grandes = varios MB).
-    fun exportarAhora() {
-        if (exportando) return
+    // Copia la hoja a un Bitmap, la codifica a PNG y la deja lista para
+    // guardar/compartir. El copiado y la compresión van fuera del hilo
+    // principal (hojas grandes = varios MB).
+    fun prepararExportacion() {
+        if (exportando || imagenLista != null) return
         val ancho = estadoState.value.hojaAncho
         val alto = estadoState.value.hojaAlto
         if (ancho <= 0 || alto <= 0) return
         exportando = true
         alcance.launch {
-            val bitmap = withContext(Dispatchers.Default) {
+            val bytes = withContext(Dispatchers.Default) {
                 runCatching {
                     val pixeles = IntArray(ancho * alto)
                     if (!vm.copiarHoja(pixeles)) {
                         null
                     } else {
-                        Bitmap.createBitmap(pixeles, ancho, alto, Bitmap.Config.ARGB_8888)
+                        val bitmap = Bitmap.createBitmap(pixeles, ancho, alto, Bitmap.Config.ARGB_8888)
+                        val png = ExportadorGaleria.codificarPng(bitmap)
+                        bitmap.recycle()
+                        png
                     }
                 }.getOrNull()
             }
-            val guardado = if (bitmap != null) {
-                val marca = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date())
-                val ok = withContext(Dispatchers.IO) {
-                    ExportadorGaleria.guardar(contexto, bitmap, "dibujo_$marca")
-                }
-                bitmap.recycle()
-                ok
-            } else {
-                false
-            }
             exportando = false
+            if (bytes == null) {
+                Toast.makeText(contexto, textoExportadoError, Toast.LENGTH_SHORT).show()
+            } else {
+                val marca = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date())
+                imagenLista = ExportadorGaleria.Imagen(bytes, "dibujo_$marca")
+            }
+        }
+    }
+
+    // Guarda el PNG ya preparado en la galería (solo se llama tras el diálogo).
+    fun guardarExportacion() {
+        val imagen = imagenLista ?: return
+        alcance.launch {
+            val guardado = withContext(Dispatchers.IO) {
+                ExportadorGaleria.guardarBytes(contexto, imagen.bytes, imagen.nombre)
+            }
+            imagenLista = null
             Toast.makeText(
                 contexto,
                 if (guardado) textoExportadoOk else textoExportadoError,
@@ -246,13 +259,21 @@ fun PantallaDibujo(vm: DibujoViewModel = viewModel()) {
         }
     }
 
+    // Abre el selector del sistema para compartir el PNG en cualquier app.
+    fun compartirExportacion() {
+        val imagen = imagenLista ?: return
+        val ok = ExportadorGaleria.compartir(contexto, imagen.bytes, imagen.nombre)
+        imagenLista = null
+        if (!ok) Toast.makeText(contexto, textoCompartirError, Toast.LENGTH_SHORT).show()
+    }
+
     // En API < 29 hace falta WRITE_EXTERNAL_STORAGE; desde Android 10 (Q) el
-    // guardado por MediaStore no pide permisos.
+    // guardado por MediaStore no pide permisos. Compartir no usa permisos.
     val permisoEscritura = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission(),
     ) { concedido ->
         if (concedido) {
-            exportarAhora()
+            guardarExportacion()
         } else {
             Toast.makeText(
                 contexto,
@@ -262,14 +283,16 @@ fun PantallaDibujo(vm: DibujoViewModel = viewModel()) {
         }
     }
 
-    val alExportar = {
+    val alExportar = { prepararExportacion() }
+
+    val alGuardarEnGaleria = {
         val faltaPermiso = Build.VERSION.SDK_INT < Build.VERSION_CODES.Q &&
             contexto.checkSelfPermission(Manifest.permission.WRITE_EXTERNAL_STORAGE) !=
             PackageManager.PERMISSION_GRANTED
         if (faltaPermiso) {
             permisoEscritura.launch(Manifest.permission.WRITE_EXTERNAL_STORAGE)
         } else {
-            exportarAhora()
+            guardarExportacion()
         }
     }
 
@@ -372,6 +395,15 @@ fun PantallaDibujo(vm: DibujoViewModel = viewModel()) {
                 mostrarLimpiar = false
             },
             alCerrar = { mostrarLimpiar = false },
+        )
+    }
+
+    imagenLista?.let { imagen ->
+        DialogoExportar(
+            peso = ExportadorGaleria.formatearTamano(imagen.bytes.size),
+            alGuardar = alGuardarEnGaleria,
+            alCompartir = { compartirExportacion() },
+            alCerrar = { imagenLista = null },
         )
     }
 }
@@ -503,6 +535,39 @@ private fun DialogoLimpiar(
         confirmButton = {
             TextButton(onClick = alConfirmar) {
                 Text(stringResource(R.string.limpiar_confirmar))
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = alCerrar) {
+                Text(stringResource(R.string.cancelar))
+            }
+        },
+    )
+}
+
+/**
+ * Diálogo de exportación: avisa el peso del PNG antes de bajarlo y ofrece
+ * guardarlo en la galería o compartirlo con cualquier app.
+ */
+@Composable
+private fun DialogoExportar(
+    peso: String,
+    alGuardar: () -> Unit,
+    alCompartir: () -> Unit,
+    alCerrar: () -> Unit,
+) {
+    AlertDialog(
+        onDismissRequest = alCerrar,
+        title = { Text(stringResource(R.string.exportar_titulo)) },
+        text = { Text(stringResource(R.string.exportar_peso, peso)) },
+        confirmButton = {
+            Row {
+                TextButton(onClick = alCompartir) {
+                    Text(stringResource(R.string.exportar_compartir))
+                }
+                TextButton(onClick = alGuardar) {
+                    Text(stringResource(R.string.exportar_guardar))
+                }
             }
         },
         dismissButton = {
@@ -854,16 +919,24 @@ private fun BarraHerramientas(
                 )
             }
 
-            // Fila 2: herramientas (iconos, sin scroll) + grosor.
+            // Fila 2: herramientas, cada una con su nombre debajo. Antes iban
+            // sólo iconos y "Doble" (un icono de "copiar") no se entendía.
             Row(
                 Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 8.dp),
-                horizontalArrangement = Arrangement.spacedBy(4.dp),
+                    .padding(horizontal = 6.dp, vertical = 4.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Herramientas(estado, vm)
-                Spacer(Modifier.weight(1f))
+            }
+
+            // Fila 3: grosor + paleta de colores.
+            Row(
+                Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 8.dp, vertical = 6.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
                 BotonIcono(
                     icono = Icons.Rounded.Remove,
                     descripcion = stringResource(R.string.cd_grosor_menos),
@@ -878,23 +951,21 @@ private fun BarraHerramientas(
                     descripcion = stringResource(R.string.cd_grosor_mas),
                     alPulsar = { vm.cambiarGrosor(1) },
                 )
-            }
-
-            // Fila 3: paleta de colores.
-            Row(
-                Modifier
-                    .fillMaxWidth()
-                    .horizontalScroll(rememberScrollState())
-                    .padding(horizontal = 8.dp, vertical = 6.dp),
-                horizontalArrangement = Arrangement.spacedBy(10.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Colores.PALETA.forEach { color ->
-                    CabezaColor(
-                        color = color,
-                        seleccionado = estado.lapiz.color == color.argb,
-                        onElegir = { vm.elegirColor(color.argb) },
-                    )
+                Spacer(Modifier.width(8.dp))
+                Row(
+                    Modifier
+                        .weight(1f)
+                        .horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Colores.PALETA.forEach { color ->
+                        CabezaColor(
+                            color = color,
+                            seleccionado = estado.lapiz.color == color.argb,
+                            onElegir = { vm.elegirColor(color.argb) },
+                        )
+                    }
                 }
             }
         }
@@ -1362,29 +1433,39 @@ private fun Herramientas(
     estado: DibujoEstado,
     vm: DibujoViewModel,
 ) {
-    // Botones de icono compactos: entran todos en una fila, sin scroll. El
-    // DOBLE va al final, con el mismo tamaño reducido para que quepan seis.
+    // Cada herramienta lleva su nombre debajo del icono: sin etiqueta, el
+    // borrador y sobre todo "Doble" (antes un icono de "copiar") no se
+    // entendían. Con `SpaceBetween` entran las seis en una fila, también en
+    // pantallas angostas.
     val pares = listOf(
         Triple(Herramienta.LAPIZ, R.string.herramienta_lapiz, Icons.Rounded.Draw),
         Triple(Herramienta.PORTAMINA, R.string.herramienta_portamina, Icons.Rounded.Mode),
         Triple(Herramienta.CARBONCILLO, R.string.herramienta_carboncillo, Icons.Rounded.Brush),
-        Triple(Herramienta.BORRADOR, R.string.herramienta_borrador, Icons.Rounded.CleaningServices),
+        Triple(Herramienta.BORRADOR, R.string.herramienta_borrador, IconoBorrador),
         Triple(Herramienta.PINTAR, R.string.herramienta_pintar, Icons.Rounded.FormatColorFill),
-        Triple(Herramienta.DOBLE, R.string.herramienta_doble, Icons.Rounded.ContentCopy),
+        Triple(Herramienta.DOBLE, R.string.herramienta_doble, IconoTrazoDoble),
     )
     Row(
-        horizontalArrangement = Arrangement.spacedBy(1.dp),
-        verticalAlignment = Alignment.CenterVertically,
+        Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.Top,
     ) {
         pares.forEach { (herramienta, etiquetaRes, icono) ->
             val etiqueta = stringResource(etiquetaRes)
-            IconoToggle(
-                icono = icono,
-                descripcion = etiqueta,
-                seleccionado = estado.lapiz.herramienta == herramienta,
-                tamano = 34.dp,
-                alPulsar = { vm.elegirHerramienta(herramienta) },
-            )
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                IconoToggle(
+                    icono = icono,
+                    descripcion = etiqueta,
+                    seleccionado = estado.lapiz.herramienta == herramienta,
+                    alPulsar = { vm.elegirHerramienta(herramienta) },
+                )
+                Text(
+                    etiqueta,
+                    style = MaterialTheme.typography.labelSmall,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
         }
     }
 }

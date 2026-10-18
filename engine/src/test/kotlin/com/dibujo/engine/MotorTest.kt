@@ -251,6 +251,43 @@ class MotorNativoTest {
     }
 
     @Test
+    fun rellenoCierraHuecoParidadNativoKotlin() {
+        if (!NativeEngine.disponible()) return
+        val ancho = 27
+        val alto = 27
+        val nativo = MotorNativo(ancho, alto)
+        val kotlin = MotorKotlin(ancho, alto)
+        for (m in listOf(nativo, kotlin)) {
+            m.configurarLapiz(Lapiz(color = Colores.NEGRO, grosor = 1))
+            // Cuadrado (3,3)-(23,23) con un hueco de 2 px en el borde de arriba
+            // (dos trazos: el hueco queda entre (11,3) y (14,3)).
+            m.iniciarTrazo(3f, 3f)
+            m.continuarTrazo(11f, 3f)
+            assertTrue(m.terminarTrazo())
+            m.iniciarTrazo(14f, 3f)
+            m.continuarTrazo(23f, 3f)
+            m.continuarTrazo(23f, 23f)
+            m.continuarTrazo(3f, 23f)
+            m.continuarTrazo(3f, 3f)
+            assertTrue(m.terminarTrazo())
+            // El balde cierra el hueco y rellena: mismo resultado en los dos.
+            m.configurarLapiz(Lapiz(color = Colores.AMARILLO, grosor = 1, herramienta = Herramienta.PINTAR))
+            m.iniciarTrazo(13f, 13f)
+            assertTrue(m.terminarTrazo())
+        }
+        val a = IntArray(ancho * alto)
+        val b = IntArray(ancho * alto)
+        assertTrue(nativo.copiarHoja(a), "nativo: copiarHoja")
+        assertTrue(kotlin.copiarHoja(b), "kotlin: copiarHoja")
+        for (i in a.indices) {
+            assertEquals(b[i], a[i], "cierre de hueco: discrepancia en píxel $i")
+        }
+        assertEquals(Colores.AMARILLO, b[13 * ancho + 13])
+        nativo.close()
+        kotlin.close()
+    }
+
+    @Test
     fun expandirParidadNativoKotlin() {
         if (!NativeEngine.disponible()) return
         val nativo = MotorNativo(8, 6)

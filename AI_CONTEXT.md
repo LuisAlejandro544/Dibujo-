@@ -172,9 +172,14 @@ Ver `app/src/main/assets/modelos/LEEME.md`.
   `writeFloat`/`run`/`readFloat`). Prueba **GPU primero** (`Accelerator.GPU`) y,
   si el equipo o el modelo no lo admiten, **cae a CPU** (`Accelerator.CPU`) con
   el mismo binario float16 (I/O float32). Lo corre por parches 64×64 con paso 48
-  (solape 16 px) recomponiendo por máximo, y redibuja el esqueleto con
-  `Lienzo.RADIO_LIMPIEZA`. Cada píxel limpio toma el color de la tinta original
-  más cercana (búsqueda en un radio de 6 px) para conservar el color del trazo.
+  (solape 16 px) recomponiendo por máximo. **Contrato de polaridad**: la app
+  arma el parche con `tinta = 1, fondo = 0` (`pixeles != fondo`), y así se
+  entrena (ver abajo); el `.npz` guarda la tinta oscura y `buril.py` la invierte
+  al cargar. Tras umbralar, la máscara se **adelgaza a un esqueleto de 1 px con
+  `Lienzo.limpiarTrazos` (Zhang-Suen)**, el mismo protocolo del benchmark: un
+  modelo que devuelva la línea gruesa o con manchas no ensucia la hoja. Cada
+  píxel del esqueleto toma el color de la tinta original más cercana (búsqueda
+  en un radio de 6 px) para conservar el color del trazo.
 - El resultado se aplica con `MotorDibujo.reemplazarHoja(pixeles)`: reemplaza la
   hoja completa (validando el tamaño) y deja el estado anterior en el historial.
   Existe en **los dos motores** (`MotorKotlin` y `DibujoEngine` vía
@@ -216,7 +221,12 @@ Ver `app/src/main/assets/modelos/LEEME.md`.
 - **Paso B (entrenamiento) — listo**: `buril.py --pares <npz>`
   recorta parches `64×64` con tinta del cache (`--parches-por-imagen`) y los
   mezcla con los sintéticos, separando entrenamiento/validación **por boceto**
-  (sin fuga). Exporta `.tflite` **float16** (I/O float32, corre en GPU y CPU),
+  (sin fuga). **Polaridad**: el cache guarda la tinta oscura (fondo 255) y el
+  loader la invierte a `tinta = 1, fondo = 0` para que coincida con la app, el
+  benchmark y el set sintético; equivocarse acá hacía que el móvil recibiera la
+  polaridad opuesta y Buril saliera ruidoso. La **pérdida es BCE + Dice** (el
+  BCE solo se hunde en el desbalance de una línea de 1 px y devuelve manchas).
+  Exporta `.tflite` **float16** (I/O float32, corre en GPU y CPU),
   evalúa **IoU y PSNR** sobre validación con el modelo exportado y guarda un
   `.json` de métricas + atribución (con `"modelo": "Buril <version>"`). La vía
   recomendada es el cuaderno de Colab

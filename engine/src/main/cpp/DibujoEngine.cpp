@@ -31,67 +31,169 @@ inline float separacionDoble(int grosor) {
 // coincidir con `MotorKotlin.FUERA` para que el render no dependa del backend.
 constexpr uint32_t kFuera = 0xFFECECECu;
 
-// Apila una semilla por cada tramo contiguo de `origen` sin marcar en la fila
-// `base` (índice del primer píxel de la fila). Es la clave del relleno por
-// "spans": apilar un punto por tramo en lugar de un punto por píxel.
-void agregarTramos(std::vector<uint32_t>& hoja, const std::vector<uint8_t>& marca,
+// Radio (px) del cierre de huecos del contorno que usa el balde: cierra huecos
+// de hasta 2*kRadioCierre px. Coincide con `Lienzo.RADIO_CIERRE` (paridad).
+constexpr int kRadioCierre = 3;
+
+// Apila una semilla por cada tramo contiguo atravesable sin marcar en la fila
+// `base` (índice del primer píxel de la fila). Si `bloqueado` es nullptr sólo
+// se atraviesan los píxeles del color `origen`; si no, se atraviesa todo lo que
+// no esté bloqueado. Es la clave del relleno por "spans": apilar un punto por
+// tramo en lugar de un punto por píxel.
+void agregarTramos(const std::vector<uint32_t>& hoja, const std::vector<uint8_t>& marca,
                    std::vector<int>& pila, int base, int izq, int der,
-                   uint32_t origen) {
+                   uint32_t origen, const std::vector<uint8_t>* bloqueado) {
+    auto libre = [&](std::size_t i) -> bool {
+        return bloqueado ? !(*bloqueado)[i] : hoja[i] == origen;
+    };
     int x = izq;
     while (x <= der) {
         const std::size_t i = static_cast<std::size_t>(base) + x;
-        if (!marca[i] && hoja[i] == origen) {
+        if (!marca[i] && libre(i)) {
             pila.push_back(base + x);
-            while (x <= der && hoja[static_cast<std::size_t>(base) + x] == origen) ++x;
+            while (x <= der && libre(static_cast<std::size_t>(base) + x)) ++x;
         } else {
             ++x;
         }
     }
 }
 
-// Relleno por inundación a partir de (x, y), limitado a la región CERRADA que
-// lo contiene. Si la región alcanza el borde de la hoja (fondo abierto) no se
-// pinta nada y devuelve false: tocar afuera de una figura no inunda la hoja.
-// Cuatro vecinos, igualdad exacta de color. Versión por "spans" (tramos
-// horizontales): replica `Lienzo.rellenar` de Kotlin, que usa el mismo
-// algoritmo, para mantener la paridad píxel a píxel.
-bool rellenar(std::vector<uint32_t>& hoja, int ancho, int alto,
-              int x, int y, uint32_t color) {
-    if (x < 0 || y < 0 || x >= ancho || y >= alto) return false;
-    const uint32_t origen = hoja[static_cast<std::size_t>(y) * ancho + x];
-    if (origen == color) return false;
-    std::vector<uint8_t> marca(static_cast<std::size_t>(ancho) *
-                                   static_cast<std::size_t>(alto),
-                               0);
+// Cierra los huecos pequeños del contorno: toma como barrera todo píxel que no
+// sea de color `origen` y le aplica un cierre morfológico (dilatar y erosionar)
+// con un cuadrado de lado 2*kRadioCierre+1. Fuera de la hoja se considera
+// barrera. El cuadrado es separable, así que se dilata y erosiona en horizontal
+// y en vertical (más rápido y mismo resultado). Replica `Lienzo.cerrarHuecos`.
+void cerrarHuecos(const std::vector<uint32_t>& hoja, int ancho, int alto,
+                  uint32_t origen, std::vector<uint8_t>& bloqueado) {
+    const std::size_t n = hoja.size();
+    std::vector<uint8_t> a(n, 0);
+    std::vector<uint8_t> b(n, 0);
+    // Dilatación horizontal.
+    for (int y = 0; y < alto; ++y) {
+        const std::size_t base = static_cast<std::size_t>(y) * ancho;
+        for (int x = 0; x < ancho; ++x) {
+            if (hoja[base + x] == origen) continue;
+            const int desde = std::max(0, x - kRadioCierre);
+            const int hasta = std::min(ancho - 1, x + kRadioCierre);
+            for (int xx = desde; xx <= hasta; ++xx) a[base + xx] = 1;
+        }
+    }
+    // Dilatación vertical.
+    for (int y = 0; y < alto; ++y) {
+        const std::size_t base = static_cast<std::size_t>(y) * ancho;
+        for (int x = 0; x < ancho; ++x) {
+            if (!a[base + x]) continue;
+            const int desde = std::max(0, y - kRadioCierre);
+            const int hasta = std::min(alto - 1, y + kRadioCierre);
+            for (int yy = desde; yy <= hasta; ++yy) {
+                b[static_cast<std::size_t>(yy) * ancho + x] = 1;
+            }
+        }
+    }
+    // Erosión horizontal (fuera de la hoja cuenta como barrera).
+    std::fill(a.begin(), a.end(), 0);
+    for (int y = 0; y < alto; ++y) {
+        const std::size_t base = static_cast<std::size_t>(y) * ancho;
+        for (int x = 0; x < ancho; ++x) {
+            bool todo = true;
+            for (int dx = -kRadioCierre; dx <= kRadioCierre; ++dx) {
+                const int xx = x + dx;
+                if (xx >= 0 && xx < ancho && !b[base + xx]) {
+                    todo = false;
+                    break;
+                }
+            }
+            a[base + x] = todo ? 1 : 0;
+        }
+    }
+    // Erosión vertical.
+    std::fill(b.begin(), b.end(), 0);
+    for (int y = 0; y < alto; ++y) {
+        for (int x = 0; x < ancho; ++x) {
+            bool todo = true;
+            for (int dy = -kRadioCierre; dy <= kRadioCierre; ++dy) {
+                const int yy = y + dy;
+                if (yy >= 0 && yy < alto &&
+                    !a[static_cast<std::size_t>(yy) * ancho + x]) {
+                    todo = false;
+                    break;
+                }
+            }
+            b[static_cast<std::size_t>(y) * ancho + x] = todo ? 1 : 0;
+        }
+    }
+    bloqueado.swap(b);
+}
+
+// Inunda desde `semilla` con el mismo algoritmo de tramos horizontales de
+// Kotlin. Devuelve true si la región alcanza el borde de la hoja (fondo
+// abierto) y deja en `marca` los píxeles alcanzados.
+bool inundar(const std::vector<uint32_t>& hoja, int ancho, int alto,
+             int semilla, uint32_t origen, const std::vector<uint8_t>* bloqueado,
+             std::vector<uint8_t>& marca) {
+    marca.assign(hoja.size(), 0);
     std::vector<int> pila;
-    pila.push_back(y * ancho + x);
+    pila.push_back(semilla);
     bool tocaBorde = false;
+    auto libre = [&](std::size_t i) -> bool {
+        return bloqueado ? !(*bloqueado)[i] : hoja[i] == origen;
+    };
     while (!pila.empty()) {
         const int i = pila.back();
         pila.pop_back();
         if (marca[static_cast<std::size_t>(i)] ||
-            hoja[static_cast<std::size_t>(i)] != origen) {
+            !libre(static_cast<std::size_t>(i))) {
             continue;
         }
         const int cy = i / ancho;
         const int cx = i % ancho;
-        int izq = cx;
-        while (izq > 0 && hoja[static_cast<std::size_t>(cy) * ancho + izq - 1] == origen) --izq;
-        int der = cx;
-        while (der < ancho - 1 && hoja[static_cast<std::size_t>(cy) * ancho + der + 1] == origen) ++der;
         const int base = cy * ancho;
+        int izq = cx;
+        while (izq > 0 && libre(static_cast<std::size_t>(base) + izq - 1)) --izq;
+        int der = cx;
+        while (der < ancho - 1 && libre(static_cast<std::size_t>(base) + der + 1)) ++der;
         for (int xx = izq; xx <= der; ++xx) {
             marca[static_cast<std::size_t>(base) + xx] = 1;
         }
         if (izq == 0 || der == ancho - 1 || cy == 0 || cy == alto - 1) tocaBorde = true;
-        if (cy > 0) agregarTramos(hoja, marca, pila, base - ancho, izq, der, origen);
-        if (cy < alto - 1) agregarTramos(hoja, marca, pila, base + ancho, izq, der, origen);
+        if (cy > 0) agregarTramos(hoja, marca, pila, base - ancho, izq, der, origen, bloqueado);
+        if (cy < alto - 1) agregarTramos(hoja, marca, pila, base + ancho, izq, der, origen, bloqueado);
     }
-    if (tocaBorde) return false;
+    return tocaBorde;
+}
+
+// Relleno por inundación a partir de (x, y), limitado a la región CERRADA que
+// lo contiene. Primero inunda la región exacta del color tocado; si el relleno
+// se escapa hacia el fondo por un hueco del contorno, cierra huecos pequeños
+// (morfología) y reintenta. Si aun así alcanza el borde de la hoja (fondo
+// abierto) no se pinta nada y devuelve false. Replica `Lienzo.rellenar` de
+// Kotlin, que usa el mismo algoritmo, para mantener la paridad píxel a píxel.
+bool rellenar(std::vector<uint32_t>& hoja, int ancho, int alto,
+              int x, int y, uint32_t color) {
+    if (x < 0 || y < 0 || x >= ancho || y >= alto) return false;
+    const int semilla = y * ancho + x;
+    const uint32_t origen = hoja[static_cast<std::size_t>(semilla)];
+    if (origen == color) return false;
+
+    std::vector<uint8_t> marca;
+    if (!inundar(hoja, ancho, alto, semilla, origen, nullptr, marca)) {
+        for (std::size_t i = 0; i < marca.size(); ++i) {
+            if (marca[i]) hoja[i] = color;
+        }
+        return true;
+    }
+
+    std::vector<uint8_t> bloqueado;
+    cerrarHuecos(hoja, ancho, alto, origen, bloqueado);
+    if (inundar(hoja, ancho, alto, semilla, origen, &bloqueado, marca)) return false;
+    bool pinto = false;
     for (std::size_t i = 0; i < marca.size(); ++i) {
-        if (marca[i]) hoja[i] = color;
+        if (marca[i] && hoja[i] == origen) {
+            hoja[i] = color;
+            pinto = true;
+        }
     }
-    return true;
+    return pinto;
 }
 
 // Condiciones comunes del adelgazado de Zhang-Suen: 2 <= B <= 6 y exactamente

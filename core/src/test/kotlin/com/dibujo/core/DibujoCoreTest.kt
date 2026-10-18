@@ -68,6 +68,44 @@ class LienzoTest {
     }
 
     @Test
+    fun rellenarCierraHuecoPequenoDelContorno() {
+        val l = Lienzo(27, 27)
+        // Cuadrado del contorno (3,3)-(23,23) con un hueco de 2 px arriba.
+        for (x in 3..23) {
+            if (x != 12 && x != 13) l.pintar(x, 3, Colores.NEGRO)
+            l.pintar(x, 23, Colores.NEGRO)
+        }
+        for (y in 3..23) {
+            l.pintar(3, y, Colores.NEGRO)
+            l.pintar(23, y, Colores.NEGRO)
+        }
+        // El trazo no cierra el contorno, pero el balde tapa el hueco.
+        assertTrue(l.rellenar(13, 13, Colores.AMARILLO))
+        assertEquals(Colores.AMARILLO, l.pixel(13, 13))
+        assertEquals(Colores.AMARILLO, l.pixel(8, 8))
+        // El fondo de afuera sigue blanco: no se escapó.
+        assertEquals(Colores.BLANCO, l.pixel(0, 0))
+        assertEquals(Colores.BLANCO, l.pixel(25, 25))
+    }
+
+    @Test
+    fun rellenarNoCierraHuecoGrandeYNoPinta() {
+        val l = Lienzo(31, 31)
+        // Mismo cuadrado pero con una apertura grande (8 px): fondo abierto.
+        for (x in 4..26) {
+            if (x in 14..21) continue
+            l.pintar(x, 4, Colores.NEGRO)
+            l.pintar(x, 26, Colores.NEGRO)
+        }
+        for (y in 4..26) {
+            l.pintar(4, y, Colores.NEGRO)
+            l.pintar(26, y, Colores.NEGRO)
+        }
+        assertFalse(l.rellenar(15, 15, Colores.AMARILLO))
+        assertEquals(Colores.BLANCO, l.pixel(15, 15))
+    }
+
+    @Test
     fun clonarCopiaPixeles() {
         val l = Lienzo(4, 4)
         l.pintar(1, 1, Colores.ROJO)

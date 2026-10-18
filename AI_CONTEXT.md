@@ -113,6 +113,18 @@ alcanza el borde de la hoja (fondo abierto), no pinta nada y devuelve `false`:
 así tocar afuera de una figura no inunda toda la hoja en blanco. La detección
 marca el tramo que toca `x==0`, `x==ancho-1`, `y==0` o `y==alto-1`.
 
+Como el dibujo a mano deja aperturas de pocos píxeles en el contorno (y una
+figura grande, como una cara o un brazo, tiene más chance de quedar con un
+hueco que un trazo chico), antes de darse por vencido el balde **cierra huecos
+pequeños** y reintenta: hace un cierre morfológico (dilatar y erosionar con un
+cuadrado separable de radio `Lienzo.RADIO_CIERRE = 3`, o sea cierra huecos de
+hasta 6 px) sobre la máscara "no es del color de origen" y vuelve a inundar. Si
+aun así la región llega al borde, no se pinta nada. Sólo se pintan los píxeles
+que siguen siendo del color de origen, nunca el trazo ni su antialiasing. Fuera
+de la hoja se cuenta como barrera para poder cerrar huecos cerca del borde. El
+C++ replica el mismo cierre (`cerrarHuecos`), así la paridad se mantiene
+(`MotorTest.rellenoCierraHuecoParidadNativoKotlin`).
+
 El relleno es por **tramos** ("spans"): al procesar una semilla se extiende el
 tramo horizontal contiguo de color `origen`, se marca entero y sólo se apila
 una semilla por cada tramo nuevo arriba/abajo. Antes se apilaba píxel por píxel

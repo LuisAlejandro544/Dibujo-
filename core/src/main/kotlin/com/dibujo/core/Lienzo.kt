@@ -190,48 +190,86 @@ class Lienzo(
      * Relleno por inundación a partir de (x, y), limitado a la región
      * **cerrada** que lo contiene.
      *
-     * El balde sólo debe colorear lo que el usuario encerró con un trazo: si
-     * la región alcanza el borde de la hoja (es fondo abierto), no se pinta
-     * nada y se devuelve `false`. Así tocar afuera de una figura no inunda
-     * toda la hoja. Devuelve `true` si cambió algún píxel.
+     * El balde sólo debe colorear lo que el usuario encerró con un trazo. Como
+     * el dibujo a mano deja aperturas de pocos píxeles en el contorno (una cara
+     * o un brazo grandes tienen más chance de quedar con un hueco que un trazo
+     * chico), primero se inunda la región exacta del píxel tocado y, si el
+     * relleno se escapa hacia el fondo, se cierran esos huecos (morfología) y
+     * se reintenta. Si aun así la región alcanza el borde de la hoja (fondo
+     * abierto), no se pinta nada y se devuelve `false`: tocar afuera de una
+     * figura no inunda toda la hoja. Devuelve `true` si cambió algún píxel.
      *
      * En vez de apilar cada píxel vecino (lo que hacía millones de `push` y
      * tardaba segundos en hojas grandes), apila **tramos horizontales**: al
-     * procesar una semilla se extiende el tramo contiguo de [origen] a
-     * izquierda y derecha, se marca entero y sólo se apila una semilla por
-     * cada tramo nuevo en las filas de arriba y abajo. El resultado es el
-     * mismo conjunto rellenado (4 vecinos, igualdad exacta) que el C++, que
-     * replica este mismo algoritmo para no romper la paridad píxel a píxel.
+     * procesar una semilla se extiende el tramo contiguo a izquierda y derecha,
+     * se marca entero y sólo se apila una semilla por cada tramo nuevo en las
+     * filas de arriba y abajo. El resultado es el mismo conjunto rellenado
+     * (4 vecinos, igualdad exacta) que el C++, que replica este mismo algoritmo
+     * para no romper la paridad píxel a píxel.
      */
     fun rellenar(x: Int, y: Int, color: Int): Boolean {
         if (!dentro(x, y)) return false
-        val origen = pixeles[y * ancho + x]
+        val semilla = y * ancho + x
+        val origen = pixeles[semilla]
         if (origen == color) return false
+
+        // Intento directo: el trazo ya encierra la región (caso habitual).
+        val directo = inundar(semilla, origen, bloqueado = null)
+        if (directo != null) {
+            for (i in directo.indices) if (directo[i]) pixeles[i] = color
+            return true
+        }
+
+        // El relleno se escapó por un hueco del contorno: cierra huecos
+        // pequeños y reintenta. Sólo se pintan los píxeles que siguen siendo
+        // del color de origen (nunca el trazo ni su antialiasing).
+        val bloqueado = cerrarHuecos(origen)
+        val cerrado = inundar(semilla, origen, bloqueado) ?: return false
+        var pinto = false
+        for (i in cerrado.indices) {
+            if (cerrado[i] && pixeles[i] == origen) {
+                pixeles[i] = color
+                pinto = true
+            }
+        }
+        return pinto
+    }
+
+    /**
+     * Inunda la región de [semilla] y devuelve qué píxeles la forman, o `null`
+     * si la región alcanza el borde de la hoja (fondo abierto). Si [bloqueado]
+     * es `null` sólo se atraviesan los píxeles del color [origen]; si no, se
+     * atraviesa todo lo que no esté bloqueado (así el cierre de huecos define
+     * la conectividad sin pintar sobre el trazo).
+     */
+    private fun inundar(semilla: Int, origen: Int, bloqueado: BooleanArray?): BooleanArray? {
         val marca = BooleanArray(pixeles.size)
         val pila = ArrayDeque<Int>()
-        pila.add(y * ancho + x)
+        pila.add(semilla)
         var tocaBorde = false
         while (pila.isNotEmpty()) {
             val i = pila.removeLast()
-            if (marca[i] || pixeles[i] != origen) continue
+            if (marca[i] || !libre(i, origen, bloqueado)) continue
             val cy = i / ancho
             val cx = i % ancho
-            var izq = cx
-            while (izq > 0 && pixeles[cy * ancho + izq - 1] == origen) izq--
-            var der = cx
-            while (der < ancho - 1 && pixeles[cy * ancho + der + 1] == origen) der++
             val base = cy * ancho
+            var izq = cx
+            while (izq > 0 && libre(base + izq - 1, origen, bloqueado)) izq--
+            var der = cx
+            while (der < ancho - 1 && libre(base + der + 1, origen, bloqueado)) der++
             for (xx in izq..der) marca[base + xx] = true
             if (izq == 0 || der == ancho - 1 || cy == 0 || cy == alto - 1) tocaBorde = true
-            if (cy > 0) agregarTramos(pila, marca, base - ancho, izq, der, origen)
-            if (cy < alto - 1) agregarTramos(pila, marca, base + ancho, izq, der, origen)
+            if (cy > 0) agregarTramos(pila, marca, base - ancho, izq, der, origen, bloqueado)
+            if (cy < alto - 1) agregarTramos(pila, marca, base + ancho, izq, der, origen, bloqueado)
         }
-        if (tocaBorde) return false
-        for (i in marca.indices) if (marca[i]) pixeles[i] = color
-        return true
+        return if (tocaBorde) null else marca
     }
 
-    /** Apila una semilla por cada tramo contiguo de [origen] sin marcar en la fila [base]. */
+    /** Un píxel es atravesable si es del color [origen] o no está bloqueado. */
+    private fun libre(i: Int, origen: Int, bloqueado: BooleanArray?): Boolean =
+        if (bloqueado == null) pixeles[i] == origen else !bloqueado[i]
+
+    /** Apila una semilla por cada tramo contiguo atravesable sin marcar en la fila [base]. */
     private fun agregarTramos(
         pila: ArrayDeque<Int>,
         marca: BooleanArray,
@@ -239,16 +277,86 @@ class Lienzo(
         izq: Int,
         der: Int,
         origen: Int,
+        bloqueado: BooleanArray?,
     ) {
         var x = izq
         while (x <= der) {
-            if (!marca[base + x] && pixeles[base + x] == origen) {
+            if (!marca[base + x] && libre(base + x, origen, bloqueado)) {
                 pila.add(base + x)
-                while (x <= der && pixeles[base + x] == origen) x++
+                while (x <= der && libre(base + x, origen, bloqueado)) x++
             } else {
                 x++
             }
         }
+    }
+
+    /**
+     * Cierra los huecos pequeños del contorno: toma como barrera todo píxel que
+     * no sea del color [origen] y le aplica un cierre morfológico (dilatar y
+     * erosionar) con un cuadrado de lado 2*[RADIO_CIERRE]+1. Así un trazo con
+     * aperturas de pocos píxeles vuelve a encerrar su región. Fuera de la hoja
+     * se considera barrera (así los huecos cerca del borde también se cierran;
+     * si el relleno igual llega al borde, se descarta). El cuadrado es
+     * separable, así que se dilata y erosiona en horizontal y en vertical (más
+     * rápido que el elemento 2D y mismo resultado); el C++ replica idéntico el
+     * cálculo (paridad).
+     */
+    private fun cerrarHuecos(origen: Int): BooleanArray {
+        val n = pixeles.size
+        val a = BooleanArray(n)
+        val b = BooleanArray(n)
+        // Dilatación horizontal.
+        for (y in 0 until alto) {
+            val base = y * ancho
+            for (x in 0 until ancho) {
+                if (pixeles[base + x] == origen) continue
+                val desde = (x - RADIO_CIERRE).coerceAtLeast(0)
+                val hasta = (x + RADIO_CIERRE).coerceAtMost(ancho - 1)
+                for (xx in desde..hasta) a[base + xx] = true
+            }
+        }
+        // Dilatación vertical.
+        for (y in 0 until alto) {
+            val base = y * ancho
+            for (x in 0 until ancho) {
+                if (!a[base + x]) continue
+                val desde = (y - RADIO_CIERRE).coerceAtLeast(0)
+                val hasta = (y + RADIO_CIERRE).coerceAtMost(alto - 1)
+                for (yy in desde..hasta) b[yy * ancho + x] = true
+            }
+        }
+        // Erosión horizontal (fuera de la hoja cuenta como barrera).
+        a.fill(false)
+        for (y in 0 until alto) {
+            val base = y * ancho
+            for (x in 0 until ancho) {
+                var todo = true
+                for (dx in -RADIO_CIERRE..RADIO_CIERRE) {
+                    val xx = x + dx
+                    if (xx in 0 until ancho && !b[base + xx]) {
+                        todo = false
+                        break
+                    }
+                }
+                a[base + x] = todo
+            }
+        }
+        // Erosión vertical.
+        b.fill(false)
+        for (y in 0 until alto) {
+            for (x in 0 until ancho) {
+                var todo = true
+                for (dy in -RADIO_CIERRE..RADIO_CIERRE) {
+                    val yy = y + dy
+                    if (yy in 0 until alto && !a[yy * ancho + x]) {
+                        todo = false
+                        break
+                    }
+                }
+                b[y * ancho + x] = todo
+            }
+        }
+        return b
     }
 
     /**
@@ -381,5 +489,12 @@ class Lienzo(
 
         /** Radio (px) con que se redibuja la línea limpia (coincide con el C++). */
         const val RADIO_LIMPIEZA = 1.0f
+
+        /**
+         * Radio (px) del cierre de huecos del contorno que usa el balde para
+         * tolerar aperturas pequeñas del trazo: cierra huecos de hasta
+         * 2*RADIO_CIERRE px (coincide con el C++).
+         */
+        const val RADIO_CIERRE = 3
     }
 }

@@ -35,6 +35,7 @@ mencionarla en el PR.
 ## En curso
 
 - [ ] Pulir más la UI Android con feedback del usuario (nueva barra superior/inferior con iconos en el PR del issue 13).
+- [ ] **Modelo de limpiar trazos con dataset real (issue 32)**: el **Paso A** ya está hecho — `tools/preparar_dataset_limpiar_trazos.py` baja **SketchBench** (Yan et al., 2020), empareja boceto↔limpiado (`norm_cleaned`), binariza con Otsu y adelgaza a 1 px, y cachea `pares_esq_lado512.npz` (425 pares / 141 bocetos) con split por boceto; el workflow `preparar-dataset-limpiar-trazos.yml` lo corre y cachea/sube el `.npz`, y `entrenar_limpiar_trazos.py --pares <npz>` ya lo consume. **Paso B pendiente**: reentrenar la mini U-Net más ancha con estos pares, evaluar (PSNR/IoU) e int8 + delegado GPU, y recién ahí reemplazar `limpiar_trazos.tflite`.
 
 ## Próximas (prioridad)
 

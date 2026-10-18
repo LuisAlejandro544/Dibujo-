@@ -23,8 +23,13 @@ El modelo se exporta a .tflite (float16) para correrlo en el móvil con LiteRT.
 Uso (desde la raíz del repo, con `tensorflow-cpu` + `numpy` instalados):
 
     python3 tools/entrenar_limpiar_trazos.py
+    python3 tools/entrenar_limpiar_trazos.py --pares .cache/limpiar_trazos/procesado/pares_esq_lado512.npz
     python3 tools/entrenar_limpiar_trazos.py --reales ~/datos/sketchbench
     python3 tools/entrenar_limpiar_trazos.py --epocas 30 --aumentos 2
+
+`--pares` consume el cache del Paso A (`tools/preparar_dataset_limpiar_trazos.py`):
+hojas completas emparejadas (boceto -> limpiado) de las que se recortan parches
+64x64 con tinta, separando entrenamiento/validacion por boceto.
 
 Escribe `app/src/main/assets/modelos/limpiar_trazos.tflite`.
 """
@@ -225,6 +230,53 @@ def aumentar_conjunto(x, y, rng, copias):
     return np.concatenate(xa, 0), np.concatenate(ya, 0)
 
 
+def cargar_pares_cache(ruta, lado=LADO, paso=32, max_por_imagen=16, min_tinta=4, semilla=1):
+    """Extrae parches [lado]x[lado] del cache del Paso A (`--pares`).
+
+    El cache guarda hojas completas (p. ej. 512x512) con `x` en grises
+    [0,255] y `y` binaria {0,1}, mas un `split` agrupado por base (sin fuga).
+    Aca se recortan parches con algo de tinta y se devuelven ya en el formato
+    del entrenamiento (float32, canal 1).
+    """
+    datos = np.load(ruta)
+    equis = datos["x"]
+    ye = datos["y"]
+    if "split" in datos:
+        split = datos["split"]
+    else:
+        split = np.array(["entrenamiento"] * len(equis))
+    rng = np.random.default_rng(semilla)
+
+    acumulado = {"entrenamiento": ([], []), "validacion": ([], [])}
+    alto, ancho = equis.shape[1], equis.shape[2]
+    for i in range(len(equis)):
+        candidatos = []
+        for fy in range(0, alto - lado + 1, paso):
+            for fx in range(0, ancho - lado + 1, paso):
+                if int(ye[i, fy:fy + lado, fx:fx + lado].sum()) >= min_tinta:
+                    candidatos.append((fy, fx))
+        if not candidatos:
+            continue
+        rng.shuffle(candidatos)
+        destino = str(split[i])
+        for fy, fx in candidatos[:max_por_imagen]:
+            xs, ys = acumulado[destino]
+            xs.append(equis[i, fy:fy + lado, fx:fx + lado, None].astype(np.float32) / 255.0)
+            ys.append(ye[i, fy:fy + lado, fx:fx + lado, None].astype(np.float32))
+
+    def _apila(par):
+        xs, ys = par
+        if not xs:
+            return (np.empty((0, lado, lado, 1), np.float32),
+                    np.empty((0, lado, lado, 1), np.float32))
+        return np.stack(xs, 0), np.stack(ys, 0)
+
+    xtr, ytr = _apila(acumulado["entrenamiento"])
+    xva, yva = _apila(acumulado["validacion"])
+    print(f"[pares] {len(xtr)} parches de entrenamiento y {len(xva)} de validacion de {ruta}")
+    return xtr, ytr, xva, yva
+
+
 def modelo():
     # Mini U-Net de 2 niveles. Un poco más ancha que la v1 (16/24/32) pero
     # sigue siendo chica para el móvil (float16, unos cientos de KB).
@@ -259,6 +311,10 @@ def argumentos():
     p.add_argument("--muestras", type=int, default=1400, help="pares sintéticos de entrenamiento")
     p.add_argument("--validacion", type=int, default=200, help="pares sintéticos de validación")
     p.add_argument("--reales", type=str, default=None, help="carpeta con pares reales entrada/objetivo")
+    p.add_argument("--pares", type=str, default=None,
+                   help="cache .npz del Paso A (tools/preparar_dataset_limpiar_trazos.py)")
+    p.add_argument("--parches-por-imagen", type=int, default=16,
+                   help="parches 64x64 maximos por hoja del cache --pares")
     p.add_argument("--aumentos", type=int, default=1, help="copias aumentadas por muestra de entrenamiento")
     p.add_argument("--epocas", type=int, default=20)
     p.add_argument("--lote", type=int, default=32)
@@ -286,6 +342,17 @@ def main():
             if corte < len(xr):
                 xva = np.concatenate([xva, xr[corte:]], 0)
                 yva = np.concatenate([yva, yr[corte:]], 0)
+
+    if args.pares:
+        xp_tr, yp_tr, xp_va, yp_va = cargar_pares_cache(
+            args.pares, LADO,
+            max_por_imagen=args.parches_por_imagen,
+            semilla=args.semilla,
+        )
+        xtr = np.concatenate([xtr, xp_tr], 0)
+        ytr = np.concatenate([ytr, yp_tr], 0)
+        xva = np.concatenate([xva, xp_va], 0)
+        yva = np.concatenate([yva, yp_va], 0)
 
     xtr, ytr = aumentar_conjunto(xtr, ytr, rng, args.aumentos)
 

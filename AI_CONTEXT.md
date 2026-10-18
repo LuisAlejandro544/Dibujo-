@@ -178,6 +178,25 @@ poco y la inferencia va por CPU, así que no hace falta GPU ni descargar nada.
   engrosado/adelgazado, contraste y ruido). La red es una mini U-Net un poco más
   ancha (24/32/48) pero sigue siendo chica para el móvil. Sigue leyendo y
   escribiendo parches `64×64×1`, así que no hay que tocar `LimpiadorTrazosIa`.
+- **Paso A — dataset real cacheado (`tools/preparar_dataset_limpiar_trazos.py`)**:
+  baja **SketchBench** (Yan et al., TOG 2020; el benchmark de limpieza de bocetos
+  con ground truth de artistas), empareja `rough/pixel` con `gt/pixel`
+  (variante `norm_cleaned`), binariza el objetivo con **Otsu** y lo **adelgaza a
+  1 px** (Zhang-Suen), y guarda `.cache/limpiar_trazos/procesado/pares_esq_lado512.npz`
+  (425 pares de 141 bocetos, ~21 MB) + `manifiesto_*.json`. Fases `descargar` /
+  `preprocesar` / `todo` / `estado` / `autoprueba`, reanudables y cacheadas, para
+  no exceder el corte de ~1 h de CI: el `.zip` de 817 MB se verifica por
+  `sha256` (el host de GMU sirve un certificado que no valida, por eso `--inseguro`
+  + hash fijo). El workflow `.github/workflows/preparar-dataset-limpiar-trazos.yml`
+  lo corre y sube el `.npz` como artefacto. **Ojo licencias**: la mayoría de los
+  bocetos son CC y el resto sólo uso académico (`sketch_tags.csv`); para uso
+  comercial hay que filtrar. El set de Simo-Serra (68 pares) NO se redistribuye
+  por copyright, sólo se puede usar `--reales` con una copia propia.
+- **Paso B (entrenamiento) — enganche listo**: `entrenar_limpiar_trazos.py
+  --pares <npz>` recorta parches `64×64` con tinta del cache del Paso A
+  (`--parches-por-imagen`) y los mezcla con los sintéticos, separando
+  entrenamiento/validación **por boceto** (sin fuga). Falta sólo reentrenar
+  (más ancho / int8) y reemplazar el asset.
 
 ### Paleta del calco (color local, sin red neuronal)
 `Cuantizador` (`:core`) implementa k-medias (k-means++ con semilla fija, por eso
@@ -484,6 +503,6 @@ Es clave para trabajar desde el móvil, sin adb ni PC.
 
 - Horario del usuario: America/Caracas; respondé en español nativo, fixeáte en `opencode.json`.
 - Tests: JUnit Platform; paridad en `engine/src/test/kotlin/com/dibujo/engine/MotorTest.kt` (incluye paridad de undo/redo con `historialParidad` y de `reemplazarHoja`). El antialiasing entra en esa paridad: si tocás `disco`/`pintarMezcla` en un lado, corré `:engine:test`.
-- Modelo IA: el `.tflite` se regenera con `tools/entrenar_limpiar_trazos.py` (Python + `tensorflow-cpu` + `numpy`); el resultado va a `app/src/main/assets/modelos/`. El build NO lo entrena, sólo empaqueta el binario versionado.
+- Modelo IA: el `.tflite` se regenera con `tools/entrenar_limpiar_trazos.py` (Python + `tensorflow-cpu` + `numpy`); el resultado va a `app/src/main/assets/modelos/`. El build NO lo entrena, sólo empaqueta el binario versionado. El Paso A (dataset real) vive en `tools/preparar_dataset_limpiar_trazos.py` + `.github/workflows/preparar-dataset-limpiar-trazos.yml`, y su `.npz` se consume con `entrenar_limpiar_trazos.py --pares <npz>`.
 - El workflow `android-apk.yml` corre manual (`workflow_dispatch`) y en cada PR contra main; el workflow falso `build-debug-apk.yml` (APK placeholder aapt2/d8) fue eliminado.
 - Commits: esperar orden explícita del usuario (nunca commit proactivo).

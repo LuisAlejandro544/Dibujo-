@@ -1,6 +1,8 @@
 {
   "version": 1,
   "descripcion": "Registro de datasets reales para limpiar trazos (Paso A). El script tools/preparar_dataset_limpiar_trazos.py los baja, empareja (boceto -> limpiado) y cachea un .npz. Pensado para no exceder el corte de ~1 h de CI: descargar y preprocesar son fases separadas y reanudables.",
+  "nota_comercial": "SketchBench es comodo para investigacion/evaluacion, PERO no es 100% comercial: una parte de los bocetos solo permite uso academico. Para entrenar el modelo que va en la app (que se quiere monetizar) usar el Plan B: tools/datasets_limpiar_trazos_planb.json (Quick, Draw!, CC BY 4.0).",
+  "plan_b": "tools/datasets_limpiar_trazos_planb.json",
   "fuente_por_defecto": "sketchbench",
   "fuentes": [
     {
@@ -15,6 +17,8 @@
       "inseguro": true,
       "nota_tls": "El host de GMU sirve un certificado que no valida con la CA del runner; se baja con verificacion TLS desactivada PERO se comprueba tamano + sha256 (el archivo es publico y el hash es fijo).",
       "licencia": "Mayoria Creative Commons; el resto solo uso academico. Ver sketch_tags.csv en Benchmark_Dataset.zip. Para uso comercial, filtrar por licencia.",
+      "comercial": false,
+      "nota_comercial": "18 bocetos (6 en el subconjunto curado) son solo de permiso academico: un modelo entrenado con ellos no es limpio para monetizar. Por eso el Plan B usa Quick, Draw!",
       "estructura": {
         "bocetos": "Benchmark_Testset/rough/pixel/<base>_<variante>[_res].png",
         "objetivo": "Benchmark_Testset/gt/pixel/<base>_<artista>_norm_cleaned[_res].png",

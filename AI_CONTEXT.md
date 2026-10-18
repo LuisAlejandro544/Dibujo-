@@ -197,6 +197,33 @@ poco y la inferencia va por CPU, así que no hace falta GPU ni descargar nada.
   (`--parches-por-imagen`) y los mezcla con los sintéticos, separando
   entrenamiento/validación **por boceto** (sin fuga). Falta sólo reentrenar
   (más ancho / int8) y reemplazar el asset.
+- **Plan B — dataset comercial (Quick, Draw!)**:
+  `tools/preparar_dataset_limpiar_trazos_planb.py` +
+  `tools/datasets_limpiar_trazos_planb.json`. Nace de una razón de licencias:
+  SketchBench tiene bocetos **solo de uso académico**, así que un modelo
+  entrenado con él no es limpio para vender la app (Plan A queda sólo para
+  investigación/evaluación). El Plan B usa **Quick, Draw!** (Google), **CC BY
+  4.0**: permite uso comercial y **no obliga a abrir el código**, sólo pide
+  atribución (`"The Quick, Draw! dataset by Google, Inc. (CC BY 4.0)."`).
+  - `descargar` baja **sólo la cabecera** de cada categoría (rango HTTP
+    `bytes=0..max_bytes`, el host de Cloud Storage lo sirve con
+    `accept-ranges`; cada categoría completa pesa ~40-100 MB y no hace falta) y
+    es reanudable. `preprocesar` lee los trazos vectoriales reales (0..255,
+    simplificados), los centra/escala en la hoja y **fabrica los pares**:
+    `y` = trazo limpio de 1 px (polilínea de Bresenham) y `x` = el mismo trazo
+    **repasado a mano simulado** (varias pasadas, jitter perpendicular, radios
+    1.5-4.5 px y manchas sueltas), el mismo *inverse dataset construction* de
+    Simo-Serra pero sobre datos comerciales. La rasterización es propia (sólo
+    `numpy`, sin Pillow ni CairoSVG); los puntos se **densifican** antes de
+    estampar para que ningún trazo quede punteado.
+  - El `.npz` usa el **mismo formato que el Plan A** (x grises uint8, y binaria
+    {0,1}, split por `key_id`), así que el entrenamiento lo consume sin cambios
+    (`entrenar_limpiar_trazos.py --pares <npz>`). Fases `descargar` /
+    `preprocesar` / `todo` / `estado` / `autoprueba` (sin red) y workflow
+    `.github/workflows/preparar-dataset-limpiar-trazos-planb.yml` (cachea las
+    cabeceras y el `.npz`, sube artefacto). Todo es rápido (~0.02 s por par en
+    512). Pendiente para el release: **mostrar la atribución** de Quick, Draw!
+    en la app.
 
 ### Paleta del calco (color local, sin red neuronal)
 `Cuantizador` (`:core`) implementa k-medias (k-means++ con semilla fija, por eso
@@ -503,6 +530,6 @@ Es clave para trabajar desde el móvil, sin adb ni PC.
 
 - Horario del usuario: America/Caracas; respondé en español nativo, fixeáte en `opencode.json`.
 - Tests: JUnit Platform; paridad en `engine/src/test/kotlin/com/dibujo/engine/MotorTest.kt` (incluye paridad de undo/redo con `historialParidad` y de `reemplazarHoja`). El antialiasing entra en esa paridad: si tocás `disco`/`pintarMezcla` en un lado, corré `:engine:test`.
-- Modelo IA: el `.tflite` se regenera con `tools/entrenar_limpiar_trazos.py` (Python + `tensorflow-cpu` + `numpy`); el resultado va a `app/src/main/assets/modelos/`. El build NO lo entrena, sólo empaqueta el binario versionado. El Paso A (dataset real) vive en `tools/preparar_dataset_limpiar_trazos.py` + `.github/workflows/preparar-dataset-limpiar-trazos.yml`, y su `.npz` se consume con `entrenar_limpiar_trazos.py --pares <npz>`.
+- Modelo IA: el `.tflite` se regenera con `tools/entrenar_limpiar_trazos.py` (Python + `tensorflow-cpu` + `numpy`); el resultado va a `app/src/main/assets/modelos/`. El build NO lo entrena, sólo empaqueta el binario versionado. Los datasets reales viven en dos planes: **Plan A** (SketchBench, investigación) en `tools/preparar_dataset_limpiar_trazos.py` + `.github/workflows/preparar-dataset-limpiar-trazos.yml`, y **Plan B** (Quick, Draw!, CC BY 4.0, apto para monetizar) en `tools/preparar_dataset_limpiar_trazos_planb.py` + `.github/workflows/preparar-dataset-limpiar-trazos-planb.yml`. Los dos producen el mismo `.npz`, que se consume con `entrenar_limpiar_trazos.py --pares <npz>`.
 - El workflow `android-apk.yml` corre manual (`workflow_dispatch`) y en cada PR contra main; el workflow falso `build-debug-apk.yml` (APK placeholder aapt2/d8) fue eliminado.
 - Commits: esperar orden explícita del usuario (nunca commit proactivo).

@@ -13,6 +13,10 @@ Datos:
     con subcarpetas `entrada/` y `objetivo/` (o `input/`/`output/`) y archivos
     con el mismo nombre base en ambas.
 
+    Para un modelo que se pueda vender usá el **Plan B** (licencia comercial):
+    `tools/preparar_dataset_limpiar_trazos_planb.py` arma pares a partir de
+    Quick, Draw! (CC BY 4.0) y su `.npz` se pasa igual a `--pares`.
+
 Además se aumenta el set de entrenamiento con transformaciones que no mueven la
 etiqueta (volteos, giros de 90 grados, desplazamientos) y de forma/fotometría
 solo sobre la entrada (difuminado, engrosado/adelgazado, contraste, ruido) para
@@ -27,7 +31,8 @@ Uso (desde la raíz del repo, con `tensorflow-cpu` + `numpy` instalados):
     python3 tools/entrenar_limpiar_trazos.py --reales ~/datos/sketchbench
     python3 tools/entrenar_limpiar_trazos.py --epocas 30 --aumentos 2
 
-`--pares` consume el cache del Paso A (`tools/preparar_dataset_limpiar_trazos.py`):
+`--pares` consume el cache de un plan de dataset (`tools/preparar_dataset_limpiar_trazos.py`
+para SketchBench, `tools/preparar_dataset_limpiar_trazos_planb.py` para Quick, Draw!):
 hojas completas emparejadas (boceto -> limpiado) de las que se recortan parches
 64x64 con tinta, separando entrenamiento/validacion por boceto.
 
@@ -312,7 +317,7 @@ def argumentos():
     p.add_argument("--validacion", type=int, default=200, help="pares sintéticos de validación")
     p.add_argument("--reales", type=str, default=None, help="carpeta con pares reales entrada/objetivo")
     p.add_argument("--pares", type=str, default=None,
-                   help="cache .npz del Paso A (tools/preparar_dataset_limpiar_trazos.py)")
+                   help="cache .npz de un plan de dataset (tools/preparar_dataset_limpiar_trazos*.py)")
     p.add_argument("--parches-por-imagen", type=int, default=16,
                    help="parches 64x64 maximos por hoja del cache --pares")
     p.add_argument("--aumentos", type=int, default=1, help="copias aumentadas por muestra de entrenamiento")

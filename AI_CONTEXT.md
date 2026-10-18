@@ -337,6 +337,36 @@ Particularidades:
   muestra/oculta al instante (`calcoVisible`) y tiene opacidad ajustable. El
   `calcoUri` vive en el `ViewModel` (sobrevive rotaciones) y el `Bitmap` se
   decodifica reducido (`MAX_CALCO = 2048`) al componer.
+- **Calco reposicionable y escalable** (issue 35): además del ajuste natural, el
+  usuario mueve (un dedo) y escala (dos dedos) la imagen. Al elegirla se
+  **auto-centra SIEMPRE** (`calcoOffsetX/Y = 0`, `calcoEscala = 1`) y se entra en
+  modo ajuste (`calcoEnEdicion`); hay un botón "Centrar" que la devuelve a su
+  estado automático. El offset vive en **coordenadas de hoja**
+  (`DibujoViewModel.moverCalco` convierte el delta de pantalla con `R(−rot)/zoom`)
+  y la escala se ancla al foco (`escalarCalco`, centro `C' = F + ratio·(C − F)`),
+  así el calco queda pegado a la hoja y no a la pantalla. `CapaGestos` prioriza
+  los gestos del calco cuando `calcoEnEdicion` (mismo `detectTransformGestures`
+  que la cámara, pero sin dibujar) y `CapaCalco` dibuja un marco guía azul
+  mientras se ajusta. No toca el motor (vive en Compose), por eso **no aplica la
+  paridad**; el flag es de UI (`calcoEnEdicion`), no un valor nuevo de `Modo`
+  (que es de `:core` y usa la consola).
+- **Importar imagen** (issue 35): entrada explícita en el menú "más opciones"
+  que abre el Photo Picker y fija la imagen de calco (sin permisos).
+- **Recortar / redimensionar lienzo** (issue 35): diálogo "Recortar o
+  redimensionar lienzo". *Recortar al dibujo* calcula la caja del contenido
+  (`recortarAlContenido` en `ImagenCalco.kt`, píxeles ≠ fondo) y descarta los
+  márgenes en blanco **sin perder ningún trazo** (el recuadro es justamente el
+  de la tinta). *Redimensionar* rehace la hoja al tamaño pedido centrando el
+  dibujo (`lienzoCentrado`). Los dos usan `DibujoViewModel.abrirDibujo` (recrea
+  la hoja con el tamaño nuevo y reasigna la textura GPU); al cambiar el tamaño
+  el historial arranca limpio, igual que al expandir. Corre fuera del hilo
+  principal (`ajustandoLienzo`).
+- **Exportación inteligente** (issue 35): el diálogo de exportación (issue 28)
+  suma el interruptor **"Recortar al dibujo"** (por defecto activo): el PNG que
+  se guarda o comparte elimina el fondo sin usar y deja sólo lo dibujado. Es
+  **no destructivo** (`recortarAlContenido` actúa sobre la copia, nunca sobre la
+  hoja del motor), así no puede dañar la creación del usuario. Cambiar el
+  interruptor rearma el PNG (`LaunchedEffect` en `PantallaDibujo`).
 - **Expandir hoja** (issue 18): diálogo con sliders de ancho/alto a añadir
   (hasta 4096 por lado); `DibujoViewModel.expandirHoja` llama a
   `MotorDibujo.expandir(0, 0, ancho, alto)`.

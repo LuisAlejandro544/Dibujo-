@@ -46,6 +46,7 @@ import androidx.compose.material.icons.automirrored.rounded.Redo
 import androidx.compose.material.icons.automirrored.rounded.Undo
 import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material.icons.rounded.AddPhotoAlternate
+import androidx.compose.material.icons.rounded.AspectRatio
 import androidx.compose.material.icons.rounded.AutoFixHigh
 import androidx.compose.material.icons.rounded.Brush
 import androidx.compose.material.icons.rounded.CenterFocusWeak
@@ -57,7 +58,9 @@ import androidx.compose.material.icons.rounded.Layers
 import androidx.compose.material.icons.rounded.Mode
 import androidx.compose.material.icons.rounded.MoreVert
 import androidx.compose.material.icons.rounded.OpenInFull
+import androidx.compose.material.icons.rounded.OpenWith
 import androidx.compose.material.icons.rounded.PanTool
+import androidx.compose.material.icons.rounded.PhotoLibrary
 import androidx.compose.material.icons.rounded.Remove
 import androidx.compose.material.icons.rounded.Save
 import androidx.compose.material.icons.rounded.SaveAlt
@@ -80,6 +83,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
@@ -87,6 +91,7 @@ import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.State
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -99,6 +104,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.FilterQuality
 import androidx.compose.ui.graphics.Path
@@ -193,6 +199,8 @@ fun PantallaDibujo(
     var mostrarExpandir by remember { mutableStateOf(false) }
     var mostrarCalco by remember { mutableStateOf(false) }
     var mostrarIa by remember { mutableStateOf(false) }
+    // Recortar/redimensionar el lienzo (diálogo desde "más opciones").
+    var mostrarAjustarLienzo by remember { mutableStateOf(false) }
     // Limpiar la hoja borra todo y es irreversible si no se deshace: se pide
     // confirmación (ahora vive dentro del menú de la barra superior).
     var mostrarLimpiar by remember { mutableStateOf(false) }
@@ -225,8 +233,13 @@ fun PantallaDibujo(
     val contexto = LocalContext.current
     val alcance = rememberCoroutineScope()
     var exportando by remember { mutableStateOf(false) }
-    // PNG ya codificado: mientras no sea null se muestra el diálogo con el peso
-    // y las opciones de guardar o compartir.
+    // El diálogo de exportación se abre al pedirlo y arma el PNG en el momento
+    // con el ajuste de recorte elegido (así el interruptor cambia el resultado).
+    var mostrarExportar by remember { mutableStateOf(false) }
+    // "Inteligente": recorta el fondo sin usar y guarda sólo lo dibujado.
+    var recortarExport by remember { mutableStateOf(true) }
+    // PNG ya codificado: mientras no sea null el diálogo muestra el peso y
+    // habilita guardar o compartir.
     var imagenLista by remember { mutableStateOf<ExportadorGaleria.Imagen?>(null) }
     // Los textos se leen en composición (no con `context.getString` dentro de
     // la corrutina) para que respeten cambios de configuración.
@@ -238,31 +251,37 @@ fun PantallaDibujo(
     val textoGuardadoError = stringResource(R.string.guardado_error)
 
     // Copia la hoja a un Bitmap, la codifica a PNG y la deja lista para
-    // guardar/compartir. El copiado y la compresión van fuera del hilo
-    // principal (hojas grandes = varios MB).
-    fun prepararExportacion() {
-        if (exportando || imagenLista != null) return
+    // guardar/compartir. Si [recortar] recorta al contenido dibujado (el fondo
+    // sin usar desaparece), sin tocar el dibujo del usuario. El copiado y la
+    // compresión van fuera del hilo principal (hojas grandes = varios MB).
+    fun prepararExportacion(recortar: Boolean) {
+        if (exportando) return
         val ancho = estadoState.value.hojaAncho
         val alto = estadoState.value.hojaAlto
         if (ancho <= 0 || alto <= 0) return
         exportando = true
+        imagenLista = null
         alcance.launch {
             val bytes = withContext(Dispatchers.Default) {
                 runCatching {
                     val pixeles = IntArray(ancho * alto)
-                    if (!vm.copiarHoja(pixeles)) {
-                        null
+                    if (!vm.copiarHoja(pixeles)) return@runCatching null
+                    val (bw, bh, bp) = if (recortar) {
+                        recortarAlContenido(pixeles, ancho, alto, Colores.BLANCO)
+                            ?: Triple(ancho, alto, pixeles)
                     } else {
-                        val bitmap = Bitmap.createBitmap(pixeles, ancho, alto, Bitmap.Config.ARGB_8888)
-                        val png = ExportadorGaleria.codificarPng(bitmap)
-                        bitmap.recycle()
-                        png
+                        Triple(ancho, alto, pixeles)
                     }
+                    val bitmap = Bitmap.createBitmap(bp, 0, bw, bw, bh, Bitmap.Config.ARGB_8888)
+                    val png = ExportadorGaleria.codificarPng(bitmap)
+                    bitmap.recycle()
+                    png
                 }.getOrNull()
             }
             exportando = false
             if (bytes == null) {
                 Toast.makeText(contexto, textoExportadoError, Toast.LENGTH_SHORT).show()
+                mostrarExportar = false
             } else {
                 val marca = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date())
                 imagenLista = ExportadorGaleria.Imagen(bytes, "dibujo_$marca")
@@ -278,6 +297,7 @@ fun PantallaDibujo(
                 ExportadorGaleria.guardarBytes(contexto, imagen.bytes, imagen.nombre)
             }
             imagenLista = null
+            mostrarExportar = false
             Toast.makeText(
                 contexto,
                 if (guardado) textoExportadoOk else textoExportadoError,
@@ -291,6 +311,7 @@ fun PantallaDibujo(
         val imagen = imagenLista ?: return
         val ok = ExportadorGaleria.compartir(contexto, imagen.bytes, imagen.nombre)
         imagenLista = null
+        mostrarExportar = false
         if (!ok) Toast.makeText(contexto, textoCompartirError, Toast.LENGTH_SHORT).show()
     }
 
@@ -310,7 +331,16 @@ fun PantallaDibujo(
         }
     }
 
-    val alExportar = { prepararExportacion() }
+    val alExportar = { mostrarExportar = true }
+
+    // Al abrir el diálogo o cambiar el interruptor de recorte se (re)arma el
+    // PNG con ese ajuste. Se hace acá y no en el clic para que el interruptor
+    // cambie el resultado antes de guardar/compartir.
+    LaunchedEffect(mostrarExportar, recortarExport) {
+        if (mostrarExportar && imagenLista == null && !exportando) {
+            prepararExportacion(recortarExport)
+        }
+    }
 
     val alGuardarEnGaleria = {
         val faltaPermiso = Build.VERSION.SDK_INT < Build.VERSION_CODES.Q &&
@@ -357,6 +387,12 @@ fun PantallaDibujo(
                 alLimpiar = { mostrarLimpiar = true },
                 alGuardar = { guardarEnApp() },
                 alExportar = alExportar,
+                alImportarImagen = {
+                    elegirImagen.launch(
+                        PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly),
+                    )
+                },
+                alAjustarLienzo = { mostrarAjustarLienzo = true },
                 exportando = exportando,
                 alAbrirConfig = alAbrirOpciones,
             )
@@ -373,6 +409,7 @@ fun PantallaDibujo(
                 },
                 alAlternarCalco = vm::alternarCalco,
                 alAbrirCalco = { mostrarCalco = true },
+                alTerminarCalco = vm::terminarEdicionCalco,
                 alAbrirIa = {
                     mostrarIa = true
                     if (estado.calcoUri != null && estado.coloresCalco.isEmpty()) {
@@ -415,6 +452,12 @@ fun PantallaDibujo(
             },
             alAlternar = vm::alternarCalco,
             alCambiarAlfa = vm::cambiarCalcoAlfa,
+            alAlternarEdicion = {
+                vm.alternarEdicionCalco()
+                // Se cierra para poder mover/escalar la imagen con los gestos.
+                mostrarCalco = false
+            },
+            alCentrar = vm::centrarCalco,
             alQuitar = { vm.elegirCalco(null) },
             alCerrar = { mostrarCalco = false },
         )
@@ -431,6 +474,21 @@ fun PantallaDibujo(
         )
     }
 
+    if (mostrarAjustarLienzo) {
+        DialogoAjustarLienzo(
+            estado = estado,
+            alRecortar = {
+                vm.recortarAlDibujo()
+                mostrarAjustarLienzo = false
+            },
+            alRedimensionar = { ancho, alto ->
+                vm.redimensionarLienzo(ancho, alto)
+                mostrarAjustarLienzo = false
+            },
+            alCerrar = { mostrarAjustarLienzo = false },
+        )
+    }
+
     if (mostrarLimpiar) {
         DialogoLimpiar(
             alConfirmar = {
@@ -441,12 +499,23 @@ fun PantallaDibujo(
         )
     }
 
-    imagenLista?.let { imagen ->
+    if (mostrarExportar) {
         DialogoExportar(
-            peso = ExportadorGaleria.formatearTamano(imagen.bytes.size),
+            peso = imagenLista?.let { ExportadorGaleria.formatearTamano(it.bytes.size) },
+            recortar = recortarExport,
+            calculando = exportando,
+            alCambiarRecorte = {
+                // Al cambiar el recorte se descarta el PNG anterior para que el
+                // `LaunchedEffect` lo vuelva a armar con el ajuste nuevo.
+                recortarExport = it
+                imagenLista = null
+            },
             alGuardar = alGuardarEnGaleria,
             alCompartir = { compartirExportacion() },
-            alCerrar = { imagenLista = null },
+            alCerrar = {
+                mostrarExportar = false
+                imagenLista = null
+            },
         )
     }
 }
@@ -471,6 +540,8 @@ private fun BarraSuperior(
     alLimpiar: () -> Unit,
     alGuardar: () -> Unit,
     alExportar: () -> Unit,
+    alImportarImagen: () -> Unit,
+    alAjustarLienzo: () -> Unit,
     exportando: Boolean,
     alAbrirConfig: () -> Unit,
 ) {
@@ -556,6 +627,26 @@ private fun BarraSuperior(
                         },
                     )
                     DropdownMenuItem(
+                        text = { Text(stringResource(R.string.importar_imagen)) },
+                        leadingIcon = {
+                            Icon(Icons.Rounded.PhotoLibrary, contentDescription = null)
+                        },
+                        onClick = {
+                            menuAbierto = false
+                            alImportarImagen()
+                        },
+                    )
+                    DropdownMenuItem(
+                        text = { Text(stringResource(R.string.lienzo_ajustar_titulo)) },
+                        leadingIcon = {
+                            Icon(Icons.Rounded.AspectRatio, contentDescription = null)
+                        },
+                        onClick = {
+                            menuAbierto = false
+                            alAjustarLienzo()
+                        },
+                    )
+                    DropdownMenuItem(
                         text = { Text(stringResource(R.string.cd_exportar)) },
                         leadingIcon = {
                             Icon(Icons.Rounded.SaveAlt, contentDescription = null)
@@ -609,12 +700,17 @@ private fun DialogoLimpiar(
 }
 
 /**
- * Diálogo de exportación: avisa el peso del PNG antes de bajarlo y ofrece
- * guardarlo en la galería o compartirlo con cualquier app.
+ * Diálogo de exportación: muestra el peso del PNG y ofrece guardarlo en la
+ * galería o compartirlo. Trae el interruptor "Recortar al dibujo": cuando está
+ * activo, la imagen exportada elimina el fondo sin usar (sólo se guarda lo que
+ * se dibujó), sin tocar el dibujo del usuario.
  */
 @Composable
 private fun DialogoExportar(
-    peso: String,
+    peso: String?,
+    recortar: Boolean,
+    calculando: Boolean,
+    alCambiarRecorte: (Boolean) -> Unit,
     alGuardar: () -> Unit,
     alCompartir: () -> Unit,
     alCerrar: () -> Unit,
@@ -622,13 +718,46 @@ private fun DialogoExportar(
     AlertDialog(
         onDismissRequest = alCerrar,
         title = { Text(stringResource(R.string.exportar_titulo)) },
-        text = { Text(stringResource(R.string.exportar_peso, peso)) },
+        text = {
+            Column {
+                Text(
+                    stringResource(
+                        R.string.exportar_peso,
+                        peso ?: stringResource(R.string.exportar_calculando),
+                    ),
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+                Spacer(Modifier.height(12.dp))
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        Text(
+                            stringResource(R.string.exportar_recortar),
+                            style = MaterialTheme.typography.labelLarge,
+                        )
+                        Text(
+                            stringResource(R.string.exportar_recortar_desc),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    Switch(checked = recortar, onCheckedChange = alCambiarRecorte)
+                }
+                if (calculando) {
+                    Spacer(Modifier.height(8.dp))
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        CircularProgressIndicator(Modifier.size(18.dp))
+                        Spacer(Modifier.width(8.dp))
+                        Text(stringResource(R.string.exportar_calculando))
+                    }
+                }
+            }
+        },
         confirmButton = {
             Row {
-                TextButton(onClick = alCompartir) {
+                TextButton(onClick = alCompartir, enabled = peso != null) {
                     Text(stringResource(R.string.exportar_compartir))
                 }
-                TextButton(onClick = alGuardar) {
+                TextButton(onClick = alGuardar, enabled = peso != null) {
                     Text(stringResource(R.string.exportar_guardar))
                 }
             }
@@ -767,11 +896,21 @@ private fun CapaGestos(
     vm: DibujoViewModel,
     modifier: Modifier = Modifier,
 ) {
-    // EDICION: un dedo dibuja; MOVER: pan y pinch de la cámara.
+    // EDICION: un dedo dibuja; MOVER: pan y pinch de la cámara; y si se está
+    // ajustando el calco, los gestos mueven/escalan la imagen (no la hoja).
     val modo = estadoState.value.modo
+    val editandoCalco = estadoState.value.calcoEnEdicion &&
+        estadoState.value.calcoUri != null &&
+        estadoState.value.calcoVisible
     Canvas(
-        modifier.pointerInput(modo) {
-            if (modo == Modo.MOVER) {
+        modifier.pointerInput(modo, editandoCalco) {
+            if (editandoCalco) {
+                // Un dedo mueve el calco; dos dedos lo escalan (anclado al foco).
+                detectTransformGestures(panZoomLock = true) { foco, pan, zoom, _ ->
+                    if (zoom != 1f) vm.escalarCalco(zoom, foco.x, foco.y)
+                    if (pan != Offset.Zero) vm.moverCalco(pan.x, pan.y)
+                }
+            } else if (modo == Modo.MOVER) {
                 // Pan + pinch de zoom + rotación de dos dedos, todos anclados
                 // al foco (el punto bajo los dedos). La rotación llega en
                 // grados y el motor la usa en radianes.
@@ -800,8 +939,8 @@ private fun CapaGestos(
             }
         }
             // Toque sin arrastre: punto con el lápiz o relleno con PINTAR.
-            .pointerInput(modo) {
-                if (modo == Modo.EDICION) {
+            .pointerInput(modo, editandoCalco) {
+                if (!editandoCalco && modo == Modo.EDICION) {
                     detectTapGestures { punto -> vm.tocarHoja(punto.x, punto.y) }
                 }
             },
@@ -847,8 +986,10 @@ private fun aPantallaCamara(cam: Camara, hx: Float, hy: Float): Offset {
 /**
  * Imagen de calco: capa translúcida que se dibuja sobre la hoja (GPU o CPU) y
  * debajo de la vista previa del trazo. La imagen se ajusta (manteniendo la
- * proporción) dentro de la hoja y sigue la cámara (pan/zoom), así se puede
- * calcar con el dibujo a la vista.
+ * proporción) dentro de la hoja y se centra sola; el usuario puede desplazarla
+ * y escalarla con [DibujoEstado.calcoOffsetX]/[DibujoEstado.calcoOffsetY] y
+ * [DibujoEstado.calcoEscala]. Sigue la cámara (pan/zoom), así se puede calcar
+ * con el dibujo a la vista.
  */
 @Composable
 private fun CapaCalco(
@@ -871,14 +1012,18 @@ private fun CapaCalco(
         val imagen = bitmap.asImageBitmap()
         if (imagen.width <= 0 || imagen.height <= 0) return@Canvas
         val cam = estado.camara
+        // Ajuste natural (encaja la imagen en la hoja) por la escala del usuario.
         val escala = minOf(
             estado.hojaAncho.toFloat() / imagen.width,
             estado.hojaAlto.toFloat() / imagen.height,
-        )
+        ) * estado.calcoEscala
         val anchoHoja = imagen.width * escala
         val altoHoja = imagen.height * escala
-        val xHoja = (estado.hojaAncho - anchoHoja) / 2f
-        val yHoja = (estado.hojaAlto - altoHoja) / 2f
+        // Centro de la hoja más el desplazamiento del calco (0 = auto-centrado).
+        val centroX = estado.hojaAncho / 2f + estado.calcoOffsetX
+        val centroY = estado.hojaAlto / 2f + estado.calcoOffsetY
+        val xHoja = centroX - anchoHoja / 2f
+        val yHoja = centroY - altoHoja / 2f
         // La imagen se dibuja en coordenadas de hoja y el `withTransform` la
         // lleva a pantalla igual que el motor: pantalla = R(rot)·(hoja·zoom) − pan.
         // (Orden de transformaciones = se aplica la primera envuelta: T·R·S.)
@@ -899,6 +1044,16 @@ private fun CapaCalco(
                 alpha = estado.calcoAlfa,
                 filterQuality = FilterQuality.Medium,
             )
+            // Marco guía mientras se ajusta: deja ver hasta dónde llega la
+            // imagen cuando el fondo es claro y se confunde con la hoja.
+            if (estado.calcoEnEdicion) {
+                drawRect(
+                    color = Color(0xFF1E88E5),
+                    topLeft = Offset(xHoja, yHoja),
+                    size = Size(anchoHoja, altoHoja),
+                    style = Stroke(width = 2f / cam.zoom),
+                )
+            }
         }
     }
 }
@@ -915,6 +1070,7 @@ private fun BarraHerramientas(
     alElegirImagen: () -> Unit,
     alAlternarCalco: () -> Unit,
     alAbrirCalco: () -> Unit,
+    alTerminarCalco: () -> Unit,
     alAbrirIa: () -> Unit,
 ) {
     Surface(modifier = Modifier.absorberToque(), tonalElevation = 3.dp) {
@@ -925,6 +1081,31 @@ private fun BarraHerramientas(
                 // esto la paleta quedaba debajo y no se podía tocar.
                 .windowInsetsPadding(WindowInsets.navigationBars),
         ) {
+            // Aviso mientras se ajusta el calco, con el botón para terminar.
+            if (estado.calcoEnEdicion) {
+                Row(
+                    Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 12.dp, vertical = 6.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Icon(
+                        Icons.Rounded.OpenWith,
+                        contentDescription = null,
+                        modifier = Modifier.size(18.dp),
+                        tint = MaterialTheme.colorScheme.primary,
+                    )
+                    Spacer(Modifier.width(8.dp))
+                    Text(
+                        stringResource(R.string.calco_ajuste_hint),
+                        style = MaterialTheme.typography.bodySmall,
+                        modifier = Modifier.weight(1f),
+                    )
+                    TextButton(onClick = alTerminarCalco) {
+                        Text(stringResource(R.string.calco_listo))
+                    }
+                }
+            }
             // Fila 1: modo + acciones de calco y hoja.
             Row(
                 Modifier
@@ -1107,6 +1288,89 @@ private fun DialogoExpandir(
     )
 }
 
+/**
+ * Diálogo para recortar o redimensionar el lienzo. "Recortar al dibujo" deja
+ * sólo el recuadro con lo dibujado (descarta los márgenes en blanco sin perder
+ * trazos). Los sliders redimensionan la hoja centrando el dibujo. Al cambiar el
+ * tamaño, el historial arranca de nuevo (como al expandir).
+ */
+@Composable
+private fun DialogoAjustarLienzo(
+    estado: DibujoEstado,
+    alRecortar: () -> Unit,
+    alRedimensionar: (Int, Int) -> Unit,
+    alCerrar: () -> Unit,
+) {
+    val maxLado = com.dibujo.core.Lienzo.MAX_LADO
+    var ancho by remember { mutableStateOf(estado.hojaAncho.toFloat()) }
+    var alto by remember { mutableStateOf(estado.hojaAlto.toFloat()) }
+    val na = ancho.roundToInt().coerceIn(1, maxLado)
+    val nb = alto.roundToInt().coerceIn(1, maxLado)
+
+    AlertDialog(
+        onDismissRequest = alCerrar,
+        title = { Text(stringResource(R.string.lienzo_ajustar_titulo)) },
+        text = {
+            Column {
+                Text(
+                    stringResource(R.string.lienzo_ajustar_desc),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    stringResource(R.string.lienzo_actual, estado.hojaAncho, estado.hojaAlto),
+                    style = MaterialTheme.typography.labelLarge,
+                )
+                Spacer(Modifier.height(4.dp))
+                TextButton(
+                    onClick = alRecortar,
+                    enabled = !estado.ajustandoLienzo,
+                ) {
+                    Text(stringResource(R.string.lienzo_recortar))
+                }
+                Text(
+                    stringResource(R.string.lienzo_recortar_desc),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Spacer(Modifier.height(12.dp))
+                Text(
+                    stringResource(R.string.lienzo_ancho, na),
+                    style = MaterialTheme.typography.labelLarge,
+                )
+                Slider(
+                    value = ancho.coerceIn(1f, maxLado.toFloat()),
+                    onValueChange = { ancho = it },
+                    valueRange = 1f..maxLado.toFloat(),
+                )
+                Text(
+                    stringResource(R.string.lienzo_alto, nb),
+                    style = MaterialTheme.typography.labelLarge,
+                )
+                Slider(
+                    value = alto.coerceIn(1f, maxLado.toFloat()),
+                    onValueChange = { alto = it },
+                    valueRange = 1f..maxLado.toFloat(),
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(
+                onClick = { alRedimensionar(na, nb) },
+                enabled = !estado.ajustandoLienzo,
+            ) {
+                Text(stringResource(R.string.lienzo_aplicar))
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = alCerrar) {
+                Text(stringResource(R.string.cancelar))
+            }
+        },
+    )
+}
+
 /** Diálogo de la imagen de calco: elegir, mostrar/ocultar, opacidad y quitar. */
 @Composable
 private fun DialogoCalco(
@@ -1114,6 +1378,8 @@ private fun DialogoCalco(
     alElegirImagen: () -> Unit,
     alAlternar: () -> Unit,
     alCambiarAlfa: (Float) -> Unit,
+    alAlternarEdicion: () -> Unit,
+    alCentrar: () -> Unit,
     alQuitar: () -> Unit,
     alCerrar: () -> Unit,
 ) {
@@ -1148,6 +1414,25 @@ private fun DialogoCalco(
                     valueRange = 0.1f..1f,
                     enabled = estado.calcoUri != null,
                 )
+                Spacer(Modifier.height(8.dp))
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        Text(
+                            stringResource(R.string.calco_ajustar),
+                            style = MaterialTheme.typography.labelLarge,
+                        )
+                        Text(
+                            stringResource(R.string.calco_ajustar_desc),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    Switch(
+                        checked = estado.calcoEnEdicion,
+                        onCheckedChange = { alAlternarEdicion() },
+                        enabled = estado.calcoUri != null,
+                    )
+                }
             }
         },
         confirmButton = {
@@ -1158,6 +1443,9 @@ private fun DialogoCalco(
         dismissButton = {
             Row {
                 if (estado.calcoUri != null) {
+                    TextButton(onClick = alCentrar) {
+                        Text(stringResource(R.string.calco_centrar))
+                    }
                     TextButton(onClick = alAlternar) {
                         Text(
                             stringResource(

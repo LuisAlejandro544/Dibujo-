@@ -16,6 +16,10 @@ import kotlin.math.abs
  * hoja completa. Cada píxel limpio toma el color de la tinta original más
  * cercana, así se conserva el color del trazo del usuario.
  *
+ * La máscara acumulada se normaliza con el mismo protocolo que el benchmark
+ * (umbral + esqueleto Zhang-Suen) antes de dibujar, para que los grumos del
+ * modelo no lleguen a la hoja y el resultado coincida con lo evaluado.
+ *
  * El modelo es float16 (I/O float32): se intenta primero el **delegado GPU**,
  * que acelera bastante las hojas grandes, y se cae a CPU si el equipo no lo
  * admite. El `.tflite` NO se versiona (pesa): lo inyecta el CI en el APK; ver
@@ -157,10 +161,12 @@ object LimpiadorTrazosIa {
     }
 
     /**
-     * Convierte la máscara acumulada (> [UMBRAL]) en la hoja limpia: redibuja un
-     * disco fino con el color de la tinta original más cercana. Los píxeles del
-     * esqueleto que caen fuera de la tinta original toman el color del trazo más
-     * próximo para no perder el color.
+     * Convierte la máscara acumulada (> [UMBRAL]) en la hoja limpia. Primero
+     * pinta cada píxel de la máscara con el color de la tinta original más
+     * cercana y después adelgaza a un esqueleto de 1 px con Zhang-Suen
+     * (`Lienzo.limpiarTrazos`), el mismo protocolo del benchmark: así un modelo
+     * que devuelve la línea algo gruesa o con manchas no ensucia la hoja. Los
+     * píxeles del esqueleto conservan el color original del trazo.
      */
     private fun redibujar(
         ancho: Int,
@@ -172,11 +178,13 @@ object LimpiadorTrazosIa {
         val salida = Lienzo(ancho, alto, fondo)
         for (y in 0 until alto) {
             for (x in 0 until ancho) {
-                if (acumulado[y * ancho + x] <= UMBRAL) continue
+                val i = y * ancho + x
+                if (acumulado[i] <= UMBRAL) continue
                 val color = colorCercano(pixeles, ancho, alto, fondo, x, y) ?: continue
-                salida.disco(x.toFloat(), y.toFloat(), Lienzo.RADIO_LIMPIEZA, color)
+                salida.pixeles[i] = color
             }
         }
+        salida.limpiarTrazos()
         return salida.pixeles
     }
 

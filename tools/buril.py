@@ -3,6 +3,13 @@
 Entrada: parche 64x64x1 con la tinta gruesa/irregular (varios repases).
 Salida:  parche 64x64x1 con el esqueleto limpio de 1 px.
 
+**Contrato de polaridad (crítico).** Tanto la app (`LimpiadorTrazosIa`) como el
+benchmark le pasan al modelo `tinta = 1, fondo = 0`. Los `.npz` de los planes A/B
+y las imágenes reales guardan la tinta **oscura sobre fondo claro**, así que acá
+se normalizan a `tinta = 1` antes de entrenar. Si no, el modelo aprende una
+polaridad y en el móvil recibe la opuesta: sale ruido/manchas. La función
+`_a_tinta` (abajo) hace esa normalización sin importar la polaridad de origen.
+
 Datos:
   - Sintéticos (curvas Bezier gruesas + repases -> curva fina), sin licencias.
   - Reales opcionales: pares (entrada, objetivo) en disco, para cerrar el
@@ -89,6 +96,19 @@ def estampar(mask, pts, radio, cobertura_min=0.0):
     return mask
 
 
+def linea_1px(mask, pts):
+    """Dibuja la polilínea [pts] como esqueleto de 1 px (vecino más próximo).
+
+    Se usa para el objetivo sintético: igual que el Plan B (Bresenham de 1 px),
+    la etiqueta es una línea dura de 1 px, no un trazo antialias de 2-3 px.
+    """
+    for (px, py) in pts:
+        ix, iy = int(round(float(px))), int(round(float(py)))
+        if 0 <= ix < LADO and 0 <= iy < LADO:
+            mask[iy, ix] = 1.0
+    return mask
+
+
 def curva_base(rng, margen=10.0):
     return np.array(
         [
@@ -103,9 +123,9 @@ def curva_base(rng, margen=10.0):
 
 def muestra(rng):
     cp = curva_base(rng)
-    objetivo = np.zeros((LADO, LADO), np.float32)
     pts_fina = bezier(cp)
-    estampar(objetivo, pts_fina, rng.uniform(0.6, 1.2))
+    # Objetivo duro de 1 px (mismo contrato que el .npz del Plan B).
+    objetivo = linea_1px(np.zeros((LADO, LADO), np.float32), pts_fina)
 
     entrada = np.zeros((LADO, LADO), np.float32)
     # Repase principal grueso.
@@ -195,6 +215,20 @@ def _leer_gris(ruta):
     return (tf.cast(img, tf.float32).numpy() / 255.0).reshape(LADO, LADO, 1)
 
 
+def _a_tinta(gray):
+    """Normaliza una imagen gris a tinta (1 = tinta) sin importar la polaridad.
+
+    El fondo se toma como el valor mediano y la tinta como la desviación de ese
+    fondo. Así da igual si el trazo es oscuro sobre blanco (planes A/B, la app,
+    la mayoría de los escaneos) o claro sobre negro (algunos sets reales).
+    """
+    g = np.asarray(gray, np.float32)[..., 0]
+    fondo = float(np.median(g))
+    t = np.abs(g - fondo)
+    mx = float(t.max())
+    return (t / mx) if mx > 1e-6 else t
+
+
 def cargar_reales(carpeta):
     """Carga pares reales (entrada, objetivo) de [carpeta].
 
@@ -225,8 +259,9 @@ def cargar_reales(carpeta):
         base, _ = os.path.splitext(nombre)
         if base not in objetivos:
             continue
-        xs.append(_leer_gris(os.path.join(dir_in, nombre)))
-        ys.append((_leer_gris(objetivos[base]) >= 0.5).astype(np.float32))
+        # Entrada y objetivo al contrato del modelo: tinta = 1, fondo = 0.
+        xs.append(_a_tinta(_leer_gris(os.path.join(dir_in, nombre)))[..., None])
+        ys.append((_a_tinta(_leer_gris(objetivos[base])) >= 0.5).astype(np.float32)[..., None])
     if not xs:
         print(f"[reales] {carpeta}: no se encontraron pares con el mismo nombre.")
         return None
@@ -280,7 +315,10 @@ def cargar_pares_cache(ruta, lado=LADO, paso=32, max_por_imagen=16, min_tinta=4,
         destino = str(split[i])
         for fy, fx in candidatos[:max_por_imagen]:
             xs, ys = acumulado[destino]
-            xs.append(equis[i, fy:fy + lado, fx:fx + lado, None].astype(np.float32) / 255.0)
+            # El cache guarda la tinta oscura (0) sobre fondo claro (255); el
+            # modelo espera tinta = 1, fondo = 0 (igual que la app), así que se
+            # invierte. Sin esto la app recibe la polaridad opuesta y sale ruido.
+            xs.append(1.0 - equis[i, fy:fy + lado, fx:fx + lado, None].astype(np.float32) / 255.0)
             ys.append(ye[i, fy:fy + lado, fx:fx + lado, None].astype(np.float32))
 
     def _apila(par):
@@ -294,6 +332,42 @@ def cargar_pares_cache(ruta, lado=LADO, paso=32, max_por_imagen=16, min_tinta=4,
     xva, yva = _apila(acumulado["validacion"])
     print(f"[pares] {len(xtr)} parches de entrenamiento y {len(xva)} de validacion de {ruta}")
     return xtr, ytr, xva, yva
+
+
+def autoprueba():
+    """Verifica el contrato de datos del pipeline (sin red ni modelo).
+
+    Regresión concreta: el cache guarda la tinta oscura y la app le pasa al
+    modelo `tinta = 1`; si el loader no invierte, el móvil recibe la polaridad
+    opuesta y el resultado sale ruidoso. Se corre en cada entrenamiento.
+    """
+    import tempfile
+
+    # 1. `_a_tinta` es invariante a la polaridad (oscuro sobre claro == claro
+    #    sobre oscuro).
+    g = np.linspace(0.0, 1.0, LADO * LADO, np.float32).reshape(LADO, LADO, 1)
+    assert np.allclose(_a_tinta(g), _a_tinta(1.0 - g), atol=1e-6), "polaridad de _a_tinta"
+
+    # 2. El objetivo sintético es una línea dura 0/1 (no un trazo antialias).
+    objetivo = linea_1px(np.zeros((LADO, LADO), np.float32),
+                         bezier(curva_base(np.random.default_rng(0))))
+    assert set(np.unique(objetivo)).issubset({0.0, 1.0}), "objetivo sintético no binario"
+
+    # 3. El loader del cache invierte a tinta=1/fondo=0 (contrato de la app).
+    x = np.full((1, LADO, LADO), 255, np.uint8)
+    y = np.zeros((1, LADO, LADO), np.uint8)
+    x[0, 10:30, 10] = 0      # tinta oscura en el cache
+    y[0, 10:30, 10] = 1      # objetivo tinta=1
+    with tempfile.TemporaryDirectory() as carpeta:
+        ruta = os.path.join(carpeta, "pares.npz")
+        np.savez(ruta, x=x, y=y, split=np.array(["entrenamiento"]))
+        xtr, ytr, _, _ = cargar_pares_cache(ruta, lado=LADO, paso=1)
+    assert xtr.shape[0] == 1, xtr.shape
+    assert xtr[..., 0].max() == 1.0 and xtr[..., 0].min() == 0.0, "rango de la entrada"
+    assert xtr[0, 20, 10, 0] == 1.0, "la tinta (oscura) no se invirtió a 1"
+    assert xtr[0, 0, 0, 0] == 0.0, "el fondo deberia ser 0"
+    assert ytr[0, 20, 10, 0] == 1.0, "el objetivo debe seguir siendo tinta=1"
+    print("autoprueba OK: contrato de datos (entrada tinta=1/fondo=0, objetivo tinta=1)")
 
 
 def modelo():
@@ -323,6 +397,21 @@ def dice(y_true, y_pred):
     y_pred = tf.reshape(y_pred, [-1])
     inter = tf.reduce_sum(y_true * y_pred)
     return 1.0 - (2.0 * inter + 1.0) / (tf.reduce_sum(y_true) + tf.reduce_sum(y_pred) + 1.0)
+
+
+def perdida(y_true, y_pred):
+    """BCE + Dice (soft) para el esqueleto de 1 px.
+
+    El BCE solo se hunde en el desbalance: la línea de 1 px es ~2-5% de los
+    píxeles, así que el modelo cubre de tinta para bajar el error y devuelve
+    manchas/grumos. El término Dice es sensible a la superposición de la línea
+    fina y empuja un esqueleto delgado y limpio.
+    """
+    y_pred = tf.clip_by_value(y_pred, 1e-6, 1.0 - 1e-6)
+    bce = -tf.reduce_mean(
+        y_true * tf.math.log(y_pred) + (1.0 - y_true) * tf.math.log(1.0 - y_pred)
+    )
+    return bce + dice(y_true, y_pred)
 
 
 def psnr(y_true, y_pred):
@@ -390,6 +479,7 @@ def argumentos():
 
 def main():
     args = argumentos()
+    autoprueba()
     tf.random.set_seed(args.semilla)
     rng = np.random.default_rng(args.semilla)
 
@@ -427,7 +517,7 @@ def main():
     red = modelo()
     red.compile(
         optimizer=tf.keras.optimizers.Adam(1e-3),
-        loss=tf.keras.losses.BinaryCrossentropy(),
+        loss=perdida,
         metrics=[dice],
     )
     red.fit(

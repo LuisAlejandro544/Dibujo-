@@ -70,10 +70,26 @@
     <string name="exportado_error">No se pudo guardar el dibujo</string>
     <string name="exportado_sin_permiso">Hace falta permiso para guardar en la galería</string>
     <string name="exportar_titulo">Exportar dibujo</string>
-    <string name="exportar_peso">La imagen pesa aproximadamente %1$s (PNG). ¿Qué quieres hacer?</string>
+    <string name="exportar_peso">La imagen pesa aproximadamente %1$s (PNG). ¿Qué querés hacer?</string>
+    <string name="exportar_calculando">Preparando…</string>
     <string name="exportar_guardar">Guardar en galería</string>
     <string name="exportar_compartir">Compartir</string>
     <string name="compartir_error">No se pudo compartir el dibujo</string>
+    <string name="exportar_recortar">Recortar al dibujo</string>
+    <string name="exportar_recortar_desc">Elimina el fondo que no usaste y guarda sólo lo que dibujaste. No modifica tu dibujo.</string>
+
+    <!-- Importar imagen -->
+    <string name="importar_imagen">Importar imagen</string>
+
+    <!-- Recortar / redimensionar lienzo -->
+    <string name="lienzo_ajustar_titulo">Recortar o redimensionar lienzo</string>
+    <string name="lienzo_ajustar_desc">Cambiá el tamaño de la hoja. Al cambiar el tamaño, el historial de deshacer arranca de nuevo.</string>
+    <string name="lienzo_actual">Hoja actual: %1$d × %2$d px</string>
+    <string name="lienzo_recortar">Recortar al dibujo</string>
+    <string name="lienzo_recortar_desc">Deja sólo el recuadro con lo dibujado y descarta los márgenes en blanco. No pierde ningún trazo.</string>
+    <string name="lienzo_ancho">Ancho: %1$d px</string>
+    <string name="lienzo_alto">Alto: %1$d px</string>
+    <string name="lienzo_aplicar">Redimensionar</string>
 
     <!-- Estado -->
     <string name="estado_motor">Motor: %1$s</string>
@@ -105,7 +121,7 @@
 
     <!-- Imagen de calco -->
     <string name="calco_titulo">Imagen de calco</string>
-    <string name="calco_descripcion">Elige una imagen y colócala debajo del trazo para calcar. Puedes mostrarla u ocultarla cuando quieras.</string>
+    <string name="calco_descripcion">Elegí una imagen y colocala debajo del trazo para calcar. Al ponerla se centra sola y después podés moverla o escalarla con dos dedos.</string>
     <string name="calco_sin_imagen">Sin imagen de calco</string>
     <string name="calco_cargada">Imagen de calco cargada</string>
     <string name="calco_opacidad">Opacidad: %1$d%%</string>
@@ -113,6 +129,11 @@
     <string name="calco_mostrar">Mostrar</string>
     <string name="calco_ocultar">Ocultar</string>
     <string name="calco_quitar">Quitar</string>
+    <string name="calco_ajustar">Mover y escalar</string>
+    <string name="calco_ajustar_desc">Un dedo mueve la imagen; dos dedos la agrandan o achican.</string>
+    <string name="calco_centrar">Centrar</string>
+    <string name="calco_ajuste_hint">Ajustando el calco: un dedo lo mueve, dos dedos lo escalan.</string>
+    <string name="calco_listo">Listo</string>
 
     <!-- IA local (modelo chico empaquetado y algoritmos clásicos; todo en el equipo) -->
     <string name="ia_titulo">Herramientas con IA local</string>

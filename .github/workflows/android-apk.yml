@@ -9,7 +9,7 @@
 #
 # El modelo IA de limpiar trazos ("Buril") NO vive en git (pesa). Su buzon es
 # la release `modelo-buril`: la llena Google Colab con
-# `tools/entrenar_limpiar_trazos_colab.ipynb` (o, como respaldo, el workflow
+# `tools/buril_colab.ipynb` (o, como respaldo, el workflow
 # `entrenar-limpiar-trazos-planb.yml`). Este workflow baja el `.tflite` de esa
 # release y lo copia a `app/src/main/assets/modelos/` antes de compilar. Si la
 # release no existe, el APK se arma igual y la app cae al adelgazado algorítmico.
@@ -83,7 +83,7 @@ jobs:
               cat .cache/modelos/limpiar_trazos.json
             fi
           else
-            echo "::warning::No hay modelo Buril en la release; el APK se arma sin el modelo entrenado y la app cae al adelgazado algorítmico. Corre el cuaderno de Colab 'tools/entrenar_limpiar_trazos_colab.ipynb' (o el workflow 'Entrenar limpiador de trazos (Plan B)') para publicarlo."
+            echo "::warning::No hay modelo Buril en la release; el APK se arma sin el modelo entrenado y la app cae al adelgazado algorítmico. Corre el cuaderno de Colab 'tools/buril_colab.ipynb' (o el workflow 'Entrenar limpiador de trazos (Plan B)') para publicarlo."
           fi
 
       - name: Compilar la app Android (Gradle + Compose + motor C++ con NDK)

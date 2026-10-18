@@ -1,7 +1,7 @@
 # Plan B - entrena el limpiador de trazos con datos comerciales (Quick, Draw!).
 #
 # RESPALDO del entrenamiento por Colab. La via recomendada es el cuaderno
-# `tools/entrenar_limpiar_trazos_colab.ipynb` (GPU gratis); este workflow queda
+# `tools/buril_colab.ipynb` (GPU gratis); este workflow queda
 # para cuando no haya Colab a mano.
 #
 # El modelo `.tflite` NO se versiona en el repo (ver `.gitignore`): este workflow
@@ -12,7 +12,7 @@
 #
 # Datos: `tools/preparar_dataset_limpiar_trazos_planb.py` fabrica los pares
 # (repasado -> limpio) desde Quick, Draw! (CC BY 4.0), y
-# `tools/entrenar_limpiar_trazos.py --pares ...` recorta los parches y entrena.
+# `tools/buril.py --pares ...` recorta los parches y entrena.
 # El dataset se cachea aparte (misma key que el workflow del Plan B), asi que
 # reentrenar no vuelve a bajar ni preprocesar.
 #
@@ -45,7 +45,7 @@ on:
         type: string
   push:
     paths:
-      - "tools/entrenar_limpiar_trazos.py"
+      - "tools/buril.py"
       - "tools/preparar_dataset_limpiar_trazos_planb.py"
       - "tools/datasets_limpiar_trazos_planb.json"
       - ".github/workflows/entrenar-limpiar-trazos-planb.yml"
@@ -106,7 +106,7 @@ jobs:
 
       - name: Entrenar el limpiador de trazos
         run: |
-          python3 tools/entrenar_limpiar_trazos.py \
+          python3 tools/buril.py \
             --pares ".cache/limpiar_trazos_planb/procesado/pares_esq_lado${LADO}.npz" \
             --salida "$GITHUB_WORKSPACE/.cache/modelos/limpiar_trazos.tflite" \
             --epocas "$EPOCAS" --aumentos "$AUMENTOS" \

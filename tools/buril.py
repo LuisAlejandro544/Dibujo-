@@ -26,10 +26,10 @@ El modelo se exporta a .tflite (float16) para correrlo en el móvil con LiteRT.
 
 Uso (desde la raíz del repo, con `tensorflow-cpu` + `numpy` instalados):
 
-    python3 tools/entrenar_limpiar_trazos.py
-    python3 tools/entrenar_limpiar_trazos.py --pares .cache/limpiar_trazos/procesado/pares_esq_lado512.npz
-    python3 tools/entrenar_limpiar_trazos.py --reales ~/datos/sketchbench
-    python3 tools/entrenar_limpiar_trazos.py --epocas 30 --aumentos 2
+    python3 tools/buril.py
+    python3 tools/buril.py --pares .cache/limpiar_trazos/procesado/pares_esq_lado512.npz
+    python3 tools/buril.py --reales ~/datos/sketchbench
+    python3 tools/buril.py --epocas 30 --aumentos 2
 
 `--pares` consume el cache de un plan de dataset (`tools/preparar_dataset_limpiar_trazos.py`
 para SketchBench, `tools/preparar_dataset_limpiar_trazos_planb.py` para Quick, Draw!):
@@ -43,7 +43,7 @@ con las metricas y la atribucion del dataset.
 Escribe `app/src/main/assets/modelos/limpiar_trazos.tflite` (y su `.json`). Esa
 ruta esta en `.gitignore`: el modelo NO se versiona para no engordar el repo.
 
-La via recomendada es Google Colab: `tools/entrenar_limpiar_trazos_colab.ipynb`
+La via recomendada es Google Colab: `tools/buril_colab.ipynb`
 es un driver fino que llama a este script y publica el `.tflite` en la release
 `modelo-buril`; `android-apk.yml` la baja y la inyecta en los assets antes de
 armar el APK. Como respaldo, el workflow

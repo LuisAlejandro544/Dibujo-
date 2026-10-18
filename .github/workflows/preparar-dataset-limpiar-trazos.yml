@@ -2,7 +2,7 @@
 #
 # Baja el dataset real, empareja cada boceto repasado con su version limpiada
 # y cachea un `.npz` que consume el Paso B (entrenamiento:
-# `tools/entrenar_limpiar_trazos.py --pares ...`).
+# `tools/buril.py --pares ...`).
 #
 # Fases reanudables y cacheadas: los `.zip` crudos y el `.npz` procesado viven
 # en la cache de Actions, asi que una corrida cortada por el limite de ~1 h se

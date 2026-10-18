@@ -7,7 +7,7 @@
 # El script baja solo la cabecera de cada categoria (rango HTTP), fabrica los
 # pares (repasado -> limpio) por simulacion y cachea un `.npz` con el mismo
 # formato que el Plan A, que consume el entrenamiento:
-# `tools/entrenar_limpiar_trazos.py --pares ...`.
+# `tools/buril.py --pares ...`.
 #
 # Fases separadas y cacheadas: la cabecera de cada ndjson y el `.npz` viven en
 # la cache de Actions, asi que una corrida cortada se retoma. El `key` del cache

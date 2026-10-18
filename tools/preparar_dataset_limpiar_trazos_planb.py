@@ -15,7 +15,7 @@ brecha de dominio sin depender de datos no comerciales.
 El `.npz` que sale usa el MISMO formato que el Plan A, asi que el entrenamiento
 lo consume sin cambios:
 
-    python3 tools/entrenar_limpiar_trazos.py --pares <npz>
+    python3 tools/buril.py --pares <npz>
 
 Cada categoria de Quick, Draw! pesa ~40-100 MB, pero para el modelo alcanza la
 cabecera: se baja solo un rango HTTP (el host de Google Cloud Storage soporta

@@ -48,7 +48,8 @@ es un driver fino que llama a este script y publica el `.tflite` en la release
 `modelo-buril`; `android-apk.yml` la baja y la inyecta en los assets antes de
 armar el APK. Como respaldo, el workflow
 `entrenar-limpiar-trazos-planb.yml` entrena en Actions y publica en la misma
-release. `--nombre` / `--version` quedan en el manifiesto (Buril 1, Buril 2...).
+release. `--nombre` / `--version` quedan en el manifiesto (por defecto
+`Buril v1.0.0-experimental.1a`).
 """
 
 import argparse
@@ -380,8 +381,8 @@ def argumentos():
     p.add_argument("--semilla", type=int, default=1)
     p.add_argument("--nombre", type=str, default="Buril",
                    help="nombre del modelo (va al manifiesto y a la release)")
-    p.add_argument("--version", type=str, default="1",
-                   help="version del modelo (Buril 1, Buril 2, ...)")
+    p.add_argument("--version", type=str, default="v1.0.0-experimental.1a",
+                   help="version del modelo (va al manifiesto y a la release)")
     p.add_argument("--salida", type=str, default=os.path.join(
         RAIZ, "app", "src", "main", "assets", "modelos", "limpiar_trazos.tflite"))
     return p.parse_args()

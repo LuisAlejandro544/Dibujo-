@@ -7,10 +7,14 @@
 CC BY 4.0).
 
 - Entrenamiento (recomendado): cuaderno de Google Colab
-  `tools/buril_colab.ipynb` (driver fino sobre los scripts).
+  `tools/buril_colab.ipynb` (driver fino sobre los scripts). La celda 1 pide la
+  versión del `.npz` y la del modelo (por defecto `v1.0.0-experimental.1a`).
   Como respaldo, el workflow `.github/workflows/entrenar-limpiar-trazos-planb.yml`.
-- Buzón: los dos publican `limpiar_trazos.tflite` + `limpiar_trazos.json` en la
+- Buzón del modelo: los dos publican `limpiar_trazos.tflite` + `limpiar_trazos.json` en la
   **release `modelo-buril`** (fuera de git, con historial).
+- Buzón del dataset: el `.npz` se cachea en la **release `dataset-buril`**
+  (asset `pares_esq_lado{LADO}_pc{POR_CATEGORIA}_{VERSION}.npz`), así Colab no
+  vuelve a bajar/preprocesar en cada sesión.
 - Empaquetado: `.github/workflows/android-apk.yml` baja el modelo de esa release
   y lo copia a esta carpeta antes de `assembleDebug`.
 

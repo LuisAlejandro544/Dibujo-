@@ -36,8 +36,12 @@ Uso (desde la raiz del repo):
 
     python3 tools/preparar_dataset_limpiar_trazos_planb.py descargar
     python3 tools/preparar_dataset_limpiar_trazos_planb.py preprocesar --lado 512
-    python3 tools/preparar_dataset_limpiar_trazos_planb.py todo
+    python3 tools/preparar_dataset_limpiar_trazos_planb.py todo --version v1.0.0-experimental.1a
     python3 tools/preparar_dataset_limpiar_trazos_planb.py estado
+
+`--version` etiqueta el dataset (va al manifiesto y al nombre del asset en la
+release-cache `dataset-buril`, que es donde Colab guarda el `.npz` entre
+sesiones).
 """
 
 import argparse
@@ -58,6 +62,10 @@ LADO_DEF = 512
 MARGEN_DEF = 8
 POR_CATEGORIA_DEF = 100
 AGENTE = "Dibujo-DatasetBot/1.0"
+
+# Version del dataset. Se guarda en el manifiesto y se usa para nombrar el
+# asset en la release `dataset-buril` (cache del .npz entre sesiones).
+VERSION_DEF = "v1.0.0-experimental.1a"
 
 
 # --------------------------------------------------------------------------
@@ -368,7 +376,7 @@ def _dividir_por_base(bases, semilla, fraccion_validacion=0.15):
 # Fase 2: preprocesar
 # --------------------------------------------------------------------------
 def preprocesar(fuente, cache, lado, margen, por_categoria, min_tinta, semilla, forzar,
-                categorias=None):
+                categorias=None, version=VERSION_DEF):
     salida = ruta_pares(cache, lado)
     manifiesto_ruta = ruta_manifiesto(cache, lado)
     if os.path.exists(salida) and not forzar:
@@ -416,6 +424,7 @@ def preprocesar(fuente, cache, lado, margen, por_categoria, min_tinta, semilla, 
     manifiesto = {
         "generado": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         "plan": "B (licencia comercial)",
+        "version": version,
         "fuente": fuente["id"],
         "licencia": fuente.get("licencia"),
         "licencia_url": fuente.get("licencia_url"),
@@ -430,8 +439,8 @@ def preprocesar(fuente, cache, lado, margen, por_categoria, min_tinta, semilla, 
         "total_pares": int(len(x)),
         "pares_entrenamiento": int((split == "entrenamiento").sum()),
         "pares_validacion": int((split == "validacion").sum()),
-        "por_categoria": {c: int(sum(1 for v in categs if v == c))
-                          for c in sorted(set(categs))},
+        "pares_por_categoria": {c: int(sum(1 for v in categs if v == c))
+                                for c in sorted(set(categs))},
         "formato_npz": {
             "x": "entrada en grises uint8 [0,255] (tinta oscura)",
             "y": "objetivo binario uint8 {0,1} (1=tinta, esqueleto de 1 px)",
@@ -455,7 +464,7 @@ def cmd_preprocesar(args):
     if args.categorias:
         categorias = [c.strip() for c in args.categorias.split(",") if c.strip()]
     preprocesar(fuente, args.cache, args.lado, args.margen, args.por_categoria,
-                args.min_tinta, args.semilla, args.forzar, categorias)
+                args.min_tinta, args.semilla, args.forzar, categorias, args.version)
 
 
 # --------------------------------------------------------------------------
@@ -543,6 +552,8 @@ def argumentos():
     pr.add_argument("--min-tinta", dest="min_tinta", type=int, default=12,
                     help="pixeles minimos de tinta del objetivo")
     pr.add_argument("--semilla", type=int, default=1, help="semilla del split y del repase")
+    pr.add_argument("--version", default=VERSION_DEF,
+                    help="version del dataset (va al manifiesto y al asset de la release-cache)")
     pr.add_argument("--forzar", action="store_true", help="rehacer aunque ya exista")
     pr.set_defaults(func=cmd_preprocesar)
 
@@ -555,6 +566,8 @@ def argumentos():
                    default=POR_CATEGORIA_DEF)
     t.add_argument("--min-tinta", dest="min_tinta", type=int, default=12)
     t.add_argument("--semilla", type=int, default=1)
+    t.add_argument("--version", default=VERSION_DEF,
+                   help="version del dataset (va al manifiesto y al asset de la release-cache)")
     t.add_argument("--forzar", action="store_true")
 
     e = sub.add_parser("estado", help="muestra el cache")

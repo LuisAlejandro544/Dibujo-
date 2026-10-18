@@ -3,6 +3,8 @@
 
     <!-- Menú principal (pantalla de inicio) -->
     <string name="menu_subtitulo">¿Qué querés hacer?</string>
+    <string name="menu_nuevo">Nuevo dibujo</string>
+    <string name="menu_nuevo_desc">Empezá una hoja en blanco desde cero</string>
     <string name="menu_continuar">Continuar dibujando</string>
     <string name="menu_continuar_desc">Retomá el dibujo en el que estabas trabajando</string>
     <string name="menu_cargar">Cargar dibujo</string>
@@ -25,6 +27,11 @@
     <string name="cd_borrar_dibujo">Borrar dibujo</string>
     <string name="cd_volver">Volver</string>
     <string name="borrar">Borrar</string>
+
+    <!-- Empezar un dibujo nuevo desde cero -->
+    <string name="nuevo_titulo">Nuevo dibujo</string>
+    <string name="nuevo_confirmacion">Se reemplazará el borrador actual por una hoja en blanco. Las copias guardadas en la biblioteca no se tocan.</string>
+    <string name="nuevo_confirmar">Empezar de cero</string>
 
     <!-- Barra de herramientas -->
     <string name="modo_editar">Dibujar</string>

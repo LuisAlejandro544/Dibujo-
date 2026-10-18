@@ -215,6 +215,34 @@ class DibujoViewModel(app: Application) : AndroidViewModel(app) {
         _estado.update { it.copy(modificado = false) }
     }
 
+    /**
+     * Empieza un dibujo **desde cero**: descarta el borrador en curso (lo deja
+     * en blanco si el motor ya existe) y borra el autoguardado, para que
+     * "Continuar dibujando" no reanude el dibujo anterior. Si todavía no hay
+     * motor, se creará vacío al medirse la pantalla de dibujo. Las copias de la
+     * biblioteca no se tocan. El historial sí conserva el estado anterior
+     * (se puede deshacer si fue un error).
+     */
+    fun nuevoDibujo() {
+        val m = motor
+        if (m != null) {
+            m.cancelarTrazo()
+            m.limpiarHoja()
+            m.centrarVista()
+            _estado.update {
+                it.copy(
+                    trazoEnCurso = null,
+                    puedeDeshacer = m.puedeDeshacer(),
+                    puedeRehacer = m.puedeRehacer(),
+                    modificado = false,
+                    camara = m.camara(),
+                    marco = it.marco + 1,
+                )
+            }
+        }
+        viewModelScope.launch(Dispatchers.IO) { AlmacenDibujos.borrarActual(aplicacion) }
+    }
+
     /** Handle nativo del motor para el render GPU (0 si no aplica). */
     fun handleMotor(): Long = motor?.handleNativo ?: 0L
 

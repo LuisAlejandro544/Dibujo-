@@ -7,6 +7,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -41,8 +42,18 @@ fun AppDibujo(vm: DibujoViewModel = viewModel()) {
     // Desde dónde se abrió Opciones, para volver al lugar correcto.
     var origenOpciones by rememberSaveable { mutableStateOf(Destino.MENU) }
     var cargando by remember { mutableStateOf(false) }
+    // Hay un dibujo en curso (en memoria o autoguardado): "Nuevo dibujo" pide
+    // confirmación antes de descartarlo. Se relee al volver al menú.
+    var hayBorrador by remember { mutableStateOf(false) }
 
     val textoCargarError = stringResource(R.string.cargar_error)
+
+    LaunchedEffect(destino) {
+        if (destino == Destino.MENU) {
+            hayBorrador = vm.estado.value.modificado ||
+                withContext(Dispatchers.IO) { AlmacenDibujos.hayActual(contexto) }
+        }
+    }
 
     // Abre un dibujo guardado por id y pasa al lienzo. Lee los píxeles fuera
     // del hilo principal (una hoja grande pesa varios MB).
@@ -63,6 +74,11 @@ fun AppDibujo(vm: DibujoViewModel = viewModel()) {
 
     when (destino) {
         Destino.MENU -> PantallaMenu(
+            alNuevo = {
+                // Descarta el borrador y abre una hoja en blanco.
+                vm.nuevoDibujo()
+                destino = Destino.DIBUJO
+            },
             alContinuar = {
                 if (vm.motorListo()) {
                     destino = Destino.DIBUJO
@@ -87,6 +103,7 @@ fun AppDibujo(vm: DibujoViewModel = viewModel()) {
                 origenOpciones = Destino.MENU
                 destino = Destino.OPCIONES
             },
+            hayBorrador = hayBorrador,
         )
 
         Destino.DIBUJO -> PantallaDibujo(

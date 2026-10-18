@@ -74,6 +74,13 @@ object AlmacenDibujos {
     /** Carga el borrador actual, o null si no existe o no se pudo leer. */
     fun cargarActual(contexto: Context): DibujoContenido? = cargar(contexto, SLOT_ACTUAL)
 
+    /**
+     * Borra el borrador en curso. Lo usa "Nuevo dibujo" para empezar de cero:
+     * así "Continuar dibujando" no reanuda el dibujo anterior.
+     */
+    fun borrarActual(contexto: Context): Boolean =
+        runCatching { archivo(contexto, SLOT_ACTUAL)?.delete() == true }.getOrDefault(false)
+
     /** Carga una copia de la biblioteca por su [id]. */
     fun cargar(contexto: Context, id: String): DibujoContenido? {
         val archivo = archivo(contexto, id) ?: return null

@@ -309,14 +309,19 @@ Particularidades:
 
 ### Pantalla principal, navegación y sistema de guardados (issue 30)
 Al abrir la app ya no se entra directo al lienzo: se muestra un **menú
-principal** con tres accesos, cada uno en su propio archivo/pantalla.
+principal** con cuatro accesos, cada uno en su propio archivo/pantalla.
 
 - **Navegación** (`Navegacion.kt`, `AppDibujo`): un estado simple
   (`enum Destino { MENU, DIBUJO, CARGAR, OPCIONES }` con `rememberSaveable`) y un
   `when`; sin dependencias nuevas (no se agregó Navigation Compose). `MainActivity`
   compone `AppDibujo()`. El `DibujoViewModel` es el de la Activity, así que la
   hoja **sobrevive** al ir y volver del menú (no se recrea el motor).
-- **`PantallaMenu.kt`** (`PantallaMenu`): tres tarjetas grandes.
+- **`PantallaMenu.kt`** (`PantallaMenu`): cuatro tarjetas grandes.
+  - *Nuevo dibujo*: empieza una hoja en blanco desde cero. Llama
+    `DibujoViewModel.nuevoDibujo()`, que limpia la hoja (si el motor ya existe),
+    recentra la vista y borra el autoguardado (`AlmacenDibujos.borrarActual()`);
+    la biblioteca no se toca. Si hay un dibujo en curso (`hayBorrador`), pide
+    confirmación antes de descartarlo.
   - *Continuar dibujando*: si el motor ya está en memoria, sólo vuelve al
     lienzo; si no, carga el borrador autoguardado y lo reabre.
   - *Cargar dibujo*: va a la biblioteca.

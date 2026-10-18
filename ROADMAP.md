@@ -39,7 +39,7 @@ mencionarla en el PR.
 - [ ] **Modelo de limpiar trazos con dataset real (issue 32)**: hay dos caminos de datos que producen el mismo `.npz`.
   - **Plan A (investigación)** — `tools/preparar_dataset_limpiar_trazos.py` baja **SketchBench** (Yan et al., 2020), empareja boceto↔limpiado (`norm_cleaned`), binariza con Otsu y adelgaza a 1 px; cachea `pares_esq_lado512.npz` (425 pares / 141 bocetos) con split por boceto; el workflow `preparar-dataset-limpiar-trazos.yml` lo corre y sube el artefacto. **Pero no es 100% comercial** (una parte de los bocetos es solo de uso académico).
   - **Plan B (comercial, el que va a la app)** — `tools/preparar_dataset_limpiar_trazos_planb.py` usa **Quick, Draw!** (Google, **CC BY 4.0**: uso comercial permitido, no obliga a abrir el código, solo pide atribución). Baja la cabecera de cada categoría por rango HTTP y **fabrica los pares** (trazo limpio de 1 px → repase simulado), con el mismo formato de `.npz`; workflow `preparar-dataset-limpiar-trazos-planb.yml`.
-  - `entrenar_limpiar_trazos.py --pares <npz>` ya consume cualquiera de los dos. **Paso B**: la U-Net se entrena con el `.npz` del Plan B en el workflow `entrenar-limpiar-trazos-planb.yml`, que evalúa **IoU/PSNR** con el `.tflite` exportado y guarda un manifiesto de métricas; usa **float16 + delegado GPU con caída a CPU** (se descartó int8: el GPU delega float y a este tamaño no compensa) y la **atribución** de Quick, Draw! ya se muestra en *Opciones*. **El `.tflite` no se versiona** (`.gitignore`): el workflow lo cachea y `android-apk.yml` lo **inyecta en el APK** antes de `assembleDebug`, así el repo no carga el binario. Pendiente: correr el entrenamiento y ajustar épocas/semilla con las métricas reales.
+  - `entrenar_limpiar_trazos.py --pares <npz>` ya consume cualquiera de los dos. **Paso B**: la U-Net (**Buril**) se entrena con el `.npz` del Plan B desde el cuaderno de Google Colab `tools/entrenar_limpiar_trazos_colab.ipynb` (recomendado; driver fino sobre los scripts) o, de respaldo, el workflow `entrenar-limpiar-trazos-planb.yml`; evalúa **IoU/PSNR** con el `.tflite` exportado y guarda un manifiesto de métricas; usa **float16 + delegado GPU con caída a CPU** (se descartó int8: el GPU delega float y a este tamaño no compensa) y la **atribución** de Quick, Draw! ya se muestra en *Opciones*. **El `.tflite` no se versiona** (`.gitignore`): se publica en la **release `modelo-buril`** y `android-apk.yml` lo **inyecta en el APK** antes de `assembleDebug`, así el repo no carga el binario. Pendiente: correr el entrenamiento y ajustar épocas/semilla con las métricas reales.
 
 ## Próximas (prioridad)
 
@@ -56,10 +56,10 @@ mencionarla en el PR.
 - Capas (layers) con undo por capa: el historial actual es de un solo nivel (por snapshots).
 - iOS: el motor dual ya admite un front-end nuevo (el C++ es portable); Compose Multiplatform / KMP como candidata.
 - Borrador por capas/bitmaps (destination-out) si algún día la hoja deja de ser opaca.
-- **IA aprendida (hecho, ampliable)**: el *sketch cleanup* ya usa un modelo
-  propio con LiteRT (issue 25). El entrenamiento acepta datasets reales
+- **IA aprendida (hecho, ampliable) — Buril**: el *sketch cleanup* ya usa un
+  modelo propio con LiteRT (issue 25). El entrenamiento acepta datasets reales
   (`--reales`), aumentación y el cache del Plan B (`--pares`), con métricas
-  IoU/PSNR y delegado GPU (issue 28/32); el `.tflite` no se versiona, lo inyecta
-  el CI. Lo siguiente sería cuantización int8 si algún día se prioriza CPU/NPU
-  sobre GPU. El resto de las herramientas de IA siguen siendo algoritmos locales
-  (visión + k-medias).
+  IoU/PSNR y delegado GPU (issue 28/32); el `.tflite` no se versiona, se publica
+  en la release `modelo-buril` y lo inyecta el APK. Lo siguiente sería
+  cuantización int8 si algún día se prioriza CPU/NPU sobre GPU. El resto de las
+  herramientas de IA siguen siendo algoritmos locales (visión + k-medias).

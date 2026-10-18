@@ -41,9 +41,14 @@ PSNR sobre validacion con el modelo ya exportado, guardando un manifiesto `.json
 con las metricas y la atribucion del dataset.
 
 Escribe `app/src/main/assets/modelos/limpiar_trazos.tflite` (y su `.json`). Esa
-ruta esta en `.gitignore`: el modelo NO se versiona para no engordar el repo; el
-workflow `entrenar-limpiar-trazos-planb.yml` lo cachea y `android-apk.yml` lo
-inyecta en los assets antes de armar el APK.
+ruta esta en `.gitignore`: el modelo NO se versiona para no engordar el repo.
+
+La via recomendada es Google Colab: `tools/entrenar_limpiar_trazos_colab.ipynb`
+es un driver fino que llama a este script y publica el `.tflite` en la release
+`modelo-buril`; `android-apk.yml` la baja y la inyecta en los assets antes de
+armar el APK. Como respaldo, el workflow
+`entrenar-limpiar-trazos-planb.yml` entrena en Actions y publica en la misma
+release. `--nombre` / `--version` quedan en el manifiesto (Buril 1, Buril 2...).
 """
 
 import argparse
@@ -373,6 +378,10 @@ def argumentos():
     p.add_argument("--epocas", type=int, default=20)
     p.add_argument("--lote", type=int, default=32)
     p.add_argument("--semilla", type=int, default=1)
+    p.add_argument("--nombre", type=str, default="Buril",
+                   help="nombre del modelo (va al manifiesto y a la release)")
+    p.add_argument("--version", type=str, default="1",
+                   help="version del modelo (Buril 1, Buril 2, ...)")
     p.add_argument("--salida", type=str, default=os.path.join(
         RAIZ, "app", "src", "main", "assets", "modelos", "limpiar_trazos.tflite"))
     return p.parse_args()
@@ -443,6 +452,7 @@ def main():
 
     # Manifiesto con metricas + licencia/atribucion del dataset (Plan B).
     manifiesto = {
+        "modelo": f"{args.nombre} {args.version}",
         "descripcion": "limpiador de trazos (entrada 64x64x1 -> esqueleto 64x64x1)",
         "formato": "tflite float16",
         "bytes": len(tflite),

@@ -1,10 +1,14 @@
 # Plan B - entrena el limpiador de trazos con datos comerciales (Quick, Draw!).
 #
+# RESPALDO del entrenamiento por Colab. La via recomendada es el cuaderno
+# `tools/entrenar_limpiar_trazos_colab.ipynb` (GPU gratis); este workflow queda
+# para cuando no haya Colab a mano.
+#
 # El modelo `.tflite` NO se versiona en el repo (ver `.gitignore`): este workflow
-# lo entrena, lo guarda en la cache de Actions y lo sube como artefacto. El
-# workflow `android-apk.yml` restaura esa cache y lo inyecta en
-# `app/src/main/assets/modelos/` antes de `assembleDebug`, asi el APK lo incluye
-# sin que la rama main cargue el binario.
+# lo entrena y lo publica en la release `modelo-buril` (el mismo buzon que llena
+# Colab), y ademas lo sube como artefacto. El workflow `android-apk.yml` baja el
+# modelo de esa release y lo inyecta en `app/src/main/assets/modelos/` antes de
+# `assembleDebug`, asi el APK lo incluye sin que la rama main cargue el binario.
 #
 # Datos: `tools/preparar_dataset_limpiar_trazos_planb.py` fabrica los pares
 # (repasado -> limpio) desde Quick, Draw! (CC BY 4.0), y
@@ -47,7 +51,7 @@ on:
       - ".github/workflows/entrenar-limpiar-trazos-planb.yml"
 
 permissions:
-  contents: read
+  contents: write
 
 concurrency:
   group: entrenar-limpiar-trazos-planb
@@ -118,8 +122,15 @@ jobs:
           if-no-files-found: error
           retention-days: 30
 
-      - name: Guardar el modelo en la cache (lo usa android-apk.yml)
-        uses: actions/cache/save@v4
-        with:
-          path: .cache/modelos
-          key: modelo-limpiar-trazos-v1-${{ github.run_id }}
+      - name: Publicar el modelo en la release `modelo-buril` (buzón del APK)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release view modelo-buril >/dev/null 2>&1 || \
+            gh release create modelo-buril \
+              --title "Modelo Buril" \
+              --notes "Modelo \`limpiar_trazos.tflite\` (limpiador de trazos, float16). Lo publica el workflow de entrenamiento o el cuaderno de Colab; \`android-apk.yml\` lo inyecta en el APK."
+          gh release upload modelo-buril \
+            .cache/modelos/limpiar_trazos.tflite \
+            .cache/modelos/limpiar_trazos.json \
+            --clobber

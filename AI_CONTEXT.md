@@ -145,16 +145,23 @@ tinta). El algoritmo es puramente entero/booleano, así que el C++ y Kotlin dan
 exactamente el mismo resultado; `MotorTest.limpiarTrazosParidadNativoKotlin` lo
 verifica. Si la hoja está vacía devuelve `false` y no ensucia el historial.
 
-### Limpiar trazos con modelo (IA local, LiteRT)
+### Limpiar trazos con modelo (IA local, LiteRT) — "Buril"
 Además del adelgazado algorítmico, `:app` trae un **modelo propio** que limpia
 los repases con una red: `app/src/main/assets/modelos/limpiar_trazos.tflite`
 (U-Net mínima: entrada `[1,64,64,1]` máscara binaria de tinta; salida
 `[1,64,64,1]` esqueleto limpio). Es chico (float16, unos cientos de KB) y la
-inferencia corre **en el equipo**: no descarga nada.
+inferencia corre **en el equipo**: no descarga nada. El modelo se llama
+**Buril** (herramienta de grabado: saca una línea fina de un repase grueso) y
+su versionado va en la release (`Buril 1`, `Buril 2`, …) y en el manifiesto
+`.json` (`"modelo": "Buril 1"`).
 
-**Ese `.tflite` NO se versiona** (`.gitignore`): para no engordar el repo, el CI
-lo entrena con el dataset comercial del Plan B y lo **inyecta en el APK** antes
-de `assembleDebug`. Ver `app/src/main/assets/modelos/LEEME.md`.
+**Ese `.tflite` NO se versiona** (`.gitignore`): para no engordar el repo se
+entrena fuera y se **inyecta en el APK** antes de `assembleDebug`. El buzón es
+la **release `modelo-buril`** (un asset `.tflite` + su `.json`, historial de
+versiones), no la cache de Actions. Lo llena Google Colab (cuaderno
+`tools/entrenar_limpiar_trazos_colab.ipynb`, GPU gratis) o, como respaldo, el
+workflow `entrenar-limpiar-trazos-planb.yml`. Ver
+`app/src/main/assets/modelos/LEEME.md`.
 
 - `LimpiadorTrazosIa` (`:app`) carga el modelo con **LiteRT**
   (`com.google.ai.edge.litert:litert`, patrón `CompiledModel.create(assets,
@@ -174,9 +181,12 @@ de `assembleDebug`. Ver `app/src/main/assets/modelos/LEEME.md`.
   `null` y `DibujoViewModel.limpiarTrazosConModelo` cae al adelgazado algorítmico.
   `DibujoEstado.modeloIaDisponible` decide si se ofrece el botón en el diálogo.
 - Reproducir el modelo: `tools/entrenar_limpiar_trazos.py` (requiere
-  `tensorflow-cpu` + `numpy`; escribe el `.tflite` y su `.json` de métricas en
-  assets). **No se ejecuta en el build**: el binario lo produce el CI y lo
-  inyecta en el APK (ver arriba), así el repo no carga el modelo.
+  `tensorflow` + `numpy`; en Colab GPU conviene `tensorflow`, no
+  `tensorflow-cpu`) escribe el `.tflite` y su `.json` de métricas. **No se
+  ejecuta en el build**: el binario lo produce Colab/el CI y se publica en la
+  release `modelo-buril`, que `android-apk.yml` baja e inyecta en el APK (ver
+  arriba), así el repo no carga el modelo. `--nombre`/`--version` fijan la
+  identidad que va al manifiesto.
 - Datos reales (opcional): `--reales <carpeta>` carga pares reales
   `entrada/`+`objetivo/` (p. ej. SketchBench o el set de Simo-Serra) y los
   mezcla con los sintéticos; `--aumentos N` agrega copias aumentadas (volteos,
@@ -205,10 +215,13 @@ de `assembleDebug`. Ver `app/src/main/assets/modelos/LEEME.md`.
   mezcla con los sintéticos, separando entrenamiento/validación **por boceto**
   (sin fuga). Exporta `.tflite` **float16** (I/O float32, corre en GPU y CPU),
   evalúa **IoU y PSNR** sobre validación con el modelo exportado y guarda un
-  `.json` de métricas + atribución. El workflow
-  `.github/workflows/entrenar-limpiar-trazos-planb.yml` lo entrena con el `.npz`
-  del Plan B, lo **cachea** y lo sube como artefacto; `android-apk.yml` restaura
-  esa cache y copia el `.tflite` a `app/src/main/assets/modelos/` antes de
+  `.json` de métricas + atribución (con `"modelo": "Buril N"`). La vía
+  recomendada es el cuaderno de Colab
+  `tools/entrenar_limpiar_trazos_colab.ipynb` (driver fino: clona el repo, corre
+  el dataset y el entrenamiento y publica en la release); el workflow
+  `.github/workflows/entrenar-limpiar-trazos-planb.yml` queda como **respaldo**
+  y publica en la misma release `modelo-buril`. `android-apk.yml` baja el
+  `.tflite` de esa release y lo copia a `app/src/main/assets/modelos/` antes de
   `assembleDebug`. Por eso el binario **no se versiona** (ver `LEEME.md`).
 - **Plan B — dataset comercial (Quick, Draw!)**:
   `tools/preparar_dataset_limpiar_trazos_planb.py` +
@@ -577,6 +590,6 @@ Es clave para trabajar desde el móvil, sin adb ni PC.
 
 - Horario del usuario: America/Caracas; respondé en español nativo, fixeáte en `opencode.json`.
 - Tests: JUnit Platform; paridad en `engine/src/test/kotlin/com/dibujo/engine/MotorTest.kt` (incluye paridad de undo/redo con `historialParidad` y de `reemplazarHoja`). El antialiasing entra en esa paridad: si tocás `disco`/`pintarMezcla` en un lado, corré `:engine:test`.
-- Modelo IA: el `.tflite` se regenera con `tools/entrenar_limpiar_trazos.py` (Python + `tensorflow-cpu` + `numpy`). **No se versiona** (`.gitignore`): lo produce `.github/workflows/entrenar-limpiar-trazos-planb.yml` (entrena con el `.npz` del Plan B, cachea el binario y sube artefacto) y `android-apk.yml` lo inyecta en `app/src/main/assets/modelos/` antes de armar el APK. Los datasets reales viven en dos planes: **Plan A** (SketchBench, investigación) en `tools/preparar_dataset_limpiar_trazos.py` + `.github/workflows/preparar-dataset-limpiar-trazos.yml`, y **Plan B** (Quick, Draw!, CC BY 4.0, apto para monetizar) en `tools/preparar_dataset_limpiar_trazos_planb.py` + `.github/workflows/preparar-dataset-limpiar-trazos-planb.yml`. Los dos producen el mismo `.npz`, que se consume con `entrenar_limpiar_trazos.py --pares <npz>`.
+- Modelo IA (**Buril**): el `.tflite` se regenera con `tools/entrenar_limpiar_trazos.py` (Python + `tensorflow` + `numpy`). **No se versiona** (`.gitignore`). El **buzón oficial es la release `modelo-buril`**, que lo llena el cuaderno de Colab `tools/entrenar_limpiar_trazos_colab.ipynb` (recomendado) o `.github/workflows/entrenar-limpiar-trazos-planb.yml` (respaldo, entrena con el `.npz` del Plan B); `android-apk.yml` baja el `.tflite` de esa release y lo inyecta en `app/src/main/assets/modelos/` antes de armar el APK. Los datasets reales viven en dos planes: **Plan A** (SketchBench, investigación) en `tools/preparar_dataset_limpiar_trazos.py` + `.github/workflows/preparar-dataset-limpiar-trazos.yml`, y **Plan B** (Quick, Draw!, CC BY 4.0, apto para monetizar) en `tools/preparar_dataset_limpiar_trazos_planb.py` + `.github/workflows/preparar-dataset-limpiar-trazos-planb.yml`. Los dos producen el mismo `.npz`, que se consume con `entrenar_limpiar_trazos.py --pares <npz>`.
 - El workflow `android-apk.yml` corre manual (`workflow_dispatch`) y en cada PR contra main; el workflow falso `build-debug-apk.yml` (APK placeholder aapt2/d8) fue eliminado.
 - Commits: esperar orden explícita del usuario (nunca commit proactivo).

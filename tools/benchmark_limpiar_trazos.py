@@ -708,6 +708,40 @@ def guardar(informe, rejilla, salida):
     return ruta_json
 
 
+def guardar_corrida(corrida, salida):
+    """Persiste la corrida (entradas, GT y predicciones) para reusarla después.
+
+    Colab borra las variables al reiniciar la sesión aunque la salida siga a la
+    vista; guardar los arreglos permite rehacer la comparación sin recalcular.
+    """
+    os.makedirs(salida, exist_ok=True)
+    arreglos = {
+        "entradas": np.asarray(corrida["entradas"], np.float32),
+        "gt": np.asarray(corrida["gt"], np.float32),
+    }
+    for k in corrida["informe"]["orden"]:
+        arreglos["pred_" + k] = np.asarray(corrida["predicciones"][k], np.float32)
+    ruta = os.path.join(salida, "corrida.npz")
+    np.savez_compressed(ruta, **arreglos)
+    print(f"[salida] corrida:  {ruta}")
+    return ruta
+
+
+def cargar_corrida(salida):
+    """Recupera una corrida guardada con [guardar_corrida]; None si no existe."""
+    ruta_npz = os.path.join(salida, "corrida.npz")
+    ruta_json = os.path.join(salida, "resultados.json")
+    if not (os.path.exists(ruta_npz) and os.path.exists(ruta_json)):
+        return None
+    with open(ruta_json, encoding="utf-8") as f:
+        informe = json.load(f)
+    with np.load(ruta_npz) as z:
+        entradas = list(z["entradas"])
+        gt = list(z["gt"])
+        predicciones = {k: list(z["pred_" + k]) for k in informe["orden"]}
+    return {"entradas": entradas, "gt": gt, "predicciones": predicciones, "informe": informe}
+
+
 # --------------------------------------------------------------------------
 # Autoprueba (sin red ni modelos)
 # --------------------------------------------------------------------------
@@ -740,7 +774,22 @@ def autoprueba():
     vacio = evaluar_muestra(np.zeros((64, 64), np.float32), linea)
     assert vacio["cldice"] < 0.5, vacio
 
-    print("autoprueba OK: esqueleto, polaridad y métricas funcionan.")
+    # Persistencia: guardar y recuperar una corrida mínima en un directorio temporal.
+    import tempfile
+    with tempfile.TemporaryDirectory() as tmp:
+        falsa = {
+            "entradas": np.zeros((1, 8, 8), np.float32),
+            "gt": np.ones((1, 8, 8), np.float32),
+            "predicciones": {"buril": [np.ones((8, 8), np.float32)]},
+            "informe": {"orden": ["buril"]},
+        }
+        guardar(falsa["informe"], None, tmp)
+        guardar_corrida(falsa, tmp)
+        vuelta = cargar_corrida(tmp)
+        assert vuelta is not None and vuelta["informe"]["orden"] == ["buril"]
+        assert np.allclose(vuelta["predicciones"]["buril"][0], 1.0)
+
+    print("autoprueba OK: esqueleto, polaridad, métricas y persistencia funcionan.")
 
 
 # --------------------------------------------------------------------------
@@ -776,6 +825,7 @@ def main():
     imprimir_ranking(informe)
     guardar(informe, None, args.salida)
     if corrida["predicciones"]:
+        guardar_corrida(corrida, args.salida)
         try:
             rejilla = dibujar_rejilla(corrida["entradas"], corrida["gt"],
                                       corrida["predicciones"],

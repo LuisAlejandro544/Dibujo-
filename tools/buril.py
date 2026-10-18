@@ -1,7 +1,11 @@
 """Entrena un modelo chico que "limpia" trazos repasados.
 
 Entrada: parche 64x64x1 con la tinta gruesa/irregular (varios repases).
-Salida:  parche 64x64x1 con el esqueleto limpio de 1 px.
+Salida:  parche 64x64x1 con la línea limpia. El objetivo de entrenamiento es una
+**banda** de 3 px (no una línea dura de 1 px, casi imposible de acertar píxel a
+píxel para una convolución): la app vuelve a adelgazar con Zhang-Suen en el
+móvil, así que el esqueleto final sigue siendo de 1 px. La banda le da margen a
+la red y saca el desbalance extremo del BCE.
 
 **Contrato de polaridad (crítico).** Tanto la app (`LimpiadorTrazosIa`) como el
 benchmark le pasan al modelo `tinta = 1, fondo = 0`. Los `.npz` de los planes A/B
@@ -27,9 +31,17 @@ Datos:
 Además se aumenta el set de entrenamiento con transformaciones que no mueven la
 etiqueta (volteos, giros de 90 grados, desplazamientos) y de forma/fotometría
 solo sobre la entrada (difuminado, engrosado/adelgazado, contraste, ruido) para
-simular más grosores de repase.
+simular más grosores de repase. `--aumentos N` agrega N copias aumentadas por
+muestra (por defecto 3).
 
-El modelo se exporta a .tflite (float16) para correrlo en el móvil con LiteRT.
+La **pérdida** es BCE + Dice + **clDice** (Shit et al., CVPR'21): clDice es
+diferenciable (esqueleto morfológico blando) y empuja a preservar la topología
+de la línea, no sólo la superposición. El **LR** usa decaimiento coseno
+(`--lr`), y por defecto se corren 60 épocas.
+
+El modelo (mini U-Net 32/64/128, ~0,9 MB en float16 y ~466k parámetros) se
+exporta a .tflite (float16) para correrlo en el móvil con LiteRT; es más ancho
+que la v1 (24/32/48, ~100 KB) para tener más capacidad sin dejar de ser chico.
 
 Uso (desde la raíz del repo, con `tensorflow-cpu` + `numpy` instalados):
 
@@ -162,6 +174,36 @@ def _engrosar(v):
 
 def _adelgazar(v):
     return np.minimum.reduce(_vecinos(v))
+
+
+def _dilatar(v):
+    """Dilatación 3x3 (máximo) por las dos dimensiones espaciales.
+
+    A diferencia de `_engrosar` (que asume una sola muestra 2D), respeta el lote:
+    para `(N, H, W, 1)` dilata H y W y deja N intacto; para `(H, W)` dilata todo.
+    """
+    ejes = (-3, -2) if (v.ndim >= 3 and v.shape[-1] == 1) else (-2, -1)
+    salida = v
+    for dy in (-1, 0, 1):
+        for dx in (-1, 0, 1):
+            corrido = np.roll(np.roll(v, dy, axis=ejes[0]), dx, axis=ejes[1])
+            salida = np.maximum(salida, corrido)
+    return salida
+
+
+def banda(mask, radio=1):
+    """Ensancha el objetivo a una banda de [2*radio+1] px (la app adelgaza igual).
+
+    Una etiqueta de 1 px es casi imposible de acertar píxel a píxel con una
+    convolución y empuja a la red a devolver manchas; una banda limpia le da
+    margen y `LimpiadorTrazosIa` vuelve a adelgazar con Zhang-Suen en el móvil,
+    así que el esqueleto final sigue siendo de 1 px. `radio=0` deja el 1 px de
+    siempre. Acepta `(H, W)` o lotes `(N, H, W, 1)`.
+    """
+    v = np.asarray(mask, np.float32)
+    for _ in range(int(radio)):
+        v = _dilatar(v)
+    return v
 
 
 def aumentar(x, y, rng):
@@ -353,6 +395,12 @@ def autoprueba():
                          bezier(curva_base(np.random.default_rng(0))))
     assert set(np.unique(objetivo)).issubset({0.0, 1.0}), "objetivo sintético no binario"
 
+    # 2b. La banda engorda el objetivo (3 px) pero sigue siendo binaria.
+    banda3 = banda(objetivo, 1)
+    assert set(np.unique(banda3)).issubset({0.0, 1.0}), "banda no binaria"
+    assert banda3.sum() > objetivo.sum(), "la banda no engordó el objetivo"
+    assert banda(objetivo, 0).sum() == objetivo.sum(), "radio 0 no debe cambiar el objetivo"
+
     # 3. El loader del cache invierte a tinta=1/fondo=0 (contrato de la app).
     x = np.full((1, LADO, LADO), 255, np.uint8)
     y = np.zeros((1, LADO, LADO), np.uint8)
@@ -371,23 +419,30 @@ def autoprueba():
 
 
 def modelo():
-    # Mini U-Net de 2 niveles. Un poco más ancha que la v1 (16/24/32) pero
-    # sigue siendo chica para el móvil (float16, unos cientos de KB).
+    """Mini U-Net de 3 niveles (32/64/128), ~466k parámetros (~0,9 MB float16).
+
+    Es más ancha y profunda que la v1 (24/32/48, ~100 KB) para tener más
+    capacidad, pero sigue siendo un modelo chico y rápido para el móvil. Entrada
+    y salida siguen siendo `[1, 64, 64, 1]`, así que `LimpiadorTrazosIa` no
+    cambia.
+    """
     inp = tf.keras.Input((LADO, LADO, 1))
-    x = tf.keras.layers.Conv2D(24, 3, padding="same", activation="relu")(inp)
-    x = tf.keras.layers.Conv2D(24, 3, padding="same", activation="relu")(x)
+    x = tf.keras.layers.Conv2D(32, 3, padding="same", activation="relu")(inp)
+    x = tf.keras.layers.Conv2D(32, 3, padding="same", activation="relu")(x)
     s1 = x
-    x = tf.keras.layers.Conv2D(32, 3, strides=2, padding="same", activation="relu")(x)
-    x = tf.keras.layers.Conv2D(32, 3, padding="same", activation="relu")(x)
+    x = tf.keras.layers.Conv2D(64, 3, strides=2, padding="same", activation="relu")(x)
+    x = tf.keras.layers.Conv2D(64, 3, padding="same", activation="relu")(x)
     s2 = x
-    x = tf.keras.layers.Conv2D(48, 3, strides=2, padding="same", activation="relu")(x)
-    x = tf.keras.layers.Conv2D(48, 3, padding="same", activation="relu")(x)
-    x = tf.keras.layers.Conv2DTranspose(32, 2, strides=2, padding="same", activation="relu")(x)
+    x = tf.keras.layers.Conv2D(128, 3, strides=2, padding="same", activation="relu")(x)
+    x = tf.keras.layers.Conv2D(128, 3, padding="same", activation="relu")(x)
+    x = tf.keras.layers.Conv2DTranspose(64, 2, strides=2, padding="same", activation="relu")(x)
     x = tf.keras.layers.Concatenate()([x, s2])
-    x = tf.keras.layers.Conv2D(32, 3, padding="same", activation="relu")(x)
-    x = tf.keras.layers.Conv2DTranspose(24, 2, strides=2, padding="same", activation="relu")(x)
+    x = tf.keras.layers.Conv2D(64, 3, padding="same", activation="relu")(x)
+    x = tf.keras.layers.Conv2D(64, 3, padding="same", activation="relu")(x)
+    x = tf.keras.layers.Conv2DTranspose(32, 2, strides=2, padding="same", activation="relu")(x)
     x = tf.keras.layers.Concatenate()([x, s1])
-    x = tf.keras.layers.Conv2D(24, 3, padding="same", activation="relu")(x)
+    x = tf.keras.layers.Conv2D(32, 3, padding="same", activation="relu")(x)
+    x = tf.keras.layers.Conv2D(32, 3, padding="same", activation="relu")(x)
     out = tf.keras.layers.Conv2D(1, 1, activation="sigmoid")(x)
     return tf.keras.Model(inp, out)
 
@@ -399,19 +454,63 @@ def dice(y_true, y_pred):
     return 1.0 - (2.0 * inter + 1.0) / (tf.reduce_sum(y_true) + tf.reduce_sum(y_pred) + 1.0)
 
 
-def perdida(y_true, y_pred):
-    """BCE + Dice (soft) para el esqueleto de 1 px.
+def _erosion_soft(imagen):
+    """Erosión morfológica blanda y diferenciable (max-pooling sobre el negativo)."""
+    p1 = -tf.nn.max_pool2d(-imagen, (3, 1), (1, 1), "SAME")
+    p2 = -tf.nn.max_pool2d(-imagen, (1, 3), (1, 1), "SAME")
+    return tf.minimum(p1, p2)
 
-    El BCE solo se hunde en el desbalance: la línea de 1 px es ~2-5% de los
-    píxeles, así que el modelo cubre de tinta para bajar el error y devuelve
-    manchas/grumos. El término Dice es sensible a la superposición de la línea
-    fina y empuja un esqueleto delgado y limpio.
+
+def _dilatacion_soft(imagen):
+    return tf.nn.max_pool2d(imagen, (3, 3), (1, 1), "SAME")
+
+
+def _esqueletizar_soft(imagen, iteraciones=10):
+    """Esqueleto morfológico blando (clDice, Shit et al., CVPR'21).
+
+    Es diferenciable (erosión/dilatación con max-pooling), así que la pérdida
+    puede "ver" la topología del esqueleto y no sólo la superposición de píxeles.
+    """
+    imagen1 = _dilatacion_soft(_erosion_soft(imagen))
+    esqueleto = tf.nn.relu(imagen - imagen1)
+    for _ in range(int(iteraciones)):
+        imagen = _erosion_soft(imagen)
+        imagen1 = _dilatacion_soft(_erosion_soft(imagen))
+        delta = tf.nn.relu(imagen - imagen1)
+        esqueleto = esqueleto + tf.nn.relu(delta - esqueleto * delta)
+    return esqueleto
+
+
+def cldice_loss(y_true, y_pred):
+    """clDice (Shit et al., CVPR'21): preserva la topología del esqueleto.
+
+    Con un objetivo fino el IoU castiga fuerte el grosor; clDice premia que la
+    predicción siga la conectividad correcta. `1 - clDice` es la pérdida.
+    """
+    s_gt = _esqueletizar_soft(y_true)
+    s_pred = _esqueletizar_soft(y_pred)
+    t_prec = tf.reduce_sum(s_pred * y_true) / (tf.reduce_sum(s_pred) + 1.0)
+    t_sens = tf.reduce_sum(s_gt * y_pred) / (tf.reduce_sum(s_gt) + 1.0)
+    return 1.0 - (2.0 * t_prec * t_sens + 1.0) / (t_prec + t_sens + 1.0)
+
+
+def cldice_metrica(y_true, y_pred):
+    """clDice como métrica (1 = perfecto)."""
+    return 1.0 - cldice_loss(y_true, y_pred)
+
+
+def perdida(y_true, y_pred):
+    """BCE + Dice + 0.5*clDice (soft) para la línea limpia.
+
+    El BCE solo se hunde en el desbalance (la línea es ~2-15 % de los píxeles);
+    el término Dice es sensible a la superposición y el clDice empuja a
+    preservar la topología (conectividad) de la línea.
     """
     y_pred = tf.clip_by_value(y_pred, 1e-6, 1.0 - 1e-6)
     bce = -tf.reduce_mean(
         y_true * tf.math.log(y_pred) + (1.0 - y_true) * tf.math.log(1.0 - y_pred)
     )
-    return bce + dice(y_true, y_pred)
+    return bce + dice(y_true, y_pred) + 0.5 * cldice_loss(y_true, y_pred)
 
 
 def psnr(y_true, y_pred):
@@ -425,10 +524,12 @@ def psnr(y_true, y_pred):
 
 
 def evaluar(tflite, x, y, max_muestras=48):
-    """IoU y PSNR promedio del modelo exportado sobre [x]/[y] (esqueleto vs ideal).
+    """IoU y PSNR promedio del modelo exportado sobre [x]/[y] (banda objetivo).
 
     Se usa el propio `.tflite` (no Keras) para medir exactamente lo que corre en
-    el movil, incluida la cuantizacion float16.
+    el movil, incluida la cuantizacion float16. El objetivo [y] es la banda de
+    entrenamiento (ver `banda`); el benchmark mide clDice contra el esqueleto de
+    1 px del `.npz`.
     """
     if x.shape[0] == 0:
         return {"iou": 0.0, "psnr": 0.0, "muestras": 0}
@@ -464,9 +565,13 @@ def argumentos():
                    help="cache .npz de un plan de dataset (tools/preparar_dataset_limpiar_trazos*.py)")
     p.add_argument("--parches-por-imagen", type=int, default=16,
                    help="parches 64x64 maximos por hoja del cache --pares")
-    p.add_argument("--aumentos", type=int, default=1, help="copias aumentadas por muestra de entrenamiento")
-    p.add_argument("--epocas", type=int, default=20)
+    p.add_argument("--aumentos", type=int, default=3, help="copias aumentadas por muestra de entrenamiento")
+    p.add_argument("--epocas", type=int, default=60)
     p.add_argument("--lote", type=int, default=32)
+    p.add_argument("--lr", type=float, default=1e-3,
+                   help="LR inicial (decae en coseno hasta ~5%% en las --epocas)")
+    p.add_argument("--banda", type=int, default=1,
+                   help="radio de la banda objetivo en px (0 = línea de 1 px; 1 = 3 px)")
     p.add_argument("--semilla", type=int, default=1)
     p.add_argument("--nombre", type=str, default="Buril",
                    help="nombre del modelo (va al manifiesto y a la release)")
@@ -508,18 +613,32 @@ def main():
         xva = np.concatenate([xva, xp_va], 0)
         yva = np.concatenate([yva, yp_va], 0)
 
+    # Objetivo de entrenamiento = banda limpia (no línea de 1 px): la app
+    # adelgaza con Zhang-Suen, así que el esqueleto final sigue siendo de 1 px.
+    ytr = banda(ytr, args.banda)
+    yva = banda(yva, args.banda)
+
     xtr, ytr = aumentar_conjunto(xtr, ytr, rng, args.aumentos)
 
     orden = rng.permutation(xtr.shape[0])
     xtr, ytr = xtr[orden], ytr[orden]
-    print(f"entrenamiento: {xtr.shape[0]} pares | validación: {xva.shape[0]} pares")
+    print(f"entrenamiento: {xtr.shape[0]} pares | validación: {xva.shape[0]} pares "
+          f"| objetivo: banda de {2 * args.banda + 1} px")
 
     red = modelo()
-    red.compile(
-        optimizer=tf.keras.optimizers.Adam(1e-3),
-        loss=perdida,
-        metrics=[dice],
+    pasos = max(1, int(np.ceil(xtr.shape[0] / args.lote)))
+    plan_lr = tf.keras.optimizers.schedules.CosineDecay(
+        initial_learning_rate=args.lr,
+        decay_steps=max(1, pasos * args.epocas),
+        alpha=0.05,
     )
+    red.compile(
+        optimizer=tf.keras.optimizers.Adam(plan_lr),
+        loss=perdida,
+        metrics=[dice, cldice_metrica],
+    )
+    parametros = int(red.count_params())
+    print(f"modelo: {parametros:,} parametros (~{parametros * 2 / 1e6:.2f} MB en float16)")
     red.fit(
         xtr, ytr, validation_data=(xva, yva),
         epochs=args.epocas, batch_size=args.lote, verbose=2,
@@ -544,11 +663,15 @@ def main():
     # Manifiesto con metricas + licencia/atribucion del dataset (Plan B).
     manifiesto = {
         "modelo": f"{args.nombre} {args.version}",
-        "descripcion": "limpiador de trazos (entrada 64x64x1 -> esqueleto 64x64x1)",
+        "descripcion": "limpiador de trazos (entrada 64x64x1 -> línea limpia 64x64x1)",
         "formato": "tflite float16",
         "bytes": len(tflite),
+        "parametros": parametros,
         "epocas": args.epocas,
         "aumentos": args.aumentos,
+        "lr": args.lr,
+        "banda_objetivo_px": 2 * args.banda + 1,
+        "perdida": "BCE + Dice + 0.5*clDice",
         "pares": args.pares,
         "reales": args.reales,
         "validacion": metricas,

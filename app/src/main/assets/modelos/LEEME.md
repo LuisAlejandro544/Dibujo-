@@ -10,6 +10,10 @@ CC BY 4.0).
   `tools/buril_colab.ipynb` (driver fino sobre los scripts). La celda 1 pide la
   versión del `.npz` y la del modelo (por defecto `v1.0.0-experimental.1a`).
   Como respaldo, el workflow `.github/workflows/entrenar-limpiar-trazos-planb.yml`.
+- Arquitectura y entrenamiento: mini U-Net 32/64/128 (~466k parámetros, ~0,9 MB
+  en float16); objetivo = **banda de 3 px** (`--banda`); pérdida **BCE + Dice +
+  clDice**; LR con decaimiento coseno (60 épocas, aumentos 3 por defecto). El
+  objetivo es una banda porque la app vuelve a adelgazar con Zhang-Suen.
 - Buzón del modelo: los dos publican `limpiar_trazos.tflite` + `limpiar_trazos.json` en la
   **release `modelo-buril`** (fuera de git, con historial).
 - Buzón del dataset: el `.npz` se cachea en la **release `dataset-buril`**

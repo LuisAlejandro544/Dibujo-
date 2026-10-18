@@ -29,7 +29,9 @@ IoU de máscara, precisión/recall, **clDice** (topología) y **PSNR**; además
 métricas operativas (latencia ms/imagen y peso del modelo en MB).
 
 Salidas: imprime los logs y el ranking por consola, guarda `resultados.json` y
-una rejilla PNG en `.cache/benchmark/`. El cuaderno
+una rejilla PNG en `.cache/benchmark/` (la rejilla muestra la salida
+**normalizada** de cada modelo, es decir lo que el usuario ve tras el adelgazado
+de la app, no la salida cruda). El cuaderno
 `tools/benchmark_limpiar_trazos.ipynb` es la versión **autónoma** de Colab: lleva
 esta lógica embebida (no clona el repo ni importa este archivo), muestra las
 imágenes en línea y, opcionalmente, levanta una interfaz Gradio.
@@ -178,6 +180,16 @@ def evaluar_muestra(tinta_pred, gt):
 
 
 METRICAS = ["cldice", "iou_esq", "dice_esq", "iou_bin", "precision", "recall", "psnr"]
+
+
+def salida_normalizada(tinta_pred):
+    """Salida como la ve el usuario: tinta orientada -> umbral Otsu -> esqueleto.
+
+    La app (`LimpiadorTrazosIa`) adelgaza con Zhang-Suen antes de dibujar, así
+    que esto es lo que llega a la hoja: mostrar la salida cruda (banda/manchas)
+    en la rejilla daba conclusiones falsas. Devuelve 0/1 float.
+    """
+    return esqueletizar(binarizar(a_tinta(tinta_pred))).astype(np.float32)
 
 
 def promediar(lista):
@@ -591,6 +603,7 @@ def ejecutar(npz, buril, n=8, semilla=1, ids=None, log=print):
     log(f"[datos] {len(equis)} muestras de validación de {npz}")
 
     predicciones = {}
+    normalizadas = {}
     informe = {"npz": npz, "muestras": len(equis), "lado": int(equis.shape[1]), "modelos": {}}
 
     for m in registro(buril):
@@ -622,6 +635,7 @@ def ejecutar(npz, buril, n=8, semilla=1, ids=None, log=print):
             continue
 
         predicciones[nombre] = salidas
+        normalizadas[nombre] = [salida_normalizada(s) for s in salidas]
         informe["modelos"][nombre] = {
             "id": m["id"],
             "licencia": m["licencia"],
@@ -645,7 +659,8 @@ def ejecutar(npz, buril, n=8, semilla=1, ids=None, log=print):
             pass
 
     informe["orden"] = [k for k in predicciones]
-    return {"entradas": equis, "gt": yes, "predicciones": predicciones, "informe": informe}
+    return {"entradas": equis, "gt": yes, "predicciones": predicciones,
+            "normalizadas": normalizadas, "informe": informe}
 
 
 # --------------------------------------------------------------------------
@@ -669,7 +684,12 @@ def imprimir_ranking(informe):
 
 
 def dibujar_rejilla(entradas, gt, predicciones, ruta, max_muestras=4):
-    """Rejilla PNG (entrada | cada modelo | GT) para ver dentro del cuaderno."""
+    """Rejilla PNG (entrada | cada modelo | GT) para inspección visual.
+
+    [predicciones] debe venir **normalizada** (`salida_normalizada`), es decir lo
+    que el usuario termina viendo tras el adelgazado de la app, no la salida
+    cruda (banda/manchas) de cada modelo.
+    """
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
@@ -682,7 +702,7 @@ def dibujar_rejilla(entradas, gt, predicciones, ruta, max_muestras=4):
         hachas = hachas[None, :]
     for fila in range(n):
         paneles = [entradas[fila]] + [predicciones[k][fila] for k in nombres] + [gt[fila]]
-        titulos = ["entrada"] + nombres + ["GT (1 px)"]
+        titulos = ["entrada"] + [f"{k} (norm)" for k in nombres] + ["GT (1 px)"]
         for col in range(columnas):
             ax = hachas[fila, col]
             ax.imshow(np.asarray(paneles[col]), cmap="gray")
@@ -726,6 +746,11 @@ def autoprueba():
     grueso = np.zeros((64, 64), np.float32)
     grueso[10:54, 10:14] = 1.0
     assert esqueletizar(grueso > 0.5).sum() < grueso.sum(), "no adelgazó la banda"
+
+    # La salida que se muestra en la rejilla es la normalizada (0/1 adelgazada).
+    normal = salida_normalizada(grueso)
+    assert set(np.unique(normal)).issubset({0.0, 1.0}), "normalizada no binaria"
+    assert normal.sum() < grueso.sum(), "la normalización no adelgazó"
 
     # La misma línea, oscura sobre blanco y clara sobre negro, da la misma tinta.
     oscura = np.ones((64, 64), np.float32)
@@ -778,7 +803,7 @@ def main():
     if corrida["predicciones"]:
         try:
             rejilla = dibujar_rejilla(corrida["entradas"], corrida["gt"],
-                                      corrida["predicciones"],
+                                      corrida["normalizadas"],
                                       os.path.join(args.salida, "rejilla.png"))
         except Exception as e:  # noqa: BLE001
             print(f"[aviso] rejilla no generada: {type(e).__name__}: {e}")

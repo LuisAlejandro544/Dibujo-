@@ -284,10 +284,15 @@ Particularidades:
   `FileProvider` con autoridad `${applicationId}.fileprovider`; declarado en el
   manifest con `res/xml/file_paths.xml`). Compartir no pide permisos. Se
   evitan los bytes duplicados: se codifica una vez y se decide después.
-- **Icono de borrador**: `IconosDibujo.IconoBorrador` es un `ImageVector`
-  propio con el path oficial de Material Symbols `ink_eraser` (el
-  `material-icons-extended` del BOM actual no lo trae). Reemplaza al de
-  escoba (`CleaningServices`) en la barra de herramientas.
+- **Iconos propios de herramientas** (`IconosDibujo.kt`): `material-icons-extended`
+  del BOM actual no trae un borrador real, así que hay dos `ImageVector` propios.
+  `IconoBorrador` usa el path oficial de Material Symbols `ink_eraser` en versión
+  **contorno** (viewport `0 0 960 960`, coordenadas positivas tal como las exporta
+  Android; se lee mejor que la rellena y que la escoba `CleaningServices`).
+  `IconoTrazoDoble` dibuja **dos trazos paralelos** con `stroke` y reemplaza al
+  `ContentCopy` de la herramienta DOBLE, que parecía un botón de "copiar". En la
+  fila de herramientas cada botón muestra su nombre debajo (`labelSmall`), así
+  todas se identifican de un vistazo.
 - Icono de app: adaptive icon XML (sin PNG) con `monochrome`.
 
 ### Backend gráfico (OpenGL ES / Vulkan)

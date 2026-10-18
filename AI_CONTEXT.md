@@ -148,8 +148,8 @@ verifica. Si la hoja está vacía devuelve `false` y no ensucia el historial.
 ### Limpiar trazos con modelo (IA local, LiteRT) — "Buril"
 Además del adelgazado algorítmico, `:app` trae un **modelo propio** que limpia
 los repases con una red: `app/src/main/assets/modelos/limpiar_trazos.tflite`
-(U-Net mínima: entrada `[1,64,64,1]` máscara binaria de tinta; salida
-`[1,64,64,1]` esqueleto limpio). Es chico (float16, unos cientos de KB) y la
+(mini U-Net 32/64/128: entrada `[1,64,64,1]` máscara binaria de tinta; salida
+`[1,64,64,1]` línea limpia). Es chico (float16, ~0,9 MB, ~466k parámetros) y la
 inferencia corre **en el equipo**: no descarga nada. El modelo se llama
 **Buril** (herramienta de grabado: saca una línea fina de un repase grueso) y
 su versionado va en la release y en el manifiesto `.json`
@@ -199,8 +199,9 @@ Ver `app/src/main/assets/modelos/LEEME.md`.
   `entrada/`+`objetivo/` (p. ej. SketchBench o el set de Simo-Serra) y los
   mezcla con los sintéticos; `--aumentos N` agrega copias aumentadas (volteos,
   giros de 90°, desplazamientos y, sólo sobre la entrada, difuminado,
-  engrosado/adelgazado, contraste y ruido). La red es una mini U-Net un poco más
-  ancha (24/32/48) pero sigue siendo chica para el móvil. Sigue leyendo y
+  engrosado/adelgazado, contraste y ruido). La red es una mini U-Net de 3
+  niveles (32/64/128, ~0,9 MB en float16), más ancha que la v1 (24/32/48) pero
+  todavía chica para el móvil. Sigue leyendo y
   escribiendo parches `64×64×1`, así que no hay que tocar `LimpiadorTrazosIa`.
   Al terminar evalúa **IoU y PSNR** sobre validación con el `.tflite` exportado y
   guarda un manifiesto con las métricas y la atribución del dataset.
@@ -224,8 +225,14 @@ Ver `app/src/main/assets/modelos/LEEME.md`.
   (sin fuga). **Polaridad**: el cache guarda la tinta oscura (fondo 255) y el
   loader la invierte a `tinta = 1, fondo = 0` para que coincida con la app, el
   benchmark y el set sintético; equivocarse acá hacía que el móvil recibiera la
-  polaridad opuesta y Buril saliera ruidoso. La **pérdida es BCE + Dice** (el
-  BCE solo se hunde en el desbalance de una línea de 1 px y devuelve manchas).
+  polaridad opuesta y Buril saliera ruidoso. El **objetivo de entrenamiento es
+  una banda de 3 px** (`--banda`, por defecto 1), no una línea dura de 1 px: una
+  convolución no puede acertar el 1 px y devolvía manchas, y la app adelgaza con
+  Zhang-Suen igual. La **pérdida es BCE + Dice + 0.5·clDice** (el clDice, Shit
+  et al. CVPR'21, se calcula con un esqueleto morfológico blando diferenciable,
+  así que premia la conectividad y no sólo la superposición). El **LR decae en
+  coseno** (`--lr`, por defecto `1e-3`) y por defecto se corren **60 épocas** con
+  **`--aumentos 3`**.
   Exporta `.tflite` **float16** (I/O float32, corre en GPU y CPU),
   evalúa **IoU y PSNR** sobre validación con el modelo exportado y guarda un
   `.json` de métricas + atribución (con `"modelo": "Buril <version>"`). La vía
@@ -255,7 +262,9 @@ Ver `app/src/main/assets/modelos/LEEME.md`.
     `y` = trazo limpio de 1 px (polilínea de Bresenham) y `x` = el mismo trazo
     **repasado a mano simulado** (varias pasadas, jitter perpendicular, radios
     1.5-4.5 px y manchas sueltas), el mismo *inverse dataset construction* de
-    Simo-Serra pero sobre datos comerciales. La rasterización es propia (sólo
+    Simo-Serra pero sobre datos comerciales. El `.npz` guarda el esqueleto de
+    1 px; `buril.py` lo engorda a banda (`--banda`) recién al entrenar, así el
+    benchmark puede seguir midiendo contra el esqueleto ideal. La rasterización es propia (sólo
     `numpy`, sin Pillow ni CairoSVG); los puntos se **densifican** antes de
     estampar para que ningún trazo quede punteado.
   - El `.npz` usa el **mismo formato que el Plan A** (x grises uint8, y binaria
@@ -280,12 +289,13 @@ Gradio). Toma N muestras del `split=validacion` del `.npz` (que ya trae el
 esqueleto limpio de 1 px como *ground truth*) y las pasa por **los mismos** modelos;
 después normaliza la salida de todos (**umbral + esqueleto Zhang-Suen**) y mide
 IoU/Dice esqueleto↔esqueleto, IoU de máscara, precisión/recall, **clDice** (topología)
-y **PSNR**, más latencia y peso. Rivales: **Simo-Serra** (`bobbens/sketch_simplification`
+y **PSNR**, más latencia y peso. La rejilla y la interfaz Gradio muestran la salida
+**normalizada** (lo que el usuario ve tras el adelgazado de la app), no la cruda. Rivales: **Simo-Serra** (`bobbens/sketch_simplification`
 GAN, pesos convertidos en `Rayonapp/sketch_simplification`; licencia **CC-BY-NC-SA,
 no comercial**), **Anime2Sketch** (MIT), **Informative Drawings** (MIT),
 **ControlNet Lineart** y **PidiNet** (Apache-2.0, vía `controlnet-aux`); baseline
 algorítmico **Zhang-Suen**. Es honesto *sólo* como comparación de forma con
-protocolo fijo: Buril es un especialista en esqueleto de 1 px para el móvil, no un
+protocolo fijo: Buril es un especialista en línea limpia para el móvil, no un
 limpiador general; no busca un "ganador" universal. Salidas en `.cache/benchmark/`
 (`resultados.json` + `rejilla.png`, no versionados). Autoprueba sin red:
 `python3 tools/benchmark_limpiar_trazos.py autoprueba` (el cuaderno corre la misma

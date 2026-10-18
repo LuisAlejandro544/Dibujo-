@@ -261,8 +261,10 @@ Ver `app/src/main/assets/modelos/LEEME.md`.
     ganancia de int8 no compensa perder la GPU.
 
 ### Benchmark de limpieza de trazos (Buril vs. rivales)
-`tools/benchmark_limpiar_trazos.py` (lógica) + `tools/benchmark_limpiar_trazos.ipynb`
-(driver fino de Colab: baja Buril de `modelo-buril` y el `.npz` de `dataset-buril`
+`tools/benchmark_limpiar_trazos.py` (CLI + `autoprueba`) y
+`tools/benchmark_limpiar_trazos.ipynb` (**cuaderno autónomo de Colab**: la lógica va
+embebida en una celda, así **no clona el repo ni importa el `.py`** ni depende de
+qué rama tenga el archivo; baja Buril de `modelo-buril` y el `.npz` de `dataset-buril`
 **sin token**, muestra las imágenes en línea y, opcionalmente, levanta una interfaz
 Gradio). Toma N muestras del `split=validacion` del `.npz` (que ya trae el
 esqueleto limpio de 1 px como *ground truth*) y las pasa por **los mismos** modelos;
@@ -276,7 +278,8 @@ algorítmico **Zhang-Suen**. Es honesto *sólo* como comparación de forma con
 protocolo fijo: Buril es un especialista en esqueleto de 1 px para el móvil, no un
 limpiador general; no busca un "ganador" universal. Salidas en `.cache/benchmark/`
 (`resultados.json` + `rejilla.png`, no versionados). Autoprueba sin red:
-`python3 tools/benchmark_limpiar_trazos.py autoprueba`.
+`python3 tools/benchmark_limpiar_trazos.py autoprueba` (el cuaderno corre la misma
+autoprueba embebida antes de medir).
 
 ### Paleta del calco (color local, sin red neuronal)
 `Cuantizador` (`:core`) implementa k-medias (k-means++ con semilla fija, por eso

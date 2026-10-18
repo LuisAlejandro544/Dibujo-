@@ -30,8 +30,9 @@ métricas operativas (latencia ms/imagen y peso del modelo en MB).
 
 Salidas: imprime los logs y el ranking por consola, guarda `resultados.json` y
 una rejilla PNG en `.cache/benchmark/`. El cuaderno
-`tools/benchmark_limpiar_trazos.ipynb` es el driver fino de Colab (muestra las
-imágenes en línea y, opcionalmente, levanta una interfaz Gradio).
+`tools/benchmark_limpiar_trazos.ipynb` es la versión **autónoma** de Colab: lleva
+esta lógica embebida (no clona el repo ni importa este archivo), muestra las
+imágenes en línea y, opcionalmente, levanta una interfaz Gradio.
 
 Uso:
     python3 tools/benchmark_limpiar_trazos.py todo --pares .cache/.../pares.npz --muestras 8

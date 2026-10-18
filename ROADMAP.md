@@ -29,6 +29,7 @@ mencionarla en el PR.
 - [x] **Mejora de IA, balde y exportación (issue 28)**: el **balde** ahora sólo rellena la región **cerrada** tocada (si alcanza el borde de la hoja no pinta nada; antes inundaba todo el fondo blanco), en C++ y Kotlin con paridad (`MotorTest`); el script de entrenamiento acepta **datasets reales** (`--reales entrada/objetivo`, p. ej. SketchBench) y **aumentación** de dominio, con una mini U-Net algo más ancha (sigue 64×64×1, sin tocar la app); la **exportación** muestra un diálogo con el **peso del PNG** y ofrece **guardar en galería o compartir** en cualquier app (`FileProvider`, sin permisos); y el **icono del borrador** pasó a un borrador real (Material Symbols `ink_eraser`).
 - [x] **Herramientas legibles (seguimiento issue 28)**: el borrador usa el `ink_eraser` en **contorno** y la herramienta **Doble** deja el icono de "copiar" por uno propio de **dos trazos paralelos**; además, cada botón de herramienta muestra su **nombre debajo** (antes sólo iconos), así el doble lápiz/pincel se encuentra de un vistazo. Fila de herramientas a lo ancho y grosor + paleta en la fila siguiente.
 - [x] **El balde cierra huecos del contorno (seguimiento issue 28)**: el dibujo a mano deja aperturas de pocos píxeles y las figuras grandes (cara, brazo) quedaban sin rellenar porque el relleno se escapaba al borde y se abortaba; ahora, antes de rendirse, el balde **cierra huecos de hasta 6 px** (cierre morfológico con cuadrado separable de radio `RADIO_CIERRE = 3`) y reintenta, pintando sólo los píxeles del color de origen. En C++ y Kotlin con paridad (`MotorTest.rellenoCierraHuecoParidadNativoKotlin`).
+- [x] **Pantalla principal y sistema de guardados (issue 30)**: la app abre en un **menú** con tres pantallas propias (`PantallaMenu`, `PantallaCargar`, `PantallaOpciones`; navegación simple en `Navegacion.kt`, sin dependencias nuevas). **Continuar dibujando** reanuda el borrador autoguardado y **Cargar dibujo** lista la biblioteca de copias guardadas; la **Configuración dejó de ser un diálogo** dentro del lienzo y ahora es su propia pantalla. Persistencia en `AlmacenDibujos` (PNG en `filesDir/dibujos`, sin permisos): borrador `actual` autoguardado al salir del lienzo y en `ON_STOP`, más copias de biblioteca creadas con "Guardar en la app" (con miniatura, abrir y borrar). Falta restaurar el historial y la cámara entre aperturas.
 
 ## En curso
 
@@ -36,7 +37,7 @@ mencionarla en el PR.
 
 ## Próximas (prioridad)
 
-1. **Persistencia**: guardar/cargar la hoja (PNG a galería o archivo propio) y restaurar el historial de la sesión.
+1. **Historial entre sesiones**: al reabrir un dibujo guardado, restaurar la pila de deshacer/rehacer (hoy se recupera la hoja, no el historial).
 2. **Firma de release**: keystore de release + `assembleRelease` firmado en CI (hoy solo debug).
 3. **Rasterizado en GPU**: hoy la GPU sólo presenta la hoja como textura con la cámara en el shader; el trazo y su antialiasing siguen en CPU. Moverlos a GPU (tiles/VBOs) manteniendo paridad con `MotorTest`.
 4. **Cámara al abrir**: modo MOVER centrado con zoom inicial para hojas más grandes que la pantalla.

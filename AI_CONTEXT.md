@@ -307,6 +307,49 @@ Particularidades:
   todas se identifican de un vistazo.
 - Icono de app: adaptive icon XML (sin PNG) con `monochrome`.
 
+### Pantalla principal, navegación y sistema de guardados (issue 30)
+Al abrir la app ya no se entra directo al lienzo: se muestra un **menú
+principal** con tres accesos, cada uno en su propio archivo/pantalla.
+
+- **Navegación** (`Navegacion.kt`, `AppDibujo`): un estado simple
+  (`enum Destino { MENU, DIBUJO, CARGAR, OPCIONES }` con `rememberSaveable`) y un
+  `when`; sin dependencias nuevas (no se agregó Navigation Compose). `MainActivity`
+  compone `AppDibujo()`. El `DibujoViewModel` es el de la Activity, así que la
+  hoja **sobrevive** al ir y volver del menú (no se recrea el motor).
+- **`PantallaMenu.kt`** (`PantallaMenu`): tres tarjetas grandes.
+  - *Continuar dibujando*: si el motor ya está en memoria, sólo vuelve al
+    lienzo; si no, carga el borrador autoguardado y lo reabre.
+  - *Cargar dibujo*: va a la biblioteca.
+  - *Opciones*: va a la pantalla de configuración.
+- **`PantallaCargar.kt`** (`PantallaCargar`): lista las copias guardadas con
+  miniatura (`AlmacenDibujos.miniatura`, potencias de dos), fecha y tamaño;
+  permite abrir (carga los píxeles y llama `DibujoViewModel.abrirDibujo`) o
+  borrar (con confirmación).
+- **`PantallaOpciones.kt`** (`PantallaOpciones`): la configuración dejó de ser un
+  diálogo dentro del lienzo y tiene **pantalla dedicada**. Por ahora reúne la
+  elección de backend (reusa `OpcionBackend` y `BackendRender.recursoNombre()`,
+  ahora `internal` en este archivo).
+- **`AlmacenDibujos.kt`**: persistencia en `filesDir/dibujos` como PNG (ARGB sin
+  pérdida), sin permisos.
+  - **Borrador en curso** (`actual.png`, [AlmacenDibujos.SLOT_ACTUAL]): el dibujo
+    que se está editando. `DibujoViewModel.autoguardarActual()` lo escribe cuando
+    el estado tiene `modificado = true`, al salir del lienzo (onDispose de la
+    pantalla) y al irse la app a segundo plano (`ON_STOP`). *Continuar dibujando*
+    lo reanuda.
+  - **Biblioteca**: "Guardar en la app" (menú "más opciones" del lienzo) crea una
+    copia con marca de tiempo; son las que lista *Cargar dibujo*. El export a la
+    galería sigue existiendo y es aparte.
+- **Carga en el `DibujoViewModel`** (`abrirDibujo(ancho, alto, pixeles)`): si el
+  motor ya tiene ese tamaño, sólo `reemplazarHoja`; si no, lo recrea con el
+  tamaño guardado y el render GPU se reasigna (el `key` de `SuperficieGpu` ya
+  incluye `hojaAncho`/`hojaAlto`). El historial arranca limpio. La pantalla de
+  dibujo vuelve al menú con flecha/atrás (`BackHandler`).
+- Estados nuevos en `DibujoEstado`: `modificado` (hay cambios sin autoguardar).
+  `abrirDibujo` lo deja en `true` (lo abierto pasa a ser el borrador en curso).
+  Nota de concurrencia: `autoguardarActual` copia la hoja **en el hilo que llama**
+  (no después de `close()`), y sólo comprime el PNG fuera del hilo principal; se
+  marca `modificado = false` antes de escribir para no perder cambios nuevos.
+
 ### Backend gráfico (OpenGL ES / Vulkan)
 `BackendRender` (`:core`) es el enum elegible: `AUTOMATICO`, `OPENGL`,
 `VULKAN`. `CapacidadesGraficas` (`:app`) detecta el soporte real (Vulkan 1.1
@@ -422,9 +465,12 @@ Es clave para trabajar desde el móvil, sin adb ni PC.
   implementado, la app presenta la hoja como textura en GPU y sólo cae a CPU
   si el backend falla. Sin dispositivo Android en el runner, la corrección en
   runtime del render GPU (sobre todo Vulkan) sólo se valida compilando/enlazando.
-- Se puede exportar el dibujo a la galería (PNG), pero no hay persistencia del
-  estado editable de la hoja (reabrir el proyecto/deshacer entre sesiones): es
-  la tarea #1 del ROADMAP.
+- El dibujo editable ya se guarda/reabre en la app (`AlmacenDibujos`, ver
+  "Pantalla principal, navegación y sistema de guardados"): hay **borrador en
+  curso** autoguardado y **biblioteca** de copias. Lo que todavía no se
+  restaura es el **historial** de la sesión (deshacer entre aperturas) ni la
+  cámara: al reabrir sólo se recupera la hoja. Release sin firmar y sin más
+  metadatos por dibujo (nombre propio).
 - Release de `:app` no está firmado para distribución (solo debug).
 - El historial es por snapshots: 30 pasos (compartidos C++/Kotlin) para
   acotar la RAM del dispositivo (ver "Historial").

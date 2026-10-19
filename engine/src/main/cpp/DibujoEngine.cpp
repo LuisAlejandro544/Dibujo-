@@ -276,6 +276,18 @@ inline void pintarMezcla(std::vector<uint32_t>& hoja, int ancho, int alto,
     destino = 0xFF000000u | (r << 16) | (g << 8) | b;
 }
 
+// Interpola un canal entre 4 texeles y redondea a entero. La asociación de las
+// operaciones y `floor(v + 0.5)` coinciden con `MotorKotlin.canalBilineal`.
+inline int canalBilineal(int c00, int c10, int c01, int c11,
+                         double fx, double fy) {
+    const double arriba = static_cast<double>(c00) +
+                          static_cast<double>(c10 - c00) * fx;
+    const double abajo = static_cast<double>(c01) +
+                         static_cast<double>(c11 - c01) * fx;
+    const double v = arriba + (abajo - arriba) * fy;
+    return static_cast<int>(std::floor(v + 0.5));
+}
+
 // Pinta un disco suavizado centrado en (cx, cy) con radio r.
 // La cobertura se calcula analíticamente (0.5 + r − distancia) usando double,
 // igual que el respaldo Kotlin, para que el antialiasing sea idéntico.
@@ -305,20 +317,158 @@ void pintarDisco(std::vector<uint32_t>& hoja, int ancho, int alto,
     }
 }
 
-// Línea gruesa: Bresenham entre dos puntos con disco en cada paso.
+inline int alphaCobertura(double cobertura) {
+    if (cobertura <= 0.0) return 0;
+    if (cobertura > 1.0) return 255;
+    return static_cast<int>(std::floor(cobertura * 255.0 + 0.5));
+}
+
+// Acumula en `cobertura` la cobertura máxima (0..255) del segmento
+// (ax, ay)-(bx, by) con radio `radio`. La distancia punto-segmento va en
+// double y el redondeo con `floor(v + 0.5)` coincide con el Kotlin.
+void cubrirSegmento(std::vector<uint8_t>& cobertura, int anchoCaja,
+                    int bx0, int by0, int bx1, int by1,
+                    float ax, float ay, float bx, float by, float radio) {
+    const float margen = radio + 1.0f;
+    const int x0 = std::min(bx1, std::max(bx0, static_cast<int>(
+        std::floor(static_cast<double>(ax - margen)))));
+    const int x1 = std::min(bx1, std::max(bx0, static_cast<int>(
+        std::ceil(static_cast<double>(ax + margen)))));
+    const int y0 = std::min(by1, std::max(by0, static_cast<int>(
+        std::floor(static_cast<double>(ay - margen)))));
+    const int y1 = std::min(by1, std::max(by0, static_cast<int>(
+        std::ceil(static_cast<double>(ay + margen)))));
+    const int x2 = std::min(bx1, std::max(bx0, static_cast<int>(
+        std::floor(static_cast<double>(bx - margen)))));
+    const int x3 = std::min(bx1, std::max(bx0, static_cast<int>(
+        std::ceil(static_cast<double>(bx + margen)))));
+    const int y2 = std::min(by1, std::max(by0, static_cast<int>(
+        std::floor(static_cast<double>(by - margen)))));
+    const int y3 = std::min(by1, std::max(by0, static_cast<int>(
+        std::ceil(static_cast<double>(by + margen)))));
+    const int desdeX = std::min(x0, x2);
+    const int hastaX = std::max(x1, x3);
+    const int desdeY = std::min(y0, y2);
+    const int hastaY = std::max(y1, y3);
+    if (desdeX > hastaX || desdeY > hastaY) return;
+    const double axD = static_cast<double>(ax);
+    const double ayD = static_cast<double>(ay);
+    const double dx = static_cast<double>(bx) - axD;
+    const double dy = static_cast<double>(by) - ayD;
+    const double largo2 = dx * dx + dy * dy;
+    const double r = static_cast<double>(radio);
+    for (int y = desdeY; y <= hastaY; ++y) {
+        const int fila = (y - by0) * anchoCaja;
+        const double pdy = static_cast<double>(y) - ayD;
+        for (int x = desdeX; x <= hastaX; ++x) {
+            const double pdx = static_cast<double>(x) - axD;
+            double dist;
+            if (largo2 <= 1e-12) {
+                dist = std::sqrt(pdx * pdx + pdy * pdy);
+            } else {
+                double t = (pdx * dx + pdy * dy) / largo2;
+                if (t < 0.0) t = 0.0;
+                if (t > 1.0) t = 1.0;
+                const double qx = pdx - t * dx;
+                const double qy = pdy - t * dy;
+                dist = std::sqrt(qx * qx + qy * qy);
+            }
+            const double cob = 0.5 + r - dist;
+            if (cob <= 0.0) continue;
+            const int alpha = alphaCobertura(cob);
+            const int idx = fila + (x - bx0);
+            if (alpha > cobertura[static_cast<std::size_t>(idx)]) {
+                cobertura[static_cast<std::size_t>(idx)] = static_cast<uint8_t>(alpha);
+            }
+        }
+    }
+}
+
+void lineaGruesa(std::vector<uint32_t>& hoja, int ancho, int alto,
+                 float x0, float y0, float x1, float y1,
+                 float radio, bool redonda, uint32_t color);
+
+// Polilínea con cobertura máxima por píxel y una sola mezcla: los segmentos
+// que comparten vértice ya no oscurecen el empalme por doble mezcla. Replica
+// `Lienzo.polilineaGruesa` (paridad píxel a píxel).
+void polilineaGruesa(std::vector<uint32_t>& hoja, int ancho, int alto,
+                     const float* puntos, int cantidad, float radio,
+                     bool redonda, uint32_t color) {
+    if (cantidad < 2) return;
+    if (!redonda) {
+        for (int i = 0; i + 3 < cantidad; i += 2) {
+            lineaGruesa(hoja, ancho, alto, puntos[i], puntos[i + 1],
+                        puntos[i + 2], puntos[i + 3], radio, false, color);
+        }
+        if (cantidad == 2) {
+            const int px = static_cast<int>(std::lround(puntos[0]));
+            const int py = static_cast<int>(std::lround(puntos[1]));
+            const int r = static_cast<int>(std::lround(radio));
+            for (int oy = -r; oy <= r; ++oy) {
+                for (int ox = -r; ox <= r; ++ox) {
+                    const int xx = px + ox;
+                    const int yy = py + oy;
+                    if (xx >= 0 && yy >= 0 && xx < ancho && yy < alto) {
+                        hoja[static_cast<std::size_t>(yy) * ancho + xx] = color;
+                    }
+                }
+            }
+        }
+        return;
+    }
+    if (cantidad == 2) {
+        pintarDisco(hoja, ancho, alto, puntos[0], puntos[1], radio, color);
+        return;
+    }
+    float minX = puntos[0];
+    float minY = puntos[1];
+    float maxX = puntos[0];
+    float maxY = puntos[1];
+    for (int i = 2; i + 1 < cantidad; i += 2) {
+        minX = std::min(minX, puntos[i]);
+        maxX = std::max(maxX, puntos[i]);
+        minY = std::min(minY, puntos[i + 1]);
+        maxY = std::max(maxY, puntos[i + 1]);
+    }
+    const float margen = radio + 1.0f;
+    const int bx0 = std::max(0, static_cast<int>(
+        std::floor(static_cast<double>(minX - margen))));
+    const int by0 = std::max(0, static_cast<int>(
+        std::floor(static_cast<double>(minY - margen))));
+    const int bx1 = std::min(ancho - 1, static_cast<int>(
+        std::ceil(static_cast<double>(maxX + margen))));
+    const int by1 = std::min(alto - 1, static_cast<int>(
+        std::ceil(static_cast<double>(maxY + margen))));
+    if (bx0 > bx1 || by0 > by1) return;
+    const int anchoCaja = bx1 - bx0 + 1;
+    const int altoCaja = by1 - by0 + 1;
+    std::vector<uint8_t> cobertura(
+        static_cast<std::size_t>(anchoCaja) * static_cast<std::size_t>(altoCaja), 0);
+    for (int i = 0; i + 3 < cantidad; i += 2) {
+        cubrirSegmento(cobertura, anchoCaja, bx0, by0, bx1, by1,
+                       puntos[i], puntos[i + 1], puntos[i + 2], puntos[i + 3], radio);
+    }
+    for (int y = by0; y <= by1; ++y) {
+        const int fila = (y - by0) * anchoCaja;
+        for (int x = bx0; x <= bx1; ++x) {
+            const int alpha = cobertura[static_cast<std::size_t>(fila + (x - bx0))];
+            if (alpha > 0) pintarMezcla(hoja, ancho, alto, x, y, color, alpha);
+        }
+    }
+}
+
+// Línea gruesa: con punta redonda se rasteriza como una cápsula (cobertura
+// única por píxel); con punta cuadrada se estampa el bloque como antes.
 void lineaGruesa(std::vector<uint32_t>& hoja, int ancho, int alto,
                  float x0, float y0, float x1, float y1,
                  float radio, bool redonda, uint32_t color) {
-    const int pasos = std::max(1, static_cast<int>(std::ceil(
-        std::max(std::abs(x1 - x0), std::abs(y1 - y0)))));
-    for (int i = 0; i <= pasos; ++i) {
-        const float t = static_cast<float>(i) / static_cast<float>(pasos);
-        const float x = x0 + (x1 - x0) * t;
-        const float y = y0 + (y1 - y0) * t;
-        if (redonda) {
-            pintarDisco(hoja, ancho, alto, x, y, radio, color);
-        } else {
-            // Punta cuadrada: bloque radio x radio.
+    if (!redonda) {
+        const int pasos = std::max(1, static_cast<int>(std::ceil(
+            std::max(std::abs(x1 - x0), std::abs(y1 - y0)))));
+        for (int i = 0; i <= pasos; ++i) {
+            const float t = static_cast<float>(i) / static_cast<float>(pasos);
+            const float x = x0 + (x1 - x0) * t;
+            const float y = y0 + (y1 - y0) * t;
             const int px = static_cast<int>(std::lround(x));
             const int py = static_cast<int>(std::lround(y));
             const int r = static_cast<int>(std::lround(radio));
@@ -327,12 +477,15 @@ void lineaGruesa(std::vector<uint32_t>& hoja, int ancho, int alto,
                     const int xx = px + ox;
                     const int yy = py + oy;
                     if (xx >= 0 && yy >= 0 && xx < ancho && yy < alto) {
-                        hoja[yy * ancho + xx] = color;
+                        hoja[static_cast<std::size_t>(yy) * ancho + xx] = color;
                     }
                 }
             }
         }
+        return;
     }
+    const float puntos[4] = {x0, y0, x1, y1};
+    polilineaGruesa(hoja, ancho, alto, puntos, 4, radio, true, color);
 }
 
 // Línea gruesa doble: dibuja dos líneas paralelas separadas `separacion` px
@@ -352,6 +505,71 @@ void lineaDoble(std::vector<uint32_t>& hoja, int ancho, int alto,
     const float oy = ny * separacion;
     lineaGruesa(hoja, ancho, alto, x0 + ox, y0 + oy, x1 + ox, y1 + oy, radio, redonda, color);
     lineaGruesa(hoja, ancho, alto, x0 - ox, y0 - oy, x1 - ox, y1 - oy, radio, redonda, color);
+}
+
+// Polilínea doble: desplaza la polilínea completa con una normal suavizada por
+// vértice (promedio de las direcciones vecinas). Evita el "temblor" de calcular
+// la normal segmento a segmento. Replica `Lienzo.polilineaDoble` (paridad).
+void polilineaDoble(std::vector<uint32_t>& hoja, int ancho, int alto,
+                    const float* puntos, int cantidad, float radio,
+                    bool redonda, uint32_t color, float separacion) {
+    if (cantidad < 2) return;
+    if (cantidad == 2) {
+        if (redonda) {
+            pintarDisco(hoja, ancho, alto, puntos[0], puntos[1], radio, color);
+        } else {
+            const int px = static_cast<int>(std::lround(puntos[0]));
+            const int py = static_cast<int>(std::lround(puntos[1]));
+            const int r = static_cast<int>(std::lround(radio));
+            for (int oy = -r; oy <= r; ++oy) {
+                for (int ox = -r; ox <= r; ++ox) {
+                    const int xx = px + ox;
+                    const int yy = py + oy;
+                    if (xx >= 0 && yy >= 0 && xx < ancho && yy < alto) {
+                        hoja[static_cast<std::size_t>(yy) * ancho + xx] = color;
+                    }
+                }
+            }
+        }
+        return;
+    }
+    const int n = cantidad / 2;
+    std::vector<float> ladoA(static_cast<std::size_t>(cantidad), 0.0f);
+    std::vector<float> ladoB(static_cast<std::size_t>(cantidad), 0.0f);
+    for (int i = 0; i < n; ++i) {
+        const int base = i * 2;
+        float dx;
+        float dy;
+        if (i == 0) {
+            dx = puntos[2] - puntos[0];
+            dy = puntos[3] - puntos[1];
+        } else if (i == n - 1) {
+            dx = puntos[base] - puntos[base - 2];
+            dy = puntos[base + 1] - puntos[base - 1];
+        } else {
+            dx = puntos[base + 2] - puntos[base - 2];
+            dy = puntos[base + 3] - puntos[base - 1];
+        }
+        const double largo = std::sqrt(static_cast<double>(dx) * dx +
+                                       static_cast<double>(dy) * dy);
+        float nx;
+        float ny;
+        if (largo < 1e-6) {
+            nx = 0.0f;
+            ny = 0.0f;
+        } else {
+            nx = static_cast<float>(-dy / largo);
+            ny = static_cast<float>(dx / largo);
+        }
+        const float ox = nx * separacion;
+        const float oy = ny * separacion;
+        ladoA[static_cast<std::size_t>(base)] = puntos[base] + ox;
+        ladoA[static_cast<std::size_t>(base + 1)] = puntos[base + 1] + oy;
+        ladoB[static_cast<std::size_t>(base)] = puntos[base] - ox;
+        ladoB[static_cast<std::size_t>(base + 1)] = puntos[base + 1] - oy;
+    }
+    polilineaGruesa(hoja, ancho, alto, ladoA.data(), cantidad, radio, redonda, color);
+    polilineaGruesa(hoja, ancho, alto, ladoB.data(), cantidad, radio, redonda, color);
 }
 
 } // namespace
@@ -417,35 +635,16 @@ bool DibujoEngine::terminarTrazo() {
                  static_cast<int>(std::lround(trazo_[0])),
                  static_cast<int>(std::lround(trazo_[1])), color_);
     } else if (herramienta_ == Tool::DOBLE) {
-        // Doble lápiz: dos líneas paralelas a la vez.
+        // Doble lápiz: dos líneas paralelas con normal suavizada por vértice.
         const float separacion = separacionDoble(grosor);
-        if (trazo_.size() == 2) {
-            if (puntaRedonda_) {
-                pintarDisco(hoja_, ancho_, alto_, trazo_[0], trazo_[1], radio, color);
-            } else {
-                lineaGruesa(hoja_, ancho_, alto_, trazo_[0], trazo_[1],
-                            trazo_[0], trazo_[1], radio, false, color);
-            }
-        } else {
-            for (std::size_t i = 0; i + 3 < trazo_.size(); i += 2) {
-                lineaDoble(hoja_, ancho_, alto_, trazo_[i], trazo_[i + 1],
-                           trazo_[i + 2], trazo_[i + 3], radio, puntaRedonda_,
-                           color, separacion);
-            }
-        }
-    } else if (trazo_.size() == 2) {
-        // Punto aislado.
-        if (puntaRedonda_) {
-            pintarDisco(hoja_, ancho_, alto_, trazo_[0], trazo_[1], radio, color);
-        } else {
-            lineaGruesa(hoja_, ancho_, alto_, trazo_[0], trazo_[1],
-                        trazo_[0], trazo_[1], radio, false, color);
-        }
+        polilineaDoble(hoja_, ancho_, alto_, trazo_.data(),
+                       static_cast<int>(trazo_.size()), radio, puntaRedonda_,
+                       color, separacion);
     } else {
-        for (std::size_t i = 0; i + 3 < trazo_.size(); i += 2) {
-            lineaGruesa(hoja_, ancho_, alto_, trazo_[i], trazo_[i + 1],
-                        trazo_[i + 2], trazo_[i + 3], radio, puntaRedonda_, color);
-        }
+        // Cobertura máxima por píxel y una sola mezcla para toda la polilínea.
+        polilineaGruesa(hoja_, ancho_, alto_, trazo_.data(),
+                        static_cast<int>(trazo_.size()), radio, puntaRedonda_,
+                        color);
     }
 
     trazo_.clear();
@@ -653,12 +852,44 @@ void DibujoEngine::renderizar(uint32_t* destino, int vw, int vh) const {
             // R(−rot) aplicado a e, luego des-escalado por el zoom.
             const float hx = (c * ex + s * ey) / zoom_;
             const float hy = (-s * ex + c * ey) / zoom_;
-            const int ix = static_cast<int>(std::floor(hx));
-            const int iy = static_cast<int>(std::floor(hy));
-            destino[y * vw + x] =
-                (ix >= 0 && iy >= 0 && ix < ancho_ && iy < alto_)
-                    ? hoja_[static_cast<std::size_t>(iy) * ancho_ + ix]
-                    : kFuera;
+            const int ix = static_cast<int>(std::floor(static_cast<double>(hx)));
+            const int iy = static_cast<int>(std::floor(static_cast<double>(hy)));
+            if (ix < 0 || iy < 0 || ix >= ancho_ || iy >= alto_) {
+                destino[y * vw + x] = kFuera;
+                continue;
+            }
+            // Bilineal (centro del texel en el entero): al acercar no se ven
+            // bloques duros. Misma aritmética que `MotorKotlin`.
+            const double fx = static_cast<double>(hx) - ix;
+            const double fy = static_cast<double>(hy) - iy;
+            const int ix1 = (ix + 1 < ancho_) ? ix + 1 : ix;
+            const int iy1 = (iy + 1 < alto_) ? iy + 1 : iy;
+            const std::size_t fila0 = static_cast<std::size_t>(iy) * ancho_;
+            const std::size_t fila1 = static_cast<std::size_t>(iy1) * ancho_;
+            const uint32_t c00 = hoja_[fila0 + ix];
+            const uint32_t c10 = hoja_[fila0 + ix1];
+            const uint32_t c01 = hoja_[fila1 + ix];
+            const uint32_t c11 = hoja_[fila1 + ix1];
+            const int a = canalBilineal(static_cast<int>((c00 >> 24) & 0xFFu),
+                                        static_cast<int>((c10 >> 24) & 0xFFu),
+                                        static_cast<int>((c01 >> 24) & 0xFFu),
+                                        static_cast<int>((c11 >> 24) & 0xFFu), fx, fy);
+            const int r = canalBilineal(static_cast<int>((c00 >> 16) & 0xFFu),
+                                        static_cast<int>((c10 >> 16) & 0xFFu),
+                                        static_cast<int>((c01 >> 16) & 0xFFu),
+                                        static_cast<int>((c11 >> 16) & 0xFFu), fx, fy);
+            const int g = canalBilineal(static_cast<int>((c00 >> 8) & 0xFFu),
+                                        static_cast<int>((c10 >> 8) & 0xFFu),
+                                        static_cast<int>((c01 >> 8) & 0xFFu),
+                                        static_cast<int>((c11 >> 8) & 0xFFu), fx, fy);
+            const int b = canalBilineal(static_cast<int>(c00 & 0xFFu),
+                                        static_cast<int>(c10 & 0xFFu),
+                                        static_cast<int>(c01 & 0xFFu),
+                                        static_cast<int>(c11 & 0xFFu), fx, fy);
+            destino[y * vw + x] = (static_cast<uint32_t>(a) << 24) |
+                                  (static_cast<uint32_t>(r) << 16) |
+                                  (static_cast<uint32_t>(g) << 8) |
+                                  static_cast<uint32_t>(b);
         }
     }
 }

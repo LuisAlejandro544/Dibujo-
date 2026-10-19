@@ -197,18 +197,166 @@ class Lienzo(
         for (oy in -r..r) for (ox in -r..r) pintar(px + ox, py + oy, color)
     }
 
-    /** Línea gruesa entre dos puntos (punta redonda o cuadrada). */
+    /**
+     * Línea gruesa entre dos puntos (punta redonda o cuadrada).
+     *
+     * Con punta redonda se rasteriza como una **cápsula**: la cobertura de
+     * cada píxel sale de la distancia al segmento y se mezcla **una sola vez**.
+     * Antes se estampaba un disco cada ≤1 px y cada estampado volvía a mezclar,
+     * así que los bordes acumulaban cobertura y quedaban irregulares. El C++
+     * replica esta misma aritmética para mantener la paridad píxel a píxel.
+     */
     fun lineaGruesa(
         x0: Float, y0: Float, x1: Float, y1: Float,
         grosor: Int, redonda: Boolean, color: Int,
     ) {
+        if (!redonda) {
+            val radio = grosor / 2.0f
+            val pasos = maxOf(
+                1,
+                kotlin.math.ceil(maxOf(kotlin.math.abs(x1 - x0), kotlin.math.abs(y1 - y0))).toInt(),
+            )
+            for (i in 0..pasos) {
+                val t = i.toFloat() / pasos
+                bloque(x0 + (x1 - x0) * t, y0 + (y1 - y0) * t, radio, color)
+            }
+            return
+        }
+        val puntos = floatArrayOf(x0, y0, x1, y1)
+        polilineaGruesa(puntos, 4, grosor, redonda = true, color)
+    }
+
+    /**
+     * Rasteriza una polilínea de punta redonda con **cobertura máxima por
+     * píxel** y mezcla una sola vez. Así los segmentos que comparten un vértice
+     * no oscurecen el empalme por doble mezcla. [puntos] son coordenadas
+     * intercaladas (x, y) y [cantidad] la cantidad de floats usados (2 por
+     * punto). El C++ replica el algoritmo idéntico (paridad).
+     */
+    fun polilineaGruesa(
+        puntos: FloatArray,
+        cantidad: Int,
+        grosor: Int,
+        redonda: Boolean,
+        color: Int,
+    ) {
+        if (cantidad < 2) return
+        if (!redonda) {
+            var i = 0
+            while (i + 3 < cantidad) {
+                lineaGruesa(
+                    puntos[i], puntos[i + 1], puntos[i + 2], puntos[i + 3],
+                    grosor, redonda = false, color,
+                )
+                i += 2
+            }
+            if (cantidad == 2) bloque(puntos[0], puntos[1], grosor / 2.0f, color)
+            return
+        }
         val radio = grosor / 2.0f
-        val pasos = maxOf(1, kotlin.math.ceil(maxOf(kotlin.math.abs(x1 - x0), kotlin.math.abs(y1 - y0))).toInt())
-        for (i in 0..pasos) {
-            val t = i.toFloat() / pasos
-            val x = x0 + (x1 - x0) * t
-            val y = y0 + (y1 - y0) * t
-            if (redonda) disco(x, y, radio, color) else bloque(x, y, radio, color)
+        if (cantidad == 2) {
+            disco(puntos[0], puntos[1], radio, color)
+            return
+        }
+        val margen = radio + 1.0f
+        var minX = Float.POSITIVE_INFINITY
+        var minY = Float.POSITIVE_INFINITY
+        var maxX = Float.NEGATIVE_INFINITY
+        var maxY = Float.NEGATIVE_INFINITY
+        var i = 0
+        while (i < cantidad) {
+            val px = puntos[i]
+            val py = puntos[i + 1]
+            if (px < minX) minX = px
+            if (px > maxX) maxX = px
+            if (py < minY) minY = py
+            if (py > maxY) maxY = py
+            i += 2
+        }
+        val bx0 = kotlin.math.floor((minX - margen).toDouble()).toInt().coerceAtLeast(0)
+        val by0 = kotlin.math.floor((minY - margen).toDouble()).toInt().coerceAtLeast(0)
+        val bx1 = kotlin.math.ceil((maxX + margen).toDouble()).toInt().coerceAtMost(ancho - 1)
+        val by1 = kotlin.math.ceil((maxY + margen).toDouble()).toInt().coerceAtMost(alto - 1)
+        if (bx0 > bx1 || by0 > by1) return
+        val anchoCaja = bx1 - bx0 + 1
+        val altoCaja = by1 - by0 + 1
+        val cobertura = ByteArray(anchoCaja * altoCaja)
+        i = 0
+        while (i + 3 < cantidad) {
+            cubrirSegmento(
+                cobertura, anchoCaja, bx0, by0, bx1, by1,
+                puntos[i], puntos[i + 1], puntos[i + 2], puntos[i + 3], radio,
+            )
+            i += 2
+        }
+        for (y in by0..by1) {
+            val fila = (y - by0) * anchoCaja
+            for (x in bx0..bx1) {
+                val alpha = cobertura[fila + (x - bx0)].toInt() and 0xFF
+                if (alpha > 0) pintarMezcla(x, y, color, alpha)
+            }
+        }
+    }
+
+    /**
+     * Acumula en [cobertura] la cobertura máxima (0..255) del segmento
+     * (ax, ay)-(bx, by) con radio [radio]. La distancia punto-segmento va en
+     * `Double` y la cobertura se redondea con `floor(v + 0.5)` para que Kotlin
+     * y C++ den exactamente el mismo entero. No mezcla: sólo llena la máscara.
+     */
+    private fun cubrirSegmento(
+        cobertura: ByteArray,
+        anchoCaja: Int,
+        bx0: Int,
+        by0: Int,
+        bx1: Int,
+        by1: Int,
+        ax: Float,
+        ay: Float,
+        bx: Float,
+        by: Float,
+        radio: Float,
+    ) {
+        val margen = radio + 1.0f
+        val x0 = kotlin.math.floor((ax - margen).toDouble()).toInt().coerceAtLeast(bx0)
+        val x1 = kotlin.math.ceil((ax + margen).toDouble()).toInt().coerceAtMost(bx1)
+        val y0 = kotlin.math.floor((ay - margen).toDouble()).toInt().coerceAtLeast(by0)
+        val y1 = kotlin.math.ceil((ay + margen).toDouble()).toInt().coerceAtMost(by1)
+        val x2 = kotlin.math.floor((bx - margen).toDouble()).toInt().coerceAtLeast(bx0)
+        val x3 = kotlin.math.ceil((bx + margen).toDouble()).toInt().coerceAtMost(bx1)
+        val y2 = kotlin.math.floor((by - margen).toDouble()).toInt().coerceAtLeast(by0)
+        val y3 = kotlin.math.ceil((by + margen).toDouble()).toInt().coerceAtMost(by1)
+        val desdeX = minOf(x0, x2)
+        val hastaX = maxOf(x1, x3)
+        val desdeY = minOf(y0, y2)
+        val hastaY = maxOf(y1, y3)
+        if (desdeX > hastaX || desdeY > hastaY) return
+        val axD = ax.toDouble()
+        val ayD = ay.toDouble()
+        val dx = bx.toDouble() - axD
+        val dy = by.toDouble() - ayD
+        val largo2 = dx * dx + dy * dy
+        val r = radio.toDouble()
+        for (y in desdeY..hastaY) {
+            val fila = (y - by0) * anchoCaja
+            val pdy = y - ayD
+            for (x in desdeX..hastaX) {
+                val pdx = x - axD
+                val dist: Double
+                if (largo2 <= 1e-12) {
+                    dist = kotlin.math.sqrt(pdx * pdx + pdy * pdy)
+                } else {
+                    val t = ((pdx * dx + pdy * dy) / largo2).coerceIn(0.0, 1.0)
+                    val qx = pdx - t * dx
+                    val qy = pdy - t * dy
+                    dist = kotlin.math.sqrt(qx * qx + qy * qy)
+                }
+                val cob = (0.5 + r - dist).coerceIn(0.0, 1.0)
+                if (cob <= 0.0) continue
+                val alpha = kotlin.math.floor(cob * 255.0 + 0.5).toInt()
+                val idx = fila + (x - bx0)
+                if (alpha > (cobertura[idx].toInt() and 0xFF)) cobertura[idx] = alpha.toByte()
+            }
         }
     }
 
@@ -232,6 +380,69 @@ class Lienzo(
         val oy = ny * separacion
         lineaGruesa(x0 + ox, y0 + oy, x1 + ox, y1 + oy, grosor, redonda, color)
         lineaGruesa(x0 - ox, y0 - oy, x1 - ox, y1 - oy, grosor, redonda, color)
+    }
+
+    /**
+     * Polilínea doble (herramienta DOBLE): desplaza la **polilínea completa**
+     * hacia ambos lados usando una normal suavizada por vértice (promedio de
+     * las direcciones de los segmentos vecinos). Antes cada segmento calculaba
+     * su propia normal y las dos líneas temblaban en los empalmes. El C++
+     * replica el cálculo para mantener la paridad.
+     */
+    fun polilineaDoble(
+        puntos: FloatArray,
+        cantidad: Int,
+        grosor: Int,
+        redonda: Boolean,
+        color: Int,
+        separacion: Float,
+    ) {
+        if (cantidad < 2) return
+        if (cantidad == 2) {
+            if (redonda) disco(puntos[0], puntos[1], grosor / 2.0f, color)
+            else bloque(puntos[0], puntos[1], grosor / 2.0f, color)
+            return
+        }
+        val n = cantidad / 2
+        val ladoA = FloatArray(cantidad)
+        val ladoB = FloatArray(cantidad)
+        for (i in 0 until n) {
+            val base = i * 2
+            val dx: Float
+            val dy: Float
+            when (i) {
+                0 -> {
+                    dx = puntos[2] - puntos[0]
+                    dy = puntos[3] - puntos[1]
+                }
+                n - 1 -> {
+                    dx = puntos[base] - puntos[base - 2]
+                    dy = puntos[base + 1] - puntos[base - 1]
+                }
+                else -> {
+                    dx = puntos[base + 2] - puntos[base - 2]
+                    dy = puntos[base + 3] - puntos[base - 1]
+                }
+            }
+            val largo = kotlin.math.sqrt(dx.toDouble() * dx + dy.toDouble() * dy)
+            val nx: Float
+            val ny: Float
+            if (largo < 1e-6) {
+                nx = 0f
+                ny = 0f
+            } else {
+                nx = (-dy / largo).toFloat()
+                ny = (dx / largo).toFloat()
+            }
+            val ox = nx * separacion
+            val oy = ny * separacion
+            ladoA[base] = puntos[base] + ox
+            ladoA[base + 1] = puntos[base + 1] + oy
+            ladoB[base] = puntos[base] - ox
+            ladoB[base + 1] = puntos[base + 1] - oy
+        }
+        polilineaGruesa(ladoA, cantidad, grosor, redonda, color)
+        polilineaGruesa(ladoB, cantidad, grosor, redonda, color)
     }
 
     /**

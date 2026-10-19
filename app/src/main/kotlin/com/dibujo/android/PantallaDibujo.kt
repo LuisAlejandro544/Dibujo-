@@ -120,6 +120,8 @@ import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.FilterQuality
 import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.withTransform
@@ -147,6 +149,7 @@ import com.dibujo.core.Colores
 import com.dibujo.core.Herramienta
 import com.dibujo.core.Lapiz
 import com.dibujo.core.Modo
+import com.dibujo.core.Punta
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -1136,10 +1139,15 @@ private fun CapaGestos(
                 path.lineTo(p.x, p.y)
                 i += 2
             }
+            val redonda = lapiz.punta == Punta.REDONDA
             drawPath(
                 path,
                 color = colorTrazo,
-                style = Stroke(width = grosorTrazo * camara.zoom),
+                style = Stroke(
+                    width = grosorTrazo * camara.zoom,
+                    cap = if (redonda) StrokeCap.Round else StrokeCap.Butt,
+                    join = if (redonda) StrokeJoin.Round else StrokeJoin.Miter,
+                ),
             )
         }
     }

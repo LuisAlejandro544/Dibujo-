@@ -607,4 +607,31 @@ class MotorNativoTest {
         nativo.close()
         kotlin.close()
     }
+
+    @Test
+    fun renderBilinealParidadNativoKotlin() {
+        if (!NativeEngine.disponible()) return
+        val nativo = MotorNativo(40, 30)
+        val kotlin = MotorKotlin(40, 30)
+        for (m in listOf(nativo, kotlin)) {
+            m.configurarLapiz(Lapiz(color = Colores.NEGRO, grosor = 3))
+            m.iniciarTrazo(4f, 4f)
+            m.continuarTrazo(31f, 17f)
+            assertTrue(m.terminarTrazo(), "${m.nombre}: trazo")
+            // Zoom y pan fraccionarios: el muestreo bilineal interpola texeles.
+            m.zoom(2.5f)
+            m.pan(3.25f, -1.75f)
+        }
+        val ancho = 48
+        val alto = 40
+        val a = IntArray(ancho * alto)
+        val b = IntArray(ancho * alto)
+        nativo.renderizar(a, ancho, alto)
+        kotlin.renderizar(b, ancho, alto)
+        for (i in a.indices) {
+            assertEquals(b[i], a[i], "bilineal: discrepancia en píxel $i")
+        }
+        nativo.close()
+        kotlin.close()
+    }
 }

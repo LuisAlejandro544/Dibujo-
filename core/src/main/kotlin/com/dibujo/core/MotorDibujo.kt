@@ -18,6 +18,15 @@ interface MotorDibujo : AutoCloseable {
 
     fun configurarLapiz(lapiz: Lapiz)
 
+    /**
+     * Activa o desactiva el **trazo asistido**: al terminar un trazo, su
+     * recorrido se reemplaza por una recta entre el primer y el último punto.
+     * Sirve para las líneas rectas dibujadas a mano alzada (si sale chueca, se
+     * endereza). No afecta a la herramienta PINTAR. El C++ y Kotlin lo
+     * implementan igual (paridad).
+     */
+    fun asistenciaRecta(activa: Boolean)
+
     /** Trazo en curso, en coordenadas de hoja. */
     fun iniciarTrazo(x: Float, y: Float)
     fun continuarTrazo(x: Float, y: Float)
@@ -72,6 +81,28 @@ interface MotorDibujo : AutoCloseable {
      * verdad), así que no hay diferencias de rasterizado entre motores.
      */
     fun copiarHoja(destino: IntArray): Boolean
+
+    /**
+     * Transforma el dibujo dentro de la misma hoja: lo **voltea**
+     * (horizontal/vertical), lo **mueve** [desplazamientoX]/[desplazamientoY] px
+     * de hoja y lo **escala** [escala] alrededor del centro. Deja el estado
+     * anterior en el historial (se puede deshacer). Devuelve `false` si no hay
+     * nada que transformar. El C++ y Kotlin lo hacen idéntico (paridad).
+     */
+    fun transformarHoja(
+        voltearHorizontal: Boolean,
+        voltearVertical: Boolean,
+        desplazamientoX: Float,
+        desplazamientoY: Float,
+        escala: Float,
+    ): Boolean
+
+    /**
+     * Color ARGB de un píxel de la hoja (coordenadas de hoja, sin cámara). Si
+     * (x, y) está fuera de la hoja devuelve el color de fondo. Lo usa el
+     * cuentagotas de `:app`. El C++ lo lee bajo bloqueo.
+     */
+    fun pixelHoja(x: Int, y: Int): Int
 
     /**
      * Reemplaza la hoja COMPLETA por [pixeles] (ancho * alto ARGB) y deja el

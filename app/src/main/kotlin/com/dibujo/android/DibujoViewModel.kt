@@ -84,6 +84,12 @@ data class DibujoEstado(
     val modificado: Boolean = false,
     /** Se está recortando o redimensionando el lienzo (operación pesada). */
     val ajustandoLienzo: Boolean = false,
+    /** Últimos colores elegidos (paleta, cuentagotas o rueda HSV), más nuevos primero. */
+    val coloresRecientes: List<Int> = emptyList(),
+    /** El cuentagotas está activo: el próximo toque de la hoja toma su color. */
+    val cuentagotasActivo: Boolean = false,
+    /** Trazo asistido: las líneas dibujadas a mano se enderezan al soltar. */
+    val asistenciaRecta: Boolean = false,
 )
 
 /**
@@ -126,6 +132,7 @@ class DibujoViewModel(app: Application) : AndroidViewModel(app) {
         if (actual == null) {
             val m = Motores.crear(vw.coerceIn(1, MAX_LADO), vh.coerceIn(1, MAX_LADO))
             m.configurarLapiz(_estado.value.lapiz)
+            m.asistenciaRecta(_estado.value.asistenciaRecta)
             motor = m
             publicarContenido(m)
         } else if (_estado.value.motorNombre.isEmpty()) {
@@ -182,6 +189,7 @@ class DibujoViewModel(app: Application) : AndroidViewModel(app) {
         motor?.close()
         val nuevo = Motores.crear(ancho.coerceIn(1, MAX_LADO), alto.coerceIn(1, MAX_LADO))
         nuevo.configurarLapiz(_estado.value.lapiz)
+        nuevo.asistenciaRecta(_estado.value.asistenciaRecta)
         nuevo.reemplazarHoja(pixeles)
         motor = nuevo
         publicarContenido(nuevo, modificado = true)
@@ -399,7 +407,64 @@ class DibujoViewModel(app: Application) : AndroidViewModel(app) {
         _estado.update { it.copy(camara = m.camara(), marco = it.marco + 1) }
     }
 
-    fun elegirColor(argb: Int) = actualizarLapiz { it.copy(color = argb) }
+    /**
+     * Elige un color de la paleta, del calco o del cuentagotas: lo aplica al
+     * lápiz y lo guarda al frente de los colores recientes.
+     */
+    fun elegirColor(argb: Int) {
+        actualizarLapiz { it.copy(color = argb) }
+        registrarReciente(argb)
+    }
+
+    /**
+     * Aplica un color de la rueda HSV mientras se arrastra (vista previa), sin
+     * ensuciar la lista de recientes: recién [confirmarColorHsv] lo registra.
+     */
+    fun previsualizarColorHsv(argb: Int) = actualizarLapiz { it.copy(color = argb) }
+
+    /** Confirma el color elegido en la rueda HSV y lo guarda en recientes. */
+    fun confirmarColorHsv(argb: Int) {
+        actualizarLapiz { it.copy(color = argb) }
+        registrarReciente(argb)
+    }
+
+    private fun registrarReciente(argb: Int) {
+        _estado.update {
+            val lista = (listOf(argb) + it.coloresRecientes.filter { c -> c != argb })
+                .take(MAX_RECIENTES)
+            it.copy(coloresRecientes = lista)
+        }
+    }
+
+    /** Activa/desactiva el cuentagotas: el próximo toque de la hoja toma su color. */
+    fun alternarCuentagotas() {
+        _estado.update { it.copy(cuentagotasActivo = !it.cuentagotasActivo) }
+    }
+
+    /**
+     * Cuentagotas: lee el color del píxel de la hoja tocado (en coordenadas de
+     * hoja), lo aplica al lápiz, lo guarda en recientes y desactiva el
+     * cuentagotas (un toque = un color). Fuera de la hoja no hace nada.
+     */
+    fun recogerColor(px: Float, py: Float) {
+        val m = motor ?: return
+        val (hx, hy) = aHoja(m, px, py)
+        val ix = kotlin.math.floor(hx.toDouble()).toInt()
+        val iy = kotlin.math.floor(hy.toDouble()).toInt()
+        if (ix !in 0 until m.ancho || iy !in 0 until m.alto) return
+        val color = m.pixelHoja(ix, iy)
+        actualizarLapiz { it.copy(color = color) }
+        _estado.update { it.copy(cuentagotasActivo = false) }
+        registrarReciente(color)
+    }
+
+    /** Activa/desactiva el trazo asistido (las líneas se enderezan al soltar). */
+    fun alternarAsistenciaRecta() {
+        val m = motor ?: return
+        val nuevo = !_estado.value.asistenciaRecta
+        m.asistenciaRecta(nuevo)
+        _estado.update { it.copy(asistenciaRecta = nuevo) }
+    }
 
     fun elegirHerramienta(herramienta: Herramienta) =
         actualizarLapiz { it.copy(herramienta = herramienta) }
@@ -618,6 +683,42 @@ class DibujoViewModel(app: Application) : AndroidViewModel(app) {
                 gpuCargando = it.gpuDisponible && !it.gpuFallo,
                 marco = it.marco + 1,
             )
+        }
+    }
+
+    /**
+     * Transforma el dibujo dentro de la misma hoja: lo voltea
+     * (horizontal/vertical), lo mueve [desplazamientoX]/[desplazamientoY] px de
+     * hoja y lo escala [escala] alrededor del centro. Recorre la hoja completa,
+     * así que corre fuera del hilo principal y deja el resultado en el
+     * historial (se puede deshacer).
+     */
+    fun transformarDibujo(
+        voltearHorizontal: Boolean,
+        voltearVertical: Boolean,
+        desplazamientoX: Float,
+        desplazamientoY: Float,
+        escala: Float,
+    ) {
+        val m = motor ?: return
+        if (_estado.value.ajustandoLienzo) return
+        val cambia = voltearHorizontal || voltearVertical ||
+            desplazamientoX != 0f || desplazamientoY != 0f || escala != 1f
+        if (!cambia || escala <= 0f) return
+        _estado.update { it.copy(ajustandoLienzo = true) }
+        viewModelScope.launch {
+            val cambio = withContext(Dispatchers.Default) {
+                m.transformarHoja(voltearHorizontal, voltearVertical, desplazamientoX, desplazamientoY, escala)
+            }
+            _estado.update {
+                it.copy(
+                    ajustandoLienzo = false,
+                    puedeDeshacer = m.puedeDeshacer(),
+                    puedeRehacer = m.puedeRehacer(),
+                    modificado = it.modificado || cambio,
+                    marco = if (cambio) it.marco + 1 else it.marco,
+                )
+            }
         }
     }
 
@@ -926,5 +1027,8 @@ class DibujoViewModel(app: Application) : AndroidViewModel(app) {
         /** Límites de escala del calco sobre su ajuste automático. */
         const val CALCO_ESCALA_MIN = 0.1f
         const val CALCO_ESCALA_MAX = 20f
+
+        /** Cuántos colores recientes se recuerdan en la barra. */
+        const val MAX_RECIENTES = 12
     }
 }

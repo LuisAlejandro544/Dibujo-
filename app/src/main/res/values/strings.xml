@@ -158,4 +158,29 @@
     <string name="paleta_calco_analizando">Analizando la imagen…</string>
     <string name="paleta_calco_toca">Toca un color para usarlo:</string>
     <string name="paleta_calco_analizar">Analizar</string>
+
+    <!-- Rueda HSV / cuentagotas / colores recientes -->
+    <string name="color_titulo">Rueda de color</string>
+    <string name="color_descripcion">Elegí el tono en la rueda (el ángulo) y la saturación (el centro es blanco); ajustá el brillo abajo.</string>
+    <string name="color_brillo">Brillo: %1$d%%</string>
+    <string name="color_recientes">Recientes</string>
+    <string name="color_listo">Listo</string>
+    <string name="cd_rueda_color">Abrir la rueda de color HSV</string>
+    <string name="cd_cuentagotas">Cuentagotas: tocar la hoja para tomar su color</string>
+
+    <!-- Transformar el dibujo (voltear / mover / escalar) -->
+    <string name="transformar_titulo">Transformar dibujo</string>
+    <string name="transformar_desc">Volteá, mové o cambiá de tamaño tu dibujo. Cada paso se puede deshacer.</string>
+    <string name="transformar_voltear_h">Voltear horizontal</string>
+    <string name="transformar_voltear_v">Voltear vertical</string>
+    <string name="transformar_mover">Mover</string>
+    <string name="transformar_escala">Tamaño: %1$d%%</string>
+    <string name="transformar_aplicar">Aplicar tamaño</string>
+    <string name="cd_mover_izquierda">Mover a la izquierda</string>
+    <string name="cd_mover_derecha">Mover a la derecha</string>
+    <string name="cd_mover_arriba">Mover hacia arriba</string>
+    <string name="cd_mover_abajo">Mover hacia abajo</string>
+
+    <!-- Trazo asistido (endereza las líneas al soltar) -->
+    <string name="asistencia_recta">Líneas rectas asistidas</string>
 </resources>

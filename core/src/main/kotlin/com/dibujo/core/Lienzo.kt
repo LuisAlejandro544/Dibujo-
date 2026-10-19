@@ -112,6 +112,54 @@ class Lienzo(
     }
 
     /**
+     * Transforma el contenido de la hoja sin cambiar su tamaño: lo **voltea**
+     * (horizontal/vertical), lo **mueve** [desplazamientoX]/[desplazamientoY] px
+     * de hoja y lo **escala** [escala] veces alrededor del centro. Lo que queda
+     * afuera de la hoja se recorta y lo que no se cubre queda con el [fondo].
+     *
+     * El mapeo es inverso (por cada píxel destino se busca su origen), así que
+     * ampliar no deja huecos. La aritmética va en `Double` y el redondeo es
+     * `floor(v + 0.5)` en los dos motores, para que la paridad píxel a píxel no
+     * dependa de la última ulp de `round`/`lround`. Devuelve `false` si no hay
+     * nada que transformar (sin espejos, sin desplazamiento y escala 1) o si la
+     * escala no es positiva.
+     */
+    fun transformar(
+        voltearHorizontal: Boolean,
+        voltearVertical: Boolean,
+        desplazamientoX: Float,
+        desplazamientoY: Float,
+        escala: Float,
+    ): Boolean {
+        if (escala <= 0f) return false
+        if (!voltearHorizontal && !voltearVertical &&
+            desplazamientoX == 0f && desplazamientoY == 0f && escala == 1f
+        ) {
+            return false
+        }
+        val fuente = pixeles.copyOf()
+        val cx = (ancho - 1) / 2.0
+        val cy = (alto - 1) / 2.0
+        val e = escala.toDouble()
+        val tx = desplazamientoX.toDouble()
+        val ty = desplazamientoY.toDouble()
+        val fx = if (voltearHorizontal) -1.0 else 1.0
+        val fy = if (voltearVertical) -1.0 else 1.0
+        for (y in 0 until alto) {
+            val v = y - cy
+            val sy = kotlin.math.floor(cy + fy * ((v - ty) / e) + 0.5).toInt()
+            val fila = y * ancho
+            for (x in 0 until ancho) {
+                val u = x - cx
+                val sx = kotlin.math.floor(cx + fx * ((u - tx) / e) + 0.5).toInt()
+                pixeles[fila + x] =
+                    if (sx in 0 until ancho && sy in 0 until alto) fuente[sy * ancho + sx] else fondo
+            }
+        }
+        return true
+    }
+
+    /**
      * Disco relleno y suavizado (punta redonda del lápiz). La cobertura de
      * cada píxel se calcula analíticamente (`0.5 + radio − distancia`) y se
      * mezcla con el fondo, así los bordes del trazo quedan con antialiasing

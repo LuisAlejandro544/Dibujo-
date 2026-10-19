@@ -42,14 +42,21 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
+import androidx.compose.material.icons.automirrored.rounded.ArrowForward
 import androidx.compose.material.icons.automirrored.rounded.Redo
+import androidx.compose.material.icons.automirrored.rounded.TrendingFlat
 import androidx.compose.material.icons.automirrored.rounded.Undo
 import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material.icons.rounded.AddPhotoAlternate
+import androidx.compose.material.icons.rounded.ArrowDownward
+import androidx.compose.material.icons.rounded.ArrowUpward
 import androidx.compose.material.icons.rounded.AspectRatio
 import androidx.compose.material.icons.rounded.AutoFixHigh
 import androidx.compose.material.icons.rounded.Brush
 import androidx.compose.material.icons.rounded.CenterFocusWeak
+import androidx.compose.material.icons.rounded.Check
+import androidx.compose.material.icons.rounded.Colorize
+import androidx.compose.material.icons.rounded.ColorLens
 import androidx.compose.material.icons.rounded.Delete
 import androidx.compose.material.icons.rounded.Draw
 import androidx.compose.material.icons.rounded.FormatColorFill
@@ -66,6 +73,9 @@ import androidx.compose.material.icons.rounded.Save
 import androidx.compose.material.icons.rounded.SaveAlt
 import androidx.compose.material.icons.rounded.ScreenRotation
 import androidx.compose.material.icons.rounded.Settings
+import androidx.compose.material.icons.rounded.SwapHoriz
+import androidx.compose.material.icons.rounded.SwapVert
+import androidx.compose.material.icons.rounded.Transform
 import androidx.compose.material.icons.rounded.Visibility
 import androidx.compose.material.icons.rounded.VisibilityOff
 import androidx.compose.material3.AlertDialog
@@ -204,6 +214,9 @@ fun PantallaDibujo(
     // Limpiar la hoja borra todo y es irreversible si no se deshace: se pide
     // confirmación (ahora vive dentro del menú de la barra superior).
     var mostrarLimpiar by remember { mutableStateOf(false) }
+    // Transformar el dibujo (voltear/mover/escalar) y la rueda HSV.
+    var mostrarTransformar by remember { mutableStateOf(false) }
+    var mostrarColor by remember { mutableStateOf(false) }
 
     // Volver al menú principal (botón atrás del sistema o de la barra).
     BackHandler(onBack = alVolver)
@@ -393,6 +406,8 @@ fun PantallaDibujo(
                     )
                 },
                 alAjustarLienzo = { mostrarAjustarLienzo = true },
+                alTransformar = { mostrarTransformar = true },
+                alAlternarAsistencia = vm::alternarAsistenciaRecta,
                 exportando = exportando,
                 alAbrirConfig = alAbrirOpciones,
             )
@@ -416,6 +431,7 @@ fun PantallaDibujo(
                         vm.analizarCalco()
                     }
                 },
+                alAbrirColor = { mostrarColor = true },
             )
         },
         // Transparente: deja ver la superficie GPU que va en una capa detrás
@@ -518,6 +534,34 @@ fun PantallaDibujo(
             },
         )
     }
+
+    if (mostrarTransformar) {
+        DialogoTransformar(
+            ocupado = estado.ajustandoLienzo,
+            alVoltearHorizontal = {
+                vm.transformarDibujo(true, false, 0f, 0f, 1f)
+            },
+            alVoltearVertical = {
+                vm.transformarDibujo(false, true, 0f, 0f, 1f)
+            },
+            alMover = { dx, dy -> vm.transformarDibujo(false, false, dx, dy, 1f) },
+            alEscalar = { escala ->
+                vm.transformarDibujo(false, false, 0f, 0f, escala)
+                mostrarTransformar = false
+            },
+            alCerrar = { mostrarTransformar = false },
+        )
+    }
+
+    if (mostrarColor) {
+        DialogoColor(
+            colorInicial = estado.lapiz.color,
+            recientes = estado.coloresRecientes,
+            alPrevisualizar = vm::previsualizarColorHsv,
+            alConfirmar = { vm.confirmarColorHsv(it) },
+            alCerrar = { mostrarColor = false },
+        )
+    }
 }
 
 /**
@@ -542,6 +586,8 @@ private fun BarraSuperior(
     alExportar: () -> Unit,
     alImportarImagen: () -> Unit,
     alAjustarLienzo: () -> Unit,
+    alTransformar: () -> Unit,
+    alAlternarAsistencia: () -> Unit,
     exportando: Boolean,
     alAbrirConfig: () -> Unit,
 ) {
@@ -644,6 +690,30 @@ private fun BarraSuperior(
                         onClick = {
                             menuAbierto = false
                             alAjustarLienzo()
+                        },
+                    )
+                    DropdownMenuItem(
+                        text = { Text(stringResource(R.string.transformar_titulo)) },
+                        leadingIcon = {
+                            Icon(Icons.Rounded.Transform, contentDescription = null)
+                        },
+                        onClick = {
+                            menuAbierto = false
+                            alTransformar()
+                        },
+                    )
+                    DropdownMenuItem(
+                        text = { Text(stringResource(R.string.asistencia_recta)) },
+                        leadingIcon = {
+                            if (estado.asistenciaRecta) {
+                                Icon(Icons.Rounded.Check, contentDescription = null)
+                            } else {
+                                Icon(Icons.AutoMirrored.Rounded.TrendingFlat, contentDescription = null)
+                            }
+                        },
+                        onClick = {
+                            menuAbierto = false
+                            alAlternarAsistencia()
                         },
                     )
                     DropdownMenuItem(
@@ -899,12 +969,16 @@ private fun CapaGestos(
     // EDICION: un dedo dibuja; MOVER: pan y pinch de la cámara; y si se está
     // ajustando el calco, los gestos mueven/escalan la imagen (no la hoja).
     val modo = estadoState.value.modo
+    val cuentagotas = estadoState.value.cuentagotasActivo
     val editandoCalco = estadoState.value.calcoEnEdicion &&
         estadoState.value.calcoUri != null &&
         estadoState.value.calcoVisible
     Canvas(
-        modifier.pointerInput(modo, editandoCalco) {
-            if (editandoCalco) {
+        modifier.pointerInput(modo, editandoCalco, cuentagotas) {
+            if (cuentagotas) {
+                // Cuentagotas: un toque toma el color del píxel de la hoja.
+                detectTapGestures { punto -> vm.recogerColor(punto.x, punto.y) }
+            } else if (editandoCalco) {
                 // Un dedo mueve el calco; dos dedos lo escalan (anclado al foco).
                 detectTransformGestures(panZoomLock = true) { foco, pan, zoom, _ ->
                     if (zoom != 1f) vm.escalarCalco(zoom, foco.x, foco.y)
@@ -939,8 +1013,8 @@ private fun CapaGestos(
             }
         }
             // Toque sin arrastre: punto con el lápiz o relleno con PINTAR.
-            .pointerInput(modo, editandoCalco) {
-                if (!editandoCalco && modo == Modo.EDICION) {
+            .pointerInput(modo, editandoCalco, cuentagotas) {
+                if (!cuentagotas && !editandoCalco && modo == Modo.EDICION) {
                     detectTapGestures { punto -> vm.tocarHoja(punto.x, punto.y) }
                 }
             },
@@ -1072,6 +1146,7 @@ private fun BarraHerramientas(
     alAbrirCalco: () -> Unit,
     alTerminarCalco: () -> Unit,
     alAbrirIa: () -> Unit,
+    alAbrirColor: () -> Unit,
 ) {
     Surface(modifier = Modifier.absorberToque(), tonalElevation = 3.dp) {
         Column(
@@ -1195,6 +1270,19 @@ private fun BarraHerramientas(
                     descripcion = stringResource(R.string.cd_grosor_mas),
                     alPulsar = { vm.cambiarGrosor(1) },
                 )
+                Spacer(Modifier.width(4.dp))
+                IconoToggle(
+                    icono = Icons.Rounded.ColorLens,
+                    descripcion = stringResource(R.string.cd_rueda_color),
+                    seleccionado = false,
+                    alPulsar = alAbrirColor,
+                )
+                IconoToggle(
+                    icono = Icons.Rounded.Colorize,
+                    descripcion = stringResource(R.string.cd_cuentagotas),
+                    seleccionado = estado.cuentagotasActivo,
+                    alPulsar = { vm.alternarCuentagotas() },
+                )
                 Spacer(Modifier.width(8.dp))
                 Row(
                     Modifier
@@ -1203,6 +1291,26 @@ private fun BarraHerramientas(
                     horizontalArrangement = Arrangement.spacedBy(10.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
+                    // Recientes primero (paleta, cuentagotas y rueda HSV) y luego
+                    // la paleta fija, separadas por una línea.
+                    estado.coloresRecientes.forEach { argb ->
+                        CabezaColor(
+                            color = com.dibujo.core.Color(
+                                "#%06X".format(argb and 0xFFFFFF),
+                                argb,
+                            ),
+                            seleccionado = estado.lapiz.color == argb,
+                            onElegir = { vm.elegirColor(argb) },
+                        )
+                    }
+                    if (estado.coloresRecientes.isNotEmpty()) {
+                        Box(
+                            Modifier
+                                .width(1.dp)
+                                .height(24.dp)
+                                .background(MaterialTheme.colorScheme.outline),
+                        )
+                    }
                     Colores.PALETA.forEach { color ->
                         CabezaColor(
                             color = color,
@@ -1366,6 +1474,105 @@ private fun DialogoAjustarLienzo(
         dismissButton = {
             TextButton(onClick = alCerrar) {
                 Text(stringResource(R.string.cancelar))
+            }
+        },
+    )
+}
+
+/**
+ * Diálogo "Transformar dibujo": voltea el dibujo (horizontal/vertical), lo
+ * mueve con flechas (en pasos de 40 px de hoja) y lo escala alrededor del
+ * centro. Cada acción queda en el historial (se puede deshacer).
+ */
+@Composable
+private fun DialogoTransformar(
+    ocupado: Boolean,
+    alVoltearHorizontal: () -> Unit,
+    alVoltearVertical: () -> Unit,
+    alMover: (Float, Float) -> Unit,
+    alEscalar: (Float) -> Unit,
+    alCerrar: () -> Unit,
+) {
+    var escala by remember { mutableStateOf(1f) }
+    val paso = 40f
+    AlertDialog(
+        onDismissRequest = alCerrar,
+        title = { Text(stringResource(R.string.transformar_titulo)) },
+        text = {
+            Column {
+                Text(
+                    stringResource(R.string.transformar_desc),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Spacer(Modifier.height(8.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    TextButton(onClick = alVoltearHorizontal, enabled = !ocupado) {
+                        Icon(Icons.Rounded.SwapHoriz, contentDescription = null, Modifier.size(18.dp))
+                        Spacer(Modifier.width(6.dp))
+                        Text(stringResource(R.string.transformar_voltear_h))
+                    }
+                    TextButton(onClick = alVoltearVertical, enabled = !ocupado) {
+                        Icon(Icons.Rounded.SwapVert, contentDescription = null, Modifier.size(18.dp))
+                        Spacer(Modifier.width(6.dp))
+                        Text(stringResource(R.string.transformar_voltear_v))
+                    }
+                }
+                Spacer(Modifier.height(12.dp))
+                Text(
+                    stringResource(R.string.transformar_mover),
+                    style = MaterialTheme.typography.labelLarge,
+                )
+                Row(
+                    Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceEvenly,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    BotonIcono(
+                        icono = Icons.AutoMirrored.Rounded.ArrowBack,
+                        descripcion = stringResource(R.string.cd_mover_izquierda),
+                        habilitado = !ocupado,
+                        alPulsar = { alMover(-paso, 0f) },
+                    )
+                    BotonIcono(
+                        icono = Icons.Rounded.ArrowUpward,
+                        descripcion = stringResource(R.string.cd_mover_arriba),
+                        habilitado = !ocupado,
+                        alPulsar = { alMover(0f, -paso) },
+                    )
+                    BotonIcono(
+                        icono = Icons.Rounded.ArrowDownward,
+                        descripcion = stringResource(R.string.cd_mover_abajo),
+                        habilitado = !ocupado,
+                        alPulsar = { alMover(0f, paso) },
+                    )
+                    BotonIcono(
+                        icono = Icons.AutoMirrored.Rounded.ArrowForward,
+                        descripcion = stringResource(R.string.cd_mover_derecha),
+                        habilitado = !ocupado,
+                        alPulsar = { alMover(paso, 0f) },
+                    )
+                }
+                Spacer(Modifier.height(12.dp))
+                Text(
+                    stringResource(R.string.transformar_escala, (escala * 100).roundToInt()),
+                    style = MaterialTheme.typography.labelLarge,
+                )
+                Slider(
+                    value = escala,
+                    onValueChange = { escala = it },
+                    valueRange = 0.25f..2f,
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = { alEscalar(escala) }, enabled = !ocupado) {
+                Text(stringResource(R.string.transformar_aplicar))
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = alCerrar) {
+                Text(stringResource(R.string.cerrar))
             }
         },
     )

@@ -54,7 +54,6 @@ import androidx.compose.material.icons.rounded.AspectRatio
 import androidx.compose.material.icons.rounded.AutoFixHigh
 import androidx.compose.material.icons.rounded.Brush
 import androidx.compose.material.icons.rounded.CenterFocusWeak
-import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.Colorize
 import androidx.compose.material.icons.rounded.ColorLens
 import androidx.compose.material.icons.rounded.Delete
@@ -642,6 +641,15 @@ private fun BarraSuperior(
                 habilitado = estado.camara.rotacion != 0f,
                 alPulsar = alEnderezar,
             )
+            // Trazo asistido a la vista (no escondido en el menú): al activarlo
+            // las líneas dibujadas a mano se enderezan al soltar. Se resalta
+            // cuando está encendido.
+            BotonIcono(
+                icono = Icons.AutoMirrored.Rounded.TrendingFlat,
+                descripcion = stringResource(R.string.cd_asistencia_recta),
+                seleccionado = estado.asistenciaRecta,
+                alPulsar = alAlternarAsistencia,
+            )
             Box {
                 BotonIcono(
                     icono = Icons.Rounded.MoreVert,
@@ -700,20 +708,6 @@ private fun BarraSuperior(
                         onClick = {
                             menuAbierto = false
                             alTransformar()
-                        },
-                    )
-                    DropdownMenuItem(
-                        text = { Text(stringResource(R.string.asistencia_recta)) },
-                        leadingIcon = {
-                            if (estado.asistenciaRecta) {
-                                Icon(Icons.Rounded.Check, contentDescription = null)
-                            } else {
-                                Icon(Icons.AutoMirrored.Rounded.TrendingFlat, contentDescription = null)
-                            }
-                        },
-                        onClick = {
-                            menuAbierto = false
-                            alAlternarAsistencia()
                         },
                     )
                     DropdownMenuItem(
@@ -1814,12 +1808,22 @@ private fun BotonIcono(
     descripcion: String,
     alPulsar: () -> Unit,
     habilitado: Boolean = true,
+    seleccionado: Boolean = false,
 ) {
     IconButton(
         onClick = alPulsar,
         enabled = habilitado,
         colors = IconButtonDefaults.iconButtonColors(
-            contentColor = MaterialTheme.colorScheme.onSurfaceVariant,
+            containerColor = if (seleccionado) {
+                MaterialTheme.colorScheme.secondaryContainer
+            } else {
+                Color.Transparent
+            },
+            contentColor = if (seleccionado) {
+                MaterialTheme.colorScheme.onSecondaryContainer
+            } else {
+                MaterialTheme.colorScheme.onSurfaceVariant
+            },
         ),
     ) {
         Icon(

@@ -340,13 +340,17 @@ La operación **entra al historial** (se deshace). Paridad cubierta por
 activa, se descarta el recorrido tembloroso y se dibuja una **recta** entre el
 primer y el último punto; no aplica a `Herramienta.PINTAR` ni a toques sin
 arrastre. Paridad en `MotorTest.asistenciaEnderezaElTrazo` y
-`asistenciaRectaParidadNativoKotlin`. En la UI se activa desde el menú
-**"más opciones"** (marca `✓`) y el estado vive en `DibujoViewModel.asistenciaRecta`
-(aplicado en `inicializar` y `abrirDibujo`).
+`asistenciaRectaParidadNativoKotlin`. En la UI se activa con un botón visible en
+la **barra superior** (`BotonIcono` con `seleccionado`, se resalta al encenderse)
+y el estado vive en `DibujoViewModel.asistenciaRecta` (aplicado en `inicializar`
+y `abrirDibujo`).
 
 ### Color: rueda HSV, cuentagotas y recientes (issue 52)
 - **Rueda HSV** (`app/.../RuedaHsv.kt`, `DialogoColor`): tono por ángulo,
   saturación por radio (centro = blanco) y brillo en un `Slider`; muestra hex.
+  La rueda se pinta **siempre a brillo pleno** (el brillo sólo afecta a la
+  muestra y al hex): oscurecerla con (1 − valor) la dejaba casi negra con
+  colores oscuros y no se podía elegir el tono.
   Mientras se arrastra se **previsualiza** sobre el lápiz
   (`previsualizarColorHsv`, no toca recientes); recién "Listo"
   (`confirmarColorHsv`) lo registra.
@@ -404,10 +408,11 @@ Particularidades:
   entren en una fila sin scroll.
 - **Transformar y color (issue 52)**: el menú "más opciones" suma
   "Transformar dibujo" (`DialogoTransformar`: voltear H/V, mover en pasos de
-  40 px, escalar 0.25–2× con `Slider`; todo deshacible) y "Líneas rectas
-  asistidas" (con `✓`). La fila de color suma el botón de rueda HSV
-  (`DialogoColor` en `RuedaHsv.kt`) y el toggle de cuentagotas, y arranca con
-  los colores recientes antes de la paleta fija.
+  40 px, escalar 0.25–2× con `Slider`; todo deshacible). El trazo asistido de
+  **líneas rectas** tiene un botón propio en la barra superior (no escondido en
+  el menú) que se resalta al estar activo. La fila de color suma el botón de
+  rueda HSV (`DialogoColor` en `RuedaHsv.kt`) y el toggle de cuentagotas, y
+  arranca con los colores recientes antes de la paleta fija.
   Particularidades que costaron bugs reales:
   - Las barras del sistema usan `SystemBarStyle.light(...)`: el tema es claro
     y, con el teléfono en modo oscuro, `auto()` dejaba hora/batería blancas

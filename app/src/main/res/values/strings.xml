@@ -182,5 +182,5 @@
     <string name="cd_mover_abajo">Mover hacia abajo</string>
 
     <!-- Trazo asistido (endereza las líneas al soltar) -->
-    <string name="asistencia_recta">Líneas rectas asistidas</string>
+    <string name="cd_asistencia_recta">Líneas rectas asistidas: al soltar, el trazo se endereza</string>
 </resources>

@@ -93,7 +93,6 @@ fun DialogoColor(
                 RuedaHsv(
                     tono = tono,
                     saturacion = saturacion,
-                    valor = valor,
                     alCambiar = { t, s ->
                         tono = t
                         saturacion = s
@@ -169,15 +168,16 @@ fun DialogoColor(
 }
 
 /**
- * Rueda HSV: todos los tonos en el anillo (ángulo), saturación por radio
- * (centro = blanco) y brillo aplicado como oscurecimiento. Un toque o arrastre
- * sobre la rueda fija [tono] y [saturacion].
+ * Rueda HSV: todos los tonos en el anillo (ángulo) y la saturación por radio
+ * (centro = blanco). La rueda se dibuja siempre a brillo pleno: el brillo (V)
+ * sólo afecta al color elegido (la muestra y el hex), así nunca se ve negra y
+ * siempre se puede ver de dónde sacar el tono y la saturación. Un toque o
+ * arrastre sobre la rueda fija [tono] y [saturacion].
  */
 @Composable
 private fun RuedaHsv(
     tono: Float,
     saturacion: Float,
-    valor: Float,
     alCambiar: (Float, Float) -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -223,14 +223,9 @@ private fun RuedaHsv(
             radius = radio,
             center = centro,
         )
-        // Brillo: se oscurece la rueda cuando el valor baja.
-        if (valor < 1f) {
-            drawCircle(
-                color = Color.Black.copy(alpha = (1f - valor).coerceIn(0f, 1f)),
-                radius = radio,
-                center = centro,
-            )
-        }
+        // No se oscurece la rueda según el brillo: aplicar (1 − valor) de negro
+        // la dejaba casi negra con colores oscuros (p. ej. #192021) y no se
+        // podía elegir el tono. El brillo se ve en la muestra y el hex de abajo.
         // Marcador del color elegido.
         val angulo = Math.toRadians(tono.toDouble())
         val marcador = Offset(

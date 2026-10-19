@@ -15,6 +15,16 @@ enum class Tool : int {
     DOBLE = 5,        // doble lápiz: dos trazos paralelos a la vez
 };
 
+// Texturas del trazo. El valor entero viaja por JNI y el orden debe coincidir
+// con `com.dibujo.core.Textura` (el C++ replica el mismo patrón determinista).
+enum class Textura : int {
+    LISA = 0,
+    GRANO = 1,
+    RUGOSA = 2,
+    TRAMA = 3,
+    SALPICADA = 4,
+};
+
 // Modos de interacción: editar (dibujar) o moverse libremente por la hoja.
 enum class Modo : int {
     EDICION = 0,

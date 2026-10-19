@@ -276,6 +276,44 @@ inline void pintarMezcla(std::vector<uint32_t>& hoja, int ancho, int alto,
     destino = 0xFF000000u | (r << 16) | (g << 8) | b;
 }
 
+// Ruido entero determinista por coordenada. Usa uint32_t (desborde definido)
+// y la misma mezcla que `Textura.ruido` de Kotlin para no romper la paridad.
+inline uint32_t ruidoTextura(int x, int y) {
+    uint32_t h = static_cast<uint32_t>(
+        static_cast<int64_t>(x) * 374761393LL +
+        static_cast<int64_t>(y) * 668265263LL);
+    h = (h ^ (h >> 13)) * 1274126177u;
+    h ^= h >> 16;
+    return h & 0xFFu;
+}
+
+// Factor de cobertura (0..255) del píxel (x, y) para una textura. Réplica
+// exacta de `Textura.factor` en Kotlin (paridad píxel a píxel).
+inline int factorTextura(Textura textura, int x, int y) {
+    switch (textura) {
+        case Textura::LISA:
+            return 255;
+        case Textura::GRANO:
+            return 145 + static_cast<int>(ruidoTextura(x, y)) * 110 / 255;
+        case Textura::RUGOSA: {
+            const int n = static_cast<int>(ruidoTextura(x >> 2, y >> 2));
+            return 120 + n * 135 / 255;
+        }
+        case Textura::TRAMA:
+            return (((x + y) % 7) < 2) ? 255 : 165;
+        case Textura::SALPICADA:
+            return (ruidoTextura(x, y) < 38u) ? 70 : 255;
+        default:
+            return 255;
+    }
+}
+
+// Aplica la textura a una cobertura (0..255). LISA no la altera.
+inline int aplicarTextura(Textura textura, int alpha, int x, int y) {
+    if (textura == Textura::LISA || alpha <= 0) return alpha;
+    return (alpha * factorTextura(textura, x, y) + 127) / 255;
+}
+
 // Interpola un canal entre 4 texeles y redondea a entero. La asociación de las
 // operaciones y `floor(v + 0.5)` coinciden con `MotorKotlin.canalBilineal`.
 inline int canalBilineal(int c00, int c10, int c01, int c11,
@@ -292,7 +330,8 @@ inline int canalBilineal(int c00, int c10, int c01, int c11,
 // La cobertura se calcula analíticamente (0.5 + r − distancia) usando double,
 // igual que el respaldo Kotlin, para que el antialiasing sea idéntico.
 void pintarDisco(std::vector<uint32_t>& hoja, int ancho, int alto,
-                 float cx, float cy, float radio, uint32_t color) {
+                 float cx, float cy, float radio, uint32_t color,
+                 Textura textura = Textura::LISA) {
     const float margen = radio + 1.0f;
     const int x0 = static_cast<int>(std::floor(cx - margen));
     const int x1 = static_cast<int>(std::ceil(cx + margen));
@@ -312,7 +351,8 @@ void pintarDisco(std::vector<uint32_t>& hoja, int ancho, int alto,
             if (cobertura <= 0.0) continue;
             if (cobertura > 1.0) cobertura = 1.0;
             const int alpha = static_cast<int>(std::lround(cobertura * 255.0));
-            pintarMezcla(hoja, ancho, alto, x, y, color, alpha);
+            pintarMezcla(hoja, ancho, alto, x, y, color,
+                         aplicarTextura(textura, alpha, x, y));
         }
     }
 }
@@ -386,19 +426,21 @@ void cubrirSegmento(std::vector<uint8_t>& cobertura, int anchoCaja,
 
 void lineaGruesa(std::vector<uint32_t>& hoja, int ancho, int alto,
                  float x0, float y0, float x1, float y1,
-                 float radio, bool redonda, uint32_t color);
+                 float radio, bool redonda, uint32_t color,
+                 Textura textura);
 
 // Polilínea con cobertura máxima por píxel y una sola mezcla: los segmentos
 // que comparten vértice ya no oscurecen el empalme por doble mezcla. Replica
 // `Lienzo.polilineaGruesa` (paridad píxel a píxel).
 void polilineaGruesa(std::vector<uint32_t>& hoja, int ancho, int alto,
                      const float* puntos, int cantidad, float radio,
-                     bool redonda, uint32_t color) {
+                     bool redonda, uint32_t color,
+                     Textura textura = Textura::LISA) {
     if (cantidad < 2) return;
     if (!redonda) {
         for (int i = 0; i + 3 < cantidad; i += 2) {
             lineaGruesa(hoja, ancho, alto, puntos[i], puntos[i + 1],
-                        puntos[i + 2], puntos[i + 3], radio, false, color);
+                        puntos[i + 2], puntos[i + 3], radio, false, color, textura);
         }
         if (cantidad == 2) {
             const int px = static_cast<int>(std::lround(puntos[0]));
@@ -408,16 +450,15 @@ void polilineaGruesa(std::vector<uint32_t>& hoja, int ancho, int alto,
                 for (int ox = -r; ox <= r; ++ox) {
                     const int xx = px + ox;
                     const int yy = py + oy;
-                    if (xx >= 0 && yy >= 0 && xx < ancho && yy < alto) {
-                        hoja[static_cast<std::size_t>(yy) * ancho + xx] = color;
-                    }
+                    pintarMezcla(hoja, ancho, alto, xx, yy, color,
+                                 aplicarTextura(textura, 255, xx, yy));
                 }
             }
         }
         return;
     }
     if (cantidad == 2) {
-        pintarDisco(hoja, ancho, alto, puntos[0], puntos[1], radio, color);
+        pintarDisco(hoja, ancho, alto, puntos[0], puntos[1], radio, color, textura);
         return;
     }
     float minX = puntos[0];
@@ -452,7 +493,10 @@ void polilineaGruesa(std::vector<uint32_t>& hoja, int ancho, int alto,
         const int fila = (y - by0) * anchoCaja;
         for (int x = bx0; x <= bx1; ++x) {
             const int alpha = cobertura[static_cast<std::size_t>(fila + (x - bx0))];
-            if (alpha > 0) pintarMezcla(hoja, ancho, alto, x, y, color, alpha);
+            if (alpha > 0) {
+                pintarMezcla(hoja, ancho, alto, x, y, color,
+                             aplicarTextura(textura, alpha, x, y));
+            }
         }
     }
 }
@@ -461,7 +505,8 @@ void polilineaGruesa(std::vector<uint32_t>& hoja, int ancho, int alto,
 // única por píxel); con punta cuadrada se estampa el bloque como antes.
 void lineaGruesa(std::vector<uint32_t>& hoja, int ancho, int alto,
                  float x0, float y0, float x1, float y1,
-                 float radio, bool redonda, uint32_t color) {
+                 float radio, bool redonda, uint32_t color,
+                 Textura textura = Textura::LISA) {
     if (!redonda) {
         const int pasos = std::max(1, static_cast<int>(std::ceil(
             std::max(std::abs(x1 - x0), std::abs(y1 - y0)))));
@@ -476,16 +521,15 @@ void lineaGruesa(std::vector<uint32_t>& hoja, int ancho, int alto,
                 for (int ox = -r; ox <= r; ++ox) {
                     const int xx = px + ox;
                     const int yy = py + oy;
-                    if (xx >= 0 && yy >= 0 && xx < ancho && yy < alto) {
-                        hoja[static_cast<std::size_t>(yy) * ancho + xx] = color;
-                    }
+                    pintarMezcla(hoja, ancho, alto, xx, yy, color,
+                                 aplicarTextura(textura, 255, xx, yy));
                 }
             }
         }
         return;
     }
     const float puntos[4] = {x0, y0, x1, y1};
-    polilineaGruesa(hoja, ancho, alto, puntos, 4, radio, true, color);
+    polilineaGruesa(hoja, ancho, alto, puntos, 4, radio, true, color, textura);
 }
 
 // Línea gruesa doble: dibuja dos líneas paralelas separadas `separacion` px
@@ -493,7 +537,8 @@ void lineaGruesa(std::vector<uint32_t>& hoja, int ancho, int alto,
 // dos plumas a la vez. Misma aritmética que `Lienzo.lineaDoble` en Kotlin.
 void lineaDoble(std::vector<uint32_t>& hoja, int ancho, int alto,
                 float x0, float y0, float x1, float y1,
-                float radio, bool redonda, uint32_t color, float separacion) {
+                float radio, bool redonda, uint32_t color, float separacion,
+                Textura textura = Textura::LISA) {
     const float dx = x1 - x0;
     const float dy = y1 - y0;
     const double largo = std::sqrt(static_cast<double>(dx) * dx +
@@ -503,8 +548,10 @@ void lineaDoble(std::vector<uint32_t>& hoja, int ancho, int alto,
     const float ny = static_cast<float>(dx / largo);
     const float ox = nx * separacion;
     const float oy = ny * separacion;
-    lineaGruesa(hoja, ancho, alto, x0 + ox, y0 + oy, x1 + ox, y1 + oy, radio, redonda, color);
-    lineaGruesa(hoja, ancho, alto, x0 - ox, y0 - oy, x1 - ox, y1 - oy, radio, redonda, color);
+    lineaGruesa(hoja, ancho, alto, x0 + ox, y0 + oy, x1 + ox, y1 + oy,
+                radio, redonda, color, textura);
+    lineaGruesa(hoja, ancho, alto, x0 - ox, y0 - oy, x1 - ox, y1 - oy,
+                radio, redonda, color, textura);
 }
 
 // Polilínea doble: desplaza la polilínea completa con una normal suavizada por
@@ -512,11 +559,12 @@ void lineaDoble(std::vector<uint32_t>& hoja, int ancho, int alto,
 // la normal segmento a segmento. Replica `Lienzo.polilineaDoble` (paridad).
 void polilineaDoble(std::vector<uint32_t>& hoja, int ancho, int alto,
                     const float* puntos, int cantidad, float radio,
-                    bool redonda, uint32_t color, float separacion) {
+                    bool redonda, uint32_t color, float separacion,
+                    Textura textura = Textura::LISA) {
     if (cantidad < 2) return;
     if (cantidad == 2) {
         if (redonda) {
-            pintarDisco(hoja, ancho, alto, puntos[0], puntos[1], radio, color);
+            pintarDisco(hoja, ancho, alto, puntos[0], puntos[1], radio, color, textura);
         } else {
             const int px = static_cast<int>(std::lround(puntos[0]));
             const int py = static_cast<int>(std::lround(puntos[1]));
@@ -525,9 +573,8 @@ void polilineaDoble(std::vector<uint32_t>& hoja, int ancho, int alto,
                 for (int ox = -r; ox <= r; ++ox) {
                     const int xx = px + ox;
                     const int yy = py + oy;
-                    if (xx >= 0 && yy >= 0 && xx < ancho && yy < alto) {
-                        hoja[static_cast<std::size_t>(yy) * ancho + xx] = color;
-                    }
+                    pintarMezcla(hoja, ancho, alto, xx, yy, color,
+                                 aplicarTextura(textura, 255, xx, yy));
                 }
             }
         }
@@ -568,8 +615,8 @@ void polilineaDoble(std::vector<uint32_t>& hoja, int ancho, int alto,
         ladoB[static_cast<std::size_t>(base)] = puntos[base] - ox;
         ladoB[static_cast<std::size_t>(base + 1)] = puntos[base + 1] - oy;
     }
-    polilineaGruesa(hoja, ancho, alto, ladoA.data(), cantidad, radio, redonda, color);
-    polilineaGruesa(hoja, ancho, alto, ladoB.data(), cantidad, radio, redonda, color);
+    polilineaGruesa(hoja, ancho, alto, ladoA.data(), cantidad, radio, redonda, color, textura);
+    polilineaGruesa(hoja, ancho, alto, ladoB.data(), cantidad, radio, redonda, color, textura);
 }
 
 } // namespace
@@ -628,6 +675,8 @@ bool DibujoEngine::terminarTrazo() {
     const uint32_t color = borrar ? fondo_ : color_;
     const int grosor = grosorHerramienta(herramienta_, grosor_);
     const float radio = static_cast<float>(grosor) * 0.5f;
+    // El borrador borra uniforme (sin textura); el resto usa la elegida.
+    const Textura textura = borrar ? Textura::LISA : textura_;
 
     if (herramienta_ == Tool::PINTAR) {
         // Balde: rellena la región donde se tocó con el color del lápiz.
@@ -639,12 +688,12 @@ bool DibujoEngine::terminarTrazo() {
         const float separacion = separacionDoble(grosor);
         polilineaDoble(hoja_, ancho_, alto_, trazo_.data(),
                        static_cast<int>(trazo_.size()), radio, puntaRedonda_,
-                       color, separacion);
+                       color, separacion, textura);
     } else {
         // Cobertura máxima por píxel y una sola mezcla para toda la polilínea.
         polilineaGruesa(hoja_, ancho_, alto_, trazo_.data(),
                         static_cast<int>(trazo_.size()), radio, puntaRedonda_,
-                        color);
+                        color, textura);
     }
 
     trazo_.clear();

@@ -35,13 +35,15 @@ Java_com_dibujo_engine_NativeEngine_nativoDestruir(JNIEnv*, jobject, jlong handl
 JNIEXPORT void JNICALL
 Java_com_dibujo_engine_NativeEngine_nativoConfigurarLapiz(
         JNIEnv*, jobject, jlong handle,
-        jint color, jint grosor, jboolean puntaRedonda, jint herramienta) {
+        jint color, jint grosor, jboolean puntaRedonda, jint herramienta,
+        jint textura) {
     auto* e = peer(handle);
     if (e == nullptr) return;
     e->fijarColor(static_cast<uint32_t>(color));
     e->fijarGrosor(grosor);
     e->fijarPuntaRedonda(puntaRedonda == JNI_TRUE);
     e->fijarHerramienta(static_cast<dibujo::Tool>(herramienta));
+    e->fijarTextura(static_cast<dibujo::Textura>(textura));
 }
 
 JNIEXPORT void JNICALL

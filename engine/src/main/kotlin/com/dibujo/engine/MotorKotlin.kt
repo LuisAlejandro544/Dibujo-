@@ -88,6 +88,13 @@ class MotorKotlin(
         }
         val grosor = grosorEfectivo()
         val color = if (lapiz.herramienta == com.dibujo.core.Herramienta.BORRADOR) hoja.fondo else lapiz.color
+        // El borrador no lleva textura (debe borrar uniforme); el resto usa la
+        // textura elegida. El C++ replica esta misma decisión (paridad).
+        val textura = if (lapiz.herramienta == com.dibujo.core.Herramienta.BORRADOR) {
+            com.dibujo.core.Textura.LISA
+        } else {
+            lapiz.textura
+        }
         if (lapiz.herramienta == com.dibujo.core.Herramienta.DOBLE) {
             // Doble lápiz: dos líneas paralelas con la normal suavizada por
             // vértice (polilínea completa), para que no tiemblen en los
@@ -95,7 +102,7 @@ class MotorKotlin(
             hoja.polilineaDoble(
                 trazo, puntos * 2, grosor,
                 lapiz.punta == com.dibujo.core.Punta.REDONDA, color,
-                separacionDoble(grosor),
+                separacionDoble(grosor), textura,
             )
             puntos = 0
             return true
@@ -104,7 +111,7 @@ class MotorKotlin(
         // sola mezcla: sin discos superpuestos ni bordes acumulados.
         hoja.polilineaGruesa(
             trazo, puntos * 2, grosor,
-            lapiz.punta == com.dibujo.core.Punta.REDONDA, color,
+            lapiz.punta == com.dibujo.core.Punta.REDONDA, color, textura,
         )
         puntos = 0
         return true

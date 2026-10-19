@@ -24,6 +24,7 @@ import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -73,6 +74,8 @@ import androidx.compose.material.icons.rounded.ScreenRotation
 import androidx.compose.material.icons.rounded.Settings
 import androidx.compose.material.icons.rounded.SwapHoriz
 import androidx.compose.material.icons.rounded.SwapVert
+import androidx.compose.material.icons.rounded.TextFields
+import androidx.compose.material.icons.rounded.Texture
 import androidx.compose.material.icons.rounded.Transform
 import androidx.compose.material.icons.rounded.Visibility
 import androidx.compose.material.icons.rounded.VisibilityOff
@@ -90,6 +93,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.IconButtonDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Shapes
 import androidx.compose.material3.Slider
@@ -268,6 +272,9 @@ fun PantallaDibujo(
     // Acciones secundarias de la hoja (calco, IA, expandir): viven en una hoja
     // inferior para no amontonar la barra de dibujo.
     var mostrarMasHerramientas by remember { mutableStateOf(false) }
+    // Textura del trazo y herramienta de texto (tipografías del sistema).
+    var mostrarTextura by remember { mutableStateOf(false) }
+    var mostrarTexto by remember { mutableStateOf(false) }
 
     // Volver al menú principal (botón atrás del sistema o de la barra).
     BackHandler(onBack = alVolver)
@@ -486,6 +493,7 @@ fun PantallaDibujo(
                 },
                 alAbrirColor = { mostrarColor = true },
                 alAbrirMasHerramientas = { mostrarMasHerramientas = true },
+                alAbrirTextura = { mostrarTextura = true },
             )
         },
         // Transparente: deja ver la superficie GPU que va en una capa detrás
@@ -646,6 +654,28 @@ fun PantallaDibujo(
                 mostrarMasHerramientas = false
                 mostrarExpandir = true
             },
+            alAbrirTexto = {
+                mostrarMasHerramientas = false
+                mostrarTexto = true
+            },
+        )
+    }
+
+    if (mostrarTextura) {
+        DialogoTextura(
+            actual = estado.lapiz.textura,
+            alElegir = { vm.elegirTextura(it) },
+            alCerrar = { mostrarTextura = false },
+        )
+    }
+
+    if (mostrarTexto) {
+        DialogoTexto(
+            alInsertar = { texto, tipografia, tamano ->
+                vm.insertarTexto(texto, tipografia, tamano)
+                mostrarTexto = false
+            },
+            alCerrar = { mostrarTexto = false },
         )
     }
 }
@@ -1257,6 +1287,7 @@ private fun BarraHerramientas(
     alAbrirIa: () -> Unit,
     alAbrirColor: () -> Unit,
     alAbrirMasHerramientas: () -> Unit,
+    alAbrirTextura: () -> Unit,
 ) {
     Surface(
         modifier = Modifier.absorberToque(),
@@ -1350,8 +1381,8 @@ private fun BarraHerramientas(
             }
             // Franja 2: color actual, paleta y cuentagotas.
             FilaColor(estado, vm, alAbrirColor)
-            // Franja 3: modo de gesto, grosor y acceso a más herramientas.
-            FilaPincel(estado, vm, alAbrirMasHerramientas)
+            // Franja 3: modo de gesto, grosor, textura y más herramientas.
+            FilaPincel(estado, vm, alAbrirMasHerramientas, alAbrirTextura)
         }
     }
 }
@@ -1430,6 +1461,7 @@ private fun FilaPincel(
     estado: DibujoEstado,
     vm: DibujoViewModel,
     alAbrirMasHerramientas: () -> Unit,
+    alAbrirTextura: () -> Unit,
 ) {
     Row(
         Modifier
@@ -1476,12 +1508,150 @@ private fun FilaPincel(
             }
         }
         IconoToggle(
+            icono = Icons.Rounded.Texture,
+            descripcion = stringResource(R.string.cd_textura),
+            seleccionado = estado.lapiz.textura != com.dibujo.core.Textura.LISA,
+            alPulsar = alAbrirTextura,
+            tamano = 36.dp,
+        )
+        IconoToggle(
             icono = Icons.Rounded.MoreHoriz,
             descripcion = stringResource(R.string.cd_mas_herramientas),
             seleccionado = false,
             alPulsar = alAbrirMasHerramientas,
         )
     }
+}
+
+/** Texturas del trazo: lisa, grano, rugosa, trama o salpicada. */
+@Composable
+private fun DialogoTextura(
+    actual: com.dibujo.core.Textura,
+    alElegir: (com.dibujo.core.Textura) -> Unit,
+    alCerrar: () -> Unit,
+) {
+    val opciones = listOf(
+        com.dibujo.core.Textura.LISA to R.string.textura_lisa,
+        com.dibujo.core.Textura.GRANO to R.string.textura_grano,
+        com.dibujo.core.Textura.RUGOSA to R.string.textura_rugosa,
+        com.dibujo.core.Textura.TRAMA to R.string.textura_trama,
+        com.dibujo.core.Textura.SALPICADA to R.string.textura_salpicada,
+    )
+    AlertDialog(
+        onDismissRequest = alCerrar,
+        title = { Text(stringResource(R.string.textura_titulo)) },
+        text = {
+            Column {
+                Text(
+                    stringResource(R.string.textura_desc),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Spacer(Modifier.height(12.dp))
+                Row(
+                    Modifier
+                        .fillMaxWidth()
+                        .horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    opciones.forEach { (textura, etiquetaRes) ->
+                        FilterChip(
+                            selected = actual == textura,
+                            onClick = { alElegir(textura) },
+                            label = { Text(stringResource(etiquetaRes)) },
+                        )
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = alCerrar) {
+                Text(stringResource(R.string.cerrar))
+            }
+        },
+    )
+}
+
+/** Inserta texto en la vista actual con una de las cinco tipografías del sistema. */
+@Composable
+private fun DialogoTexto(
+    alInsertar: (String, Tipografia, Float) -> Unit,
+    alCerrar: () -> Unit,
+) {
+    var texto by remember { mutableStateOf("") }
+    var tipografia by remember { mutableStateOf(Tipografia.SANS) }
+    var tamano by remember { mutableStateOf(64f) }
+    val fuentes = listOf(
+        Tipografia.SANS to R.string.fuente_sans,
+        Tipografia.SERIF to R.string.fuente_serif,
+        Tipografia.MONO to R.string.fuente_mono,
+        Tipografia.CURSIVA to R.string.fuente_cursiva,
+        Tipografia.CASUAL to R.string.fuente_casual,
+    )
+    AlertDialog(
+        onDismissRequest = alCerrar,
+        title = { Text(stringResource(R.string.texto_titulo)) },
+        text = {
+            Column(Modifier.verticalScroll(rememberScrollState())) {
+                Text(
+                    stringResource(R.string.texto_desc),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Spacer(Modifier.height(8.dp))
+                OutlinedTextField(
+                    value = texto,
+                    onValueChange = { texto = it },
+                    label = { Text(stringResource(R.string.texto_campo)) },
+                    minLines = 2,
+                    maxLines = 4,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                Spacer(Modifier.height(10.dp))
+                Text(
+                    stringResource(R.string.texto_tipografia),
+                    style = MaterialTheme.typography.labelLarge,
+                )
+                Row(
+                    Modifier
+                        .fillMaxWidth()
+                        .horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    fuentes.forEach { (fuente, etiquetaRes) ->
+                        FilterChip(
+                            selected = tipografia == fuente,
+                            onClick = { tipografia = fuente },
+                            label = { Text(stringResource(etiquetaRes)) },
+                        )
+                    }
+                }
+                Spacer(Modifier.height(10.dp))
+                Text(
+                    stringResource(R.string.texto_tamano, tamano.roundToInt()),
+                    style = MaterialTheme.typography.labelLarge,
+                )
+                Slider(
+                    value = tamano,
+                    onValueChange = { tamano = it },
+                    valueRange = 16f..256f,
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(
+                onClick = { alInsertar(texto, tipografia, tamano) },
+                enabled = texto.isNotBlank(),
+            ) {
+                Text(stringResource(R.string.texto_insertar))
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = alCerrar) {
+                Text(stringResource(R.string.cancelar))
+            }
+        },
+    )
 }
 
 /**
@@ -1498,6 +1668,7 @@ private fun HojaHerramientasHoja(
     alAbrirCalco: () -> Unit,
     alAbrirIa: () -> Unit,
     alAbrirExpandir: () -> Unit,
+    alAbrirTexto: () -> Unit,
 ) {
     ModalBottomSheet(onDismissRequest = alCerrar) {
         Column(
@@ -1533,6 +1704,11 @@ private fun HojaHerramientasHoja(
                 alPulsar = alAbrirCalco,
             )
             HorizontalDivider(Modifier.padding(vertical = 4.dp))
+            AccionHoja(
+                icono = Icons.Rounded.TextFields,
+                etiqueta = stringResource(R.string.cd_texto),
+                alPulsar = alAbrirTexto,
+            )
             AccionHoja(
                 icono = Icons.Rounded.AutoFixHigh,
                 etiqueta = stringResource(R.string.cd_ia_local),

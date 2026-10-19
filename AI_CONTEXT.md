@@ -71,6 +71,12 @@ implementaciones y pasar `MotorTest` (paridad píxel a píxel). Las diferencias:
   `LINEAR`. Al acercar ya no se ven bloques duros.
 - BORRADOR pinta con el color de fondo de la hoja; la vista previa de Compose
   lo imita (fondo + grosor efectivo) para que el borrado se vea al instante.
+- **Textura del trazo**: `Textura` (`LISA`, `GRANO`, `RUGOSA`, `TRAMA`,
+  `SALPICADA`) modula el alpha final de cada píxel con `factor(x, y)` (255 fijo
+  para LISA). El ruido es entero determinista (mezcla de 32 bits + máscaras),
+  idéntico en `Textura.kt` y `DibujoEngine.cpp`; el ordinal viaja por JNI y
+  debe conservar el orden. Nunca se aplica a BORRADOR ni PINTAR. La paridad la
+  cubre `MotorTest.texturaParidadNativoKotlin`.
 - FUERA de hoja en render = gris `0xFFECECEC`.
 
 ### Cámara
@@ -520,6 +526,15 @@ Particularidades:
   mientras se ajusta. No toca el motor (vive en Compose), por eso **no aplica la
   paridad**; el flag es de UI (`calcoEnEdicion`), no un valor nuevo de `Modo`
   (que es de `:core` y usa la consola).
+- **Texturas del trazo** (issue 70): el botón `Texture` de `FilaPincel` abre
+  `DialogoTextura` (chips) y `DibujoViewModel.elegirTextura` actualiza el
+  `Lapiz`; el valor se propaga a `MotorKotlin`/`MotorNativo` y al C++.
+- **Insertar texto** (issue 70): `TextoHoja.dibujar` compone el texto sobre un
+  `IntArray` con `Canvas`/`Paint` (las 5 tipografías del sistema: `sans-serif`,
+  `serif`, `monospace`, `cursive`, `casual`); `DibujoViewModel.insertarTexto`
+  lo aplica con `reemplazarHoja` fuera del hilo principal, centrado en la vista
+  actual y como un paso deshacible. Vive sólo en `:app`, así que no altera la
+  paridad del motor.
 - **Importar imagen** (issue 35): entrada explícita en el menú "más opciones"
   que abre el Photo Picker y fija la imagen de calco (sin permisos).
 - **Recortar / redimensionar lienzo** (issue 35): diálogo "Recortar o

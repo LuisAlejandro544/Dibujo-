@@ -188,4 +188,28 @@
 
     <!-- Trazo asistido (endereza las líneas al soltar) -->
     <string name="cd_asistencia_recta">Líneas rectas asistidas: al soltar, el trazo se endereza</string>
+
+    <!-- Textura del trazo -->
+    <string name="cd_textura">Elegir la textura del trazo</string>
+    <string name="textura_titulo">Textura del trazo</string>
+    <string name="textura_desc">Cambia el grano del lápiz, el portaminas y el carboncillo. Se nota sobre todo en trazos anchos; el borrador y el balde no la usan.</string>
+    <string name="textura_lisa">Lisa</string>
+    <string name="textura_grano">Grano</string>
+    <string name="textura_rugosa">Rugosa</string>
+    <string name="textura_trama">Trama</string>
+    <string name="textura_salpicada">Salpicada</string>
+
+    <!-- Insertar texto -->
+    <string name="cd_texto">Insertar texto</string>
+    <string name="texto_titulo">Insertar texto</string>
+    <string name="texto_desc">El texto se coloca en el centro de la vista actual. Podés moverlo después con «Transformar dibujo»; cada inserción se deshace.</string>
+    <string name="texto_campo">Texto</string>
+    <string name="texto_tipografia">Tipografía</string>
+    <string name="texto_tamano">Tamaño: %1$d px</string>
+    <string name="texto_insertar">Insertar</string>
+    <string name="fuente_sans">Sans</string>
+    <string name="fuente_serif">Serif</string>
+    <string name="fuente_mono">Mono</string>
+    <string name="fuente_cursiva">Cursiva</string>
+    <string name="fuente_casual">Casual</string>
 </resources>

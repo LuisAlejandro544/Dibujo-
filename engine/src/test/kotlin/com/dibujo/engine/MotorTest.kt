@@ -4,6 +4,7 @@ import com.dibujo.core.Camara
 import com.dibujo.core.Colores
 import com.dibujo.core.Herramienta
 import com.dibujo.core.Lapiz
+import com.dibujo.core.Textura
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
@@ -192,6 +193,36 @@ class MotorNativoTest {
         }
         nativo.close()
         kotlin.close()
+    }
+
+    @Test
+    fun texturaParidadNativoKotlin() {
+        if (!NativeEngine.disponible()) return
+        for (textura in Textura.entries) {
+            val ancho = 26
+            val alto = 18
+            val nativo = MotorNativo(ancho, alto)
+            val kotlin = MotorKotlin(ancho, alto)
+            for (m in listOf(nativo, kotlin)) {
+                m.configurarLapiz(
+                    Lapiz(color = Colores.AZUL, grosor = 7, textura = textura),
+                )
+                m.iniciarTrazo(4f, 9f)
+                m.continuarTrazo(9f, 4f)
+                m.continuarTrazo(14f, 13f)
+                m.continuarTrazo(21f, 6f)
+                assertTrue(m.terminarTrazo(), "${m.nombre}: trazo con $textura")
+            }
+            val a = IntArray(ancho * alto)
+            val b = IntArray(ancho * alto)
+            assertTrue(nativo.copiarHoja(a), "nativo: copiarHoja $textura")
+            assertTrue(kotlin.copiarHoja(b), "kotlin: copiarHoja $textura")
+            for (i in a.indices) {
+                assertEquals(b[i], a[i], "textura $textura: discrepancia en píxel $i")
+            }
+            nativo.close()
+            kotlin.close()
+        }
     }
 
     @Test

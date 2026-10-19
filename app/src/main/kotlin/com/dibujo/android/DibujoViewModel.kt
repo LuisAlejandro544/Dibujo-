@@ -479,6 +479,52 @@ class DibujoViewModel(app: Application) : AndroidViewModel(app) {
     fun elegirHerramienta(herramienta: Herramienta) =
         actualizarLapiz { it.copy(herramienta = herramienta) }
 
+    /** Elige la textura del trazo (lisa, grano, rugosa, trama o salpicada). */
+    fun elegirTextura(textura: com.dibujo.core.Textura) =
+        actualizarLapiz { it.copy(textura = textura) }
+
+    /**
+     * Inserta [texto] en el centro de la vista actual con la [tipografia] y el
+     * tamaño [tamano] px. Se dibuja sobre una copia de la hoja (con las fuentes
+     * del sistema) y se reemplaza la hoja completa: el paso queda en el
+     * historial y se puede deshacer. Corre fuera del hilo principal.
+     */
+    fun insertarTexto(texto: String, tipografia: Tipografia, tamano: Float) {
+        if (texto.isBlank()) return
+        asegurarSinAjuste()
+        val m = motor ?: return
+        if (_estado.value.ajustandoLienzo) return
+        val ancho = m.ancho
+        val alto = m.alto
+        // Centro de la vista en coordenadas de hoja (donde el usuario está
+        // mirando). Si la vista todavía no se midió, se usa el centro de la hoja.
+        val focoX = if (vistaAncho > 0) vistaAncho / 2f else ancho / 2f
+        val focoY = if (vistaAlto > 0) vistaAlto / 2f else alto / 2f
+        val (cx, cy) = pantallaAUnrotado(m.camara(), focoX, focoY)
+        val color = _estado.value.lapiz.color
+        _estado.update { it.copy(ajustandoLienzo = true) }
+        viewModelScope.launch {
+            val pinto = withContext(Dispatchers.Default) {
+                val pixeles = IntArray(ancho * alto)
+                if (!m.copiarHoja(pixeles)) {
+                    false
+                } else {
+                    TextoHoja.dibujar(pixeles, ancho, alto, texto, tipografia, tamano, cx, cy, color) &&
+                        m.reemplazarHoja(pixeles)
+                }
+            }
+            _estado.update {
+                it.copy(
+                    ajustandoLienzo = false,
+                    puedeDeshacer = m.puedeDeshacer(),
+                    puedeRehacer = m.puedeRehacer(),
+                    modificado = it.modificado || pinto,
+                    marco = if (pinto) it.marco + 1 else it.marco,
+                )
+            }
+        }
+    }
+
     fun cambiarGrosor(delta: Int) {
         val actual = _estado.value.lapiz.grosor
         val nuevo = (actual + delta).coerceIn(1, 64)

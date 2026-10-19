@@ -66,6 +66,8 @@ mencionarla en el PR.
   (`--reales`), aumentación y el cache del Plan B (`--pares`), con métricas
   IoU/PSNR y delegado GPU (issue 28/32); el `.tflite` no se versiona, se publica
   en la release `modelo-buril` y lo inyecta el APK (el `.npz` se cachea en
-  `dataset-buril`). Lo siguiente sería
+  `dataset-buril` y los checkpoints reanudables en `checkpoints-buril`, con tag
+  configurable; Kaggle y Colab los suben durante el entrenamiento y el APK los
+  baja como artefacto si existen). Lo siguiente sería
   cuantización int8 si algún día se prioriza CPU/NPU sobre GPU. El resto de las
   herramientas de IA siguen siendo algoritmos locales (visión + k-medias).

@@ -124,10 +124,12 @@ Si tocás rasterizado, cámara, historial o herramientas: editá **los dos lados
 ## 7. Datos, herramientas y CI
 
 - `tools/` — scripts de IA/datasets: `buril.py`, `buril_kaggle.ipynb`
-  (entrenamiento recomendado), `buril_colab.ipynb` (pruebas),
+  (entrenamiento recomendado), `buril_colab.ipynb` (entrena y reanuda desde la
+  release de checkpoints; Drive opcional),
   `benchmark_limpiar_trazos.{py,ipynb}`, `preparar_dataset_*`, JSON de datasets.
   Pesos `.tflite` en la release `modelo-buril`; `.npz` en `dataset-buril`;
-  checkpoints en `checkpoints-buril`.
+  checkpoints reanudables (pesos + optimizador) en `checkpoints-buril`, que
+  `android-apk.yml` descarga como artefacto `buril-checkpoints` si existe.
 - `.github/workflows/` — `android-apk.yml` (APK debug), `opencode.yml`,
   `entrenar-*` (incluye `entrenar-kaggle.yml`) y `preparar-dataset-*`.
 - `.opencode/skills/` — skills de seguridad: `semgrep`, `codeql`,

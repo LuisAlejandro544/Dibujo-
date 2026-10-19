@@ -9,11 +9,17 @@
 #
 # El modelo IA de limpiar trazos ("Buril") NO vive en git (pesa). Su buzon es
 # la release `modelo-buril`: la llena Kaggle con `tools/buril_kaggle.ipynb`
-# (Colab `tools/buril_colab.ipynb` queda para pruebas; como respaldo, el
-# workflow `entrenar-limpiar-trazos-planb.yml`). Este workflow baja el `.tflite`
-# de esa release y lo copia a `app/src/main/assets/modelos/` antes de compilar.
-# Si la release no existe, el APK se arma igual y la app cae al adelgazado
-# algorítmico.
+# (Colab `tools/buril_colab.ipynb` entrena y reanuda desde la release de
+# checkpoints; como respaldo, el workflow `entrenar-limpiar-trazos-planb.yml`).
+# Este workflow baja el `.tflite` de esa release y lo copia a
+# `app/src/main/assets/modelos/` antes de compilar. Si la release no existe, el
+# APK se arma igual y la app cae al adelgazado algorítmico.
+#
+# Ademas, si existe la release de checkpoints (tag en `tag_checkpoints`, por
+# defecto `checkpoints-buril`), baja los ultimos pesos/estado y los publica como
+# artefacto de la corrida. Los checkpoints NO entran al APK (el APK usa el
+# `.tflite`); sirven para reanudar/inspeccionar el entrenamiento desde la pagina
+# de Actions.
 #
 # Se activa manualmente (workflow_dispatch) y en cada PR contra main,
 # así el APK que sale del repo siempre es compilable y verificable.
@@ -27,6 +33,10 @@ on:
         description: 'Usar cache de Gradle (opcional: desmarcar para build frío)'
         type: boolean
         default: true
+      tag_checkpoints:
+        description: 'Tag de la release con checkpoints (vacío = no bajar)'
+        type: string
+        default: 'checkpoints-buril'
   pull_request:
     branches:
       - main
@@ -72,6 +82,32 @@ jobs:
             echo "encontrado=false" >> "$GITHUB_OUTPUT"
           fi
 
+      - name: Descargar checkpoints de la release (si existe)
+        id: checkpoints
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG_CHECKPOINTS: ${{ inputs.tag_checkpoints || 'checkpoints-buril' }}
+        run: |
+          mkdir -p .cache/modelos/checkpoints
+          if [ -n "$TAG_CHECKPOINTS" ] && gh release view "$TAG_CHECKPOINTS" >/dev/null 2>&1; then
+            gh release download "$TAG_CHECKPOINTS" \
+              --pattern 'estado.json' --dir .cache/modelos/checkpoints --clobber || true
+            gh release download "$TAG_CHECKPOINTS" \
+              --pattern '*.weights.h5' --dir .cache/modelos/checkpoints --clobber || true
+            gh release download "$TAG_CHECKPOINTS" \
+              --pattern 'optimizador.npz' --dir .cache/modelos/checkpoints --clobber || true
+            if [ -f .cache/modelos/checkpoints/estado.json ] || ls .cache/modelos/checkpoints/*.weights.h5 >/dev/null 2>&1; then
+              echo "encontrado=true" >> "$GITHUB_OUTPUT"
+            else
+              echo "encontrado=false" >> "$GITHUB_OUTPUT"
+            fi
+          else
+            echo "encontrado=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::No hay release '$TAG_CHECKPOINTS'; se sigue sin checkpoints."
+          fi
+          ls -la .cache/modelos/checkpoints || true
+
       - name: Inyectar el modelo Buril en los assets del APK
         run: |
           mkdir -p app/src/main/assets/modelos
@@ -105,3 +141,12 @@ jobs:
           path: app/build/outputs/apk/debug/*.apk
           if-no-files-found: error
           retention-days: 14
+
+      - name: Subir checkpoints descargados (si se encontraron)
+        if: steps.checkpoints.outputs.encontrado == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: buril-checkpoints
+          path: .cache/modelos/checkpoints
+          if-no-files-found: ignore
+          retention-days: 30

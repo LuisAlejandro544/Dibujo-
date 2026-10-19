@@ -79,6 +79,48 @@ class MotorKotlinTest {
         assertEquals(Colores.BLANCO, m.pixelHoja(10, 8))
         assertTrue(!m.puedeDeshacer())
     }
+
+    @Test
+    fun voltearDosVecesVuelveAlOriginal() {
+        val m = MotorKotlin(8, 6)
+        m.configurarLapiz(Lapiz(color = Colores.ROJO, grosor = 1))
+        m.iniciarTrazo(1f, 1f)
+        m.continuarTrazo(6f, 4f)
+        assertTrue(m.terminarTrazo())
+        val antes = IntArray(8 * 6)
+        assertTrue(m.copiarHoja(antes))
+        assertTrue(m.transformarHoja(true, false, 0f, 0f, 1f))
+        val espejo = IntArray(8 * 6)
+        assertTrue(m.copiarHoja(espejo))
+        assertEquals(Colores.ROJO, espejo[1 * 8 + 6], "el espejo mueve el trazo")
+        assertTrue(m.transformarHoja(true, false, 0f, 0f, 1f))
+        val despues = IntArray(8 * 6)
+        assertTrue(m.copiarHoja(despues))
+        for (i in antes.indices) assertEquals(antes[i], despues[i], "espejo doble: píxel $i")
+        // No-op: no hay nada que transformar y no debe consumir historial.
+        val deshacible = m.puedeDeshacer()
+        assertTrue(!m.transformarHoja(false, false, 0f, 0f, 1f), "no-op")
+        assertEquals(deshacible, m.puedeDeshacer(), "el no-op no cambia el historial")
+    }
+
+    @Test
+    fun asistenciaEnderezaElTrazo() {
+        val motores = mutableListOf<com.dibujo.core.MotorDibujo>(MotorKotlin(24, 24))
+        if (NativeEngine.disponible()) motores.add(MotorNativo(24, 24))
+        for (m in motores) {
+            m.asistenciaRecta(true)
+            m.configurarLapiz(Lapiz(color = Colores.NEGRO, grosor = 1))
+            // Trazo tembloroso de (2,2) a (20,20): debe quedar la recta.
+            m.iniciarTrazo(2f, 2f)
+            m.continuarTrazo(4f, 12f)
+            m.continuarTrazo(12f, 6f)
+            m.continuarTrazo(20f, 20f)
+            assertTrue(m.terminarTrazo(), "${m.nombre}: trazo")
+            assertEquals(Colores.NEGRO, m.pixelHoja(11, 11), "${m.nombre}: la recta pasa por (11,11)")
+            assertEquals(Colores.BLANCO, m.pixelHoja(11, 4), "${m.nombre}: fuera de la recta queda el fondo")
+            m.close()
+        }
+    }
 }
 
 /**
@@ -508,5 +550,61 @@ class MotorNativoTest {
             assertTrue(!m.limpiarTrazos(), "${m.nombre}: hoja vacía no cambia")
             m.close()
         }
+    }
+
+    @Test
+    fun transformarParidadNativoKotlin() {
+        if (!NativeEngine.disponible()) return
+        val ancho = 16
+        val alto = 12
+        val nativo = MotorNativo(ancho, alto)
+        val kotlin = MotorKotlin(ancho, alto)
+        for (m in listOf(nativo, kotlin)) {
+            m.configurarLapiz(Lapiz(color = Colores.ROJO, grosor = 3))
+            m.iniciarTrazo(2f, 2f)
+            m.continuarTrazo(8f, 5f)
+            assertTrue(m.terminarTrazo(), "${m.nombre}: trazo")
+            m.configurarLapiz(Lapiz(color = Colores.AZUL, grosor = 2))
+            m.iniciarTrazo(3f, 9f)
+            assertTrue(m.terminarTrazo(), "${m.nombre}: punto")
+            assertTrue(
+                m.transformarHoja(true, true, 3f, -2f, 1.5f),
+                "${m.nombre}: transformar",
+            )
+        }
+        val a = IntArray(ancho * alto)
+        val b = IntArray(ancho * alto)
+        assertTrue(nativo.copiarHoja(a), "nativo: copiarHoja")
+        assertTrue(kotlin.copiarHoja(b), "kotlin: copiarHoja")
+        for (i in a.indices) {
+            assertEquals(b[i], a[i], "transformar: discrepancia en píxel $i")
+        }
+        nativo.close()
+        kotlin.close()
+    }
+
+    @Test
+    fun asistenciaRectaParidadNativoKotlin() {
+        if (!NativeEngine.disponible()) return
+        val nativo = MotorNativo(24, 24)
+        val kotlin = MotorKotlin(24, 24)
+        for (m in listOf(nativo, kotlin)) {
+            m.asistenciaRecta(true)
+            m.configurarLapiz(Lapiz(color = Colores.AZUL, grosor = 2))
+            m.iniciarTrazo(3f, 3f)
+            m.continuarTrazo(5f, 10f)
+            m.continuarTrazo(8f, 6f)
+            m.continuarTrazo(20f, 19f)
+            assertTrue(m.terminarTrazo(), "${m.nombre}: trazo asistido")
+        }
+        val a = IntArray(24 * 24)
+        val b = IntArray(24 * 24)
+        assertTrue(nativo.copiarHoja(a), "nativo: copiarHoja")
+        assertTrue(kotlin.copiarHoja(b), "kotlin: copiarHoja")
+        for (i in a.indices) {
+            assertEquals(b[i], a[i], "asistencia: discrepancia en píxel $i")
+        }
+        nativo.close()
+        kotlin.close()
     }
 }

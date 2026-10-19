@@ -45,6 +45,14 @@ Java_com_dibujo_engine_NativeEngine_nativoConfigurarLapiz(
 }
 
 JNIEXPORT void JNICALL
+Java_com_dibujo_engine_NativeEngine_nativoAsistenciaRecta(
+        JNIEnv*, jobject, jlong handle, jboolean activa) {
+    auto* e = peer(handle);
+    if (e == nullptr) return;
+    e->fijarAsistenciaRecta(activa == JNI_TRUE);
+}
+
+JNIEXPORT void JNICALL
 Java_com_dibujo_engine_NativeEngine_nativoIniciarTrazo(
         JNIEnv*, jobject, jlong handle, jfloat x, jfloat y) {
     peer(handle)->iniciarTrazo(x, y);
@@ -198,6 +206,27 @@ Java_com_dibujo_engine_NativeEngine_nativoReemplazarHoja(
     // Sólo leímos el buffer; no hace falta copiarlo de vuelta al array de Java.
     env->ReleaseIntArrayElements(pixeles, px, JNI_ABORT);
     return ok ? JNI_TRUE : JNI_FALSE;
+}
+
+JNIEXPORT jboolean JNICALL
+Java_com_dibujo_engine_NativeEngine_nativoTransformar(
+        JNIEnv*, jobject, jlong handle,
+        jboolean voltearHorizontal, jboolean voltearVertical,
+        jfloat desplazamientoX, jfloat desplazamientoY, jfloat escala) {
+    auto* e = peer(handle);
+    if (e == nullptr) return JNI_FALSE;
+    const bool ok = e->transformar(
+        voltearHorizontal == JNI_TRUE, voltearVertical == JNI_TRUE,
+        desplazamientoX, desplazamientoY, escala);
+    return ok ? JNI_TRUE : JNI_FALSE;
+}
+
+JNIEXPORT jint JNICALL
+Java_com_dibujo_engine_NativeEngine_nativoPixelHoja(
+        JNIEnv*, jobject, jlong handle, jint x, jint y) {
+    auto* e = peer(handle);
+    if (e == nullptr) return 0;
+    return static_cast<jint>(e->pixelHoja(x, y));
 }
 
 JNIEXPORT jstring JNICALL

@@ -392,6 +392,20 @@ bool DibujoEngine::terminarTrazo() {
     if (pasado_.size() > kMaxHistorial) pasado_.erase(pasado_.begin());
     futuro_.clear();
 
+    // Trazo asistido: se descarta el recorrido tembloroso y se dibuja una recta
+    // entre el primer y el último punto. PINTAR no usa el recorrido.
+    if (asistenciaRecta_ && herramienta_ != Tool::PINTAR && trazo_.size() >= 4) {
+        const float x0 = trazo_[0];
+        const float y0 = trazo_[1];
+        const float x1 = trazo_[trazo_.size() - 2];
+        const float y1 = trazo_[trazo_.size() - 1];
+        trazo_.clear();
+        trazo_.push_back(x0);
+        trazo_.push_back(y0);
+        trazo_.push_back(x1);
+        trazo_.push_back(y1);
+    }
+
     const bool borrar = herramienta_ == Tool::BORRADOR;
     const uint32_t color = borrar ? fondo_ : color_;
     const int grosor = grosorHerramienta(herramienta_, grosor_);
@@ -517,6 +531,44 @@ bool DibujoEngine::reemplazarHoja(const uint32_t* datos, std::size_t n) {
     if (pasado_.size() > kMaxHistorial) pasado_.erase(pasado_.begin());
     futuro_.clear();
     std::copy(datos, datos + n, hoja_.begin());
+    ++revision_;
+    return true;
+}
+
+bool DibujoEngine::transformar(bool voltearHorizontal, bool voltearVertical,
+                               float desplazamientoX, float desplazamientoY, float escala) {
+    if (escala <= 0.0f) return false;
+    if (!voltearHorizontal && !voltearVertical &&
+        desplazamientoX == 0.0f && desplazamientoY == 0.0f && escala == 1.0f) {
+        return false;
+    }
+    std::lock_guard<std::mutex> bloqueo(mutex_);
+    // Copia para muestrear y para el historial (se mueve al final, sin copiar
+    // dos veces). El mapeo inverso por píxel destino evita huecos al ampliar.
+    std::vector<uint32_t> fuente = hoja_;
+    const double cx = (ancho_ - 1) / 2.0;
+    const double cy = (alto_ - 1) / 2.0;
+    const double e = static_cast<double>(escala);
+    const double tx = static_cast<double>(desplazamientoX);
+    const double ty = static_cast<double>(desplazamientoY);
+    const double fx = voltearHorizontal ? -1.0 : 1.0;
+    const double fy = voltearVertical ? -1.0 : 1.0;
+    for (int y = 0; y < alto_; ++y) {
+        const double v = static_cast<double>(y) - cy;
+        const int sy = static_cast<int>(std::floor(cy + fy * ((v - ty) / e) + 0.5));
+        const std::size_t fila = static_cast<std::size_t>(y) * ancho_;
+        for (int x = 0; x < ancho_; ++x) {
+            const double u = static_cast<double>(x) - cx;
+            const int sx = static_cast<int>(std::floor(cx + fx * ((u - tx) / e) + 0.5));
+            hoja_[fila + x] =
+                (sx >= 0 && sy >= 0 && sx < ancho_ && sy < alto_)
+                    ? fuente[static_cast<std::size_t>(sy) * ancho_ + sx]
+                    : fondo_;
+        }
+    }
+    pasado_.push_back(std::move(fuente));
+    if (pasado_.size() > kMaxHistorial) pasado_.erase(pasado_.begin());
+    futuro_.clear();
     ++revision_;
     return true;
 }

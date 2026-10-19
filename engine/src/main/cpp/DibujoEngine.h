@@ -29,6 +29,11 @@ public:
     bool puntaRedonda() const { return puntaRedonda_; }
     Tool herramienta() const { return herramienta_; }
 
+    // Trazo asistido: al terminar un trazo se descarta su recorrido y se
+    // dibuja una recta entre el primer y el último punto (PINTAR no cambia).
+    void fijarAsistenciaRecta(bool activa) { asistenciaRecta_ = activa; }
+    bool asistenciaRecta() const { return asistenciaRecta_; }
+
     // --- Trazo en curso (modo edición) ---
     void iniciarTrazo(float x, float y);
     void continuarTrazo(float x, float y);
@@ -103,6 +108,14 @@ public:
     // `MotorKotlin.reemplazarHoja` (paridad).
     bool reemplazarHoja(const uint32_t* datos, std::size_t n);
 
+    // Transforma el contenido dentro de la misma hoja: lo voltea
+    // (horizontal/vertical), lo desplaza y lo escala alrededor del centro. La
+    // zona no cubierta queda con `fondo_`. Guarda el estado anterior en el
+    // historial. Devuelve false si no hay nada que transformar. Replica
+    // `Lienzo.transformar` (paridad píxel a píxel).
+    bool transformar(bool voltearHorizontal, bool voltearVertical,
+                     float desplazamientoX, float desplazamientoY, float escala);
+
     // Lee la cámara de forma consistente con la revisión.
     void leerCamara(float& panX, float& panY, float& zoom, float& rotacion) const;
 
@@ -124,6 +137,7 @@ private:
     int grosor_ = 2;
     bool puntaRedonda_ = true;
     Tool herramienta_ = Tool::LAPIZ;
+    bool asistenciaRecta_ = false;
 
     // Cámara.
     float panX_ = 0.0f;

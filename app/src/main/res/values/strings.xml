@@ -158,4 +158,32 @@
     <string name="paleta_calco_analizando">Analizando la imagen…</string>
     <string name="paleta_calco_toca">Toca un color para usarlo:</string>
     <string name="paleta_calco_analizar">Analizar</string>
+
+    <!-- Rueda HSV / cuentagotas / colores recientes -->
+    <string name="color_titulo">Rueda de color</string>
+    <string name="color_descripcion">Elegí el tono en la rueda (el ángulo) y la saturación (el centro es blanco); ajustá el brillo abajo.</string>
+    <string name="color_brillo">Brillo: %1$d%%</string>
+    <string name="color_recientes">Recientes</string>
+    <string name="color_listo">Listo</string>
+    <string name="cd_rueda_color">Abrir la rueda de color HSV</string>
+    <string name="cd_cuentagotas">Cuentagotas: tocar la hoja para tomar su color</string>
+
+    <!-- Transformar el dibujo (voltear / mover / escalar) -->
+    <string name="transformar_titulo">Transformar dibujo</string>
+    <string name="transformar_desc">Volteá, mové o cambiá de tamaño tu dibujo. Cada paso se puede deshacer.</string>
+    <string name="transformar_voltear_h">Voltear horizontal</string>
+    <string name="transformar_voltear_v">Voltear vertical</string>
+    <string name="transformar_mover">Mover y escalar</string>
+    <string name="transformar_libre">Ajustar libremente</string>
+    <string name="transformar_libre_hint">Un dedo mueve el dibujo y dos dedos lo escalan, como al acomodar el calco.</string>
+    <string name="transformar_escala">Tamaño: %1$d%%</string>
+    <string name="transformar_aplicar">Aplicar tamaño</string>
+
+    <!-- Ajuste libre del dibujo (mover/escalar con los gestos) -->
+    <string name="ajuste_dibujo_hint">Ajustando el dibujo: un dedo lo mueve, dos dedos lo escalan.</string>
+    <string name="ajuste_listo">Listo</string>
+    <string name="ajuste_cancelar">Cancelar</string>
+
+    <!-- Trazo asistido (endereza las líneas al soltar) -->
+    <string name="cd_asistencia_recta">Líneas rectas asistidas: al soltar, el trazo se endereza</string>
 </resources>

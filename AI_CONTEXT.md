@@ -324,6 +324,63 @@ el `Canvas` lee el `State` dentro del `draw` (`estadoState.value`), no sólo
 durante la composición; si no, undo/redo cambian el motor pero no repintan
 (era el bug "se unde y no hace nada").
 
+### Transformar la hoja (voltear / mover / escalar)
+`MotorDibujo.transformarHoja(voltearH, voltearV, dx, dy, escala): Boolean`
+(issue 52) transforma el contenido **dentro de la misma hoja**: recorre cada
+píxel destino y mapea hacia atrás con un `double` (espejo horizontal/vertical,
+desplazamiento en px de hoja y escala alrededor del **centro**), así al ampliar
+no quedan huecos; lo que no se cubre queda con el fondo. Redondeo unificado
+`floor(v + 0.5)` en Kotlin y C++ para mantener la paridad. Devuelve `false`
+(no-op) si `escala <= 0` o si no hay espejo ni desplazamiento ni escala.
+La operación **entra al historial** (se deshace). Paridad cubierta por
+`MotorTest.transformarParidadNativoKotlin` y `voltearDosVecesVuelveAlOriginal`.
+
+**Ajuste libre del dibujo (issue 57)**: en vez de mover el dibujo con flechas,
+el diálogo "Transformar dibujo" abre un modo (`DibujoEstado.ajustandoDibujo`)
+donde la **vista hace de vista previa**: un dedo mueve y dos escalan (como el
+calco reposicionable), sin rotación. Al tocar "Listo"
+(`DibujoViewModel.terminarAjusteDibujo`) el cambio de cámara (pan/zoom) se
+convierte en una única llamada a `transformarHoja` (una sola entrada de
+historial) y la cámara se restaura, así el resultado no salta. La conversión
+sale de `hoja = R(−rot)·(pantalla + pan)/zoom`: con `z0,pan0` la cámara al
+entrar y `z1,pan1` la actual,
+`escala = z1/z0` y
+`desplazamiento = R(−rot)·(pan0 − pan1)/z0 + (escala − 1)·centro`
+(centro `((ancho−1)/2, (alto−1)/2)`, igual que `transformarHoja`). La vista
+previa por cámara y el horneado final son el **mismo mapeo**, así que no hay
+salto (sólo el borde fuera de hoja pasa de gris a fondo al vaciarse). Cualquier
+acción que toque cámara u hoja (`asegurarSinAjuste`: centrar, deshacer,
+limpiar, expandir, transformar, cambiar de modo…) cancela el ajuste pendiente
+sin hornearlo.
+
+### Trazo asistido (líneas rectas)
+`MotorDibujo.asistenciaRecta(activa: Boolean)`: al soltar el trazo, si está
+activa, se descarta el recorrido tembloroso y se dibuja una **recta** entre el
+primer y el último punto; no aplica a `Herramienta.PINTAR` ni a toques sin
+arrastre. Paridad en `MotorTest.asistenciaEnderezaElTrazo` y
+`asistenciaRectaParidadNativoKotlin`. En la UI se activa con un botón visible en
+la **barra superior** (`BotonIcono` con `seleccionado`, se resalta al encenderse)
+y el estado vive en `DibujoViewModel.asistenciaRecta` (aplicado en `inicializar`
+y `abrirDibujo`).
+
+### Color: rueda HSV, cuentagotas y recientes (issue 52)
+- **Rueda HSV** (`app/.../RuedaHsv.kt`, `DialogoColor`): tono por ángulo,
+  saturación por radio (centro = blanco) y brillo en un `Slider`; muestra hex.
+  La rueda se pinta **siempre a brillo pleno** (el brillo sólo afecta a la
+  muestra y al hex): oscurecerla con (1 − valor) la dejaba casi negra con
+  colores oscuros y no se podía elegir el tono.
+  Mientras se arrastra se **previsualiza** sobre el lápiz
+  (`previsualizarColorHsv`, no toca recientes); recién "Listo"
+  (`confirmarColorHsv`) lo registra.
+- **Cuentagotas**: `DibujoViewModel.recogerColor(px, py)` lee
+  `MotorDibujo.pixelHoja(x, y)` en coordenadas de hoja, aplica el color, lo
+  registra y **se desactiva** (un toque = un color); fuera de la hoja no hace
+  nada. En `CapaGestos`, si `cuentagotasActivo`, el tap toma color en vez de
+  pintar.
+- **Recientes**: `MAX_RECIENTES = 12`, dedup por argb (más nuevo primero), se
+  llenan con la paleta, el cuentagotas y la rueda; se muestran primero en la
+  fila de color, separadas de la paleta fija por una línea.
+
 ## 4. Build
 
 | Pieza | Valor |
@@ -367,6 +424,14 @@ Particularidades:
   herramientas/chips de modo/grosor y la paleta. Las herramientas son seis
   (…+ DOBLE), con botones compactos (`IconoToggle(tamano = 34.dp)`) para que
   entren en una fila sin scroll.
+- **Transformar y color (issue 52)**: el menú "más opciones" suma
+  "Transformar dibujo" (`DialogoTransformar`: voltear H/V, escalar 0.25–2× con
+  `Slider` y el botón **"Ajustar libremente"** que abre el modo de ajuste por
+  gestos — ver *Ajuste libre del dibujo*; todo deshacible). El trazo asistido de
+  **líneas rectas** tiene un botón propio en la barra superior (no escondido en
+  el menú) que se resalta al estar activo. La fila de color suma el botón de
+  rueda HSV (`DialogoColor` en `RuedaHsv.kt`) y el toggle de cuentagotas, y
+  arranca con los colores recientes antes de la paleta fija.
   Particularidades que costaron bugs reales:
   - Las barras del sistema usan `SystemBarStyle.light(...)`: el tema es claro
     y, con el teléfono en modo oscuro, `auto()` dejaba hora/batería blancas

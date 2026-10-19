@@ -84,6 +84,19 @@ data class DibujoEstado(
     val modificado: Boolean = false,
     /** Se está recortando o redimensionando el lienzo (operación pesada). */
     val ajustandoLienzo: Boolean = false,
+    /**
+     * Ajuste libre del dibujo: un dedo lo mueve y dos lo escalan, como el
+     * calco reposicionable. La vista (cámara) hace de vista previa y al tocar
+     * "Listo" el desplazamiento/escala se hornea en la hoja (una sola vez,
+     * deshacible).
+     */
+    val ajustandoDibujo: Boolean = false,
+    /** Últimos colores elegidos (paleta, cuentagotas o rueda HSV), más nuevos primero. */
+    val coloresRecientes: List<Int> = emptyList(),
+    /** El cuentagotas está activo: el próximo toque de la hoja toma su color. */
+    val cuentagotasActivo: Boolean = false,
+    /** Trazo asistido: las líneas dibujadas a mano se enderezan al soltar. */
+    val asistenciaRecta: Boolean = false,
 )
 
 /**
@@ -106,6 +119,8 @@ class DibujoViewModel(app: Application) : AndroidViewModel(app) {
     private var vistaAncho = 0
     private var vistaAlto = 0
     private var guardandoActual = false
+    /** Cámara al entrar al ajuste libre: es la referencia a hornear en "Listo". */
+    private var camaraBaseAjuste: Camara? = null
     private val seleccionInicial = leerBackend()
     private val _estado = MutableStateFlow(
         DibujoEstado(
@@ -126,6 +141,7 @@ class DibujoViewModel(app: Application) : AndroidViewModel(app) {
         if (actual == null) {
             val m = Motores.crear(vw.coerceIn(1, MAX_LADO), vh.coerceIn(1, MAX_LADO))
             m.configurarLapiz(_estado.value.lapiz)
+            m.asistenciaRecta(_estado.value.asistenciaRecta)
             motor = m
             publicarContenido(m)
         } else if (_estado.value.motorNombre.isEmpty()) {
@@ -182,6 +198,7 @@ class DibujoViewModel(app: Application) : AndroidViewModel(app) {
         motor?.close()
         val nuevo = Motores.crear(ancho.coerceIn(1, MAX_LADO), alto.coerceIn(1, MAX_LADO))
         nuevo.configurarLapiz(_estado.value.lapiz)
+        nuevo.asistenciaRecta(_estado.value.asistenciaRecta)
         nuevo.reemplazarHoja(pixeles)
         motor = nuevo
         publicarContenido(nuevo, modificado = true)
@@ -350,7 +367,7 @@ class DibujoViewModel(app: Application) : AndroidViewModel(app) {
     /** Pan con el dedo: el contenido sigue al dedo (dx, dy en px de pantalla). */
     fun panear(dx: Float, dy: Float) {
         val m = motor ?: return
-        if (_estado.value.modo != Modo.MOVER) return
+        if (_estado.value.modo != Modo.MOVER && !_estado.value.ajustandoDibujo) return
         m.pan(-dx, -dy)
         _estado.update { it.copy(camara = m.camara(), marco = it.marco + 1) }
     }
@@ -363,7 +380,7 @@ class DibujoViewModel(app: Application) : AndroidViewModel(app) {
      */
     fun zoomear(factor: Float, focoX: Float, focoY: Float) {
         val m = motor ?: return
-        if (_estado.value.modo != Modo.MOVER) return
+        if (_estado.value.modo != Modo.MOVER && !_estado.value.ajustandoDibujo) return
         val cam = m.camara()
         val hf = pantallaAUnrotado(cam, focoX, focoY)
         m.zoom(factor)
@@ -388,6 +405,7 @@ class DibujoViewModel(app: Application) : AndroidViewModel(app) {
 
     /** Endereza la hoja (rotación 0) sin tocar el zoom, anclado al centro. */
     fun enderezar() {
+        asegurarSinAjuste()
         val m = motor ?: return
         val cam = m.camara()
         if (cam.rotacion == 0f) return
@@ -399,7 +417,64 @@ class DibujoViewModel(app: Application) : AndroidViewModel(app) {
         _estado.update { it.copy(camara = m.camara(), marco = it.marco + 1) }
     }
 
-    fun elegirColor(argb: Int) = actualizarLapiz { it.copy(color = argb) }
+    /**
+     * Elige un color de la paleta, del calco o del cuentagotas: lo aplica al
+     * lápiz y lo guarda al frente de los colores recientes.
+     */
+    fun elegirColor(argb: Int) {
+        actualizarLapiz { it.copy(color = argb) }
+        registrarReciente(argb)
+    }
+
+    /**
+     * Aplica un color de la rueda HSV mientras se arrastra (vista previa), sin
+     * ensuciar la lista de recientes: recién [confirmarColorHsv] lo registra.
+     */
+    fun previsualizarColorHsv(argb: Int) = actualizarLapiz { it.copy(color = argb) }
+
+    /** Confirma el color elegido en la rueda HSV y lo guarda en recientes. */
+    fun confirmarColorHsv(argb: Int) {
+        actualizarLapiz { it.copy(color = argb) }
+        registrarReciente(argb)
+    }
+
+    private fun registrarReciente(argb: Int) {
+        _estado.update {
+            val lista = (listOf(argb) + it.coloresRecientes.filter { c -> c != argb })
+                .take(MAX_RECIENTES)
+            it.copy(coloresRecientes = lista)
+        }
+    }
+
+    /** Activa/desactiva el cuentagotas: el próximo toque de la hoja toma su color. */
+    fun alternarCuentagotas() {
+        _estado.update { it.copy(cuentagotasActivo = !it.cuentagotasActivo) }
+    }
+
+    /**
+     * Cuentagotas: lee el color del píxel de la hoja tocado (en coordenadas de
+     * hoja), lo aplica al lápiz, lo guarda en recientes y desactiva el
+     * cuentagotas (un toque = un color). Fuera de la hoja no hace nada.
+     */
+    fun recogerColor(px: Float, py: Float) {
+        val m = motor ?: return
+        val (hx, hy) = aHoja(m, px, py)
+        val ix = kotlin.math.floor(hx.toDouble()).toInt()
+        val iy = kotlin.math.floor(hy.toDouble()).toInt()
+        if (ix !in 0 until m.ancho || iy !in 0 until m.alto) return
+        val color = m.pixelHoja(ix, iy)
+        actualizarLapiz { it.copy(color = color) }
+        _estado.update { it.copy(cuentagotasActivo = false) }
+        registrarReciente(color)
+    }
+
+    /** Activa/desactiva el trazo asistido (las líneas se enderezan al soltar). */
+    fun alternarAsistenciaRecta() {
+        val m = motor ?: return
+        val nuevo = !_estado.value.asistenciaRecta
+        m.asistenciaRecta(nuevo)
+        _estado.update { it.copy(asistenciaRecta = nuevo) }
+    }
 
     fun elegirHerramienta(herramienta: Herramienta) =
         actualizarLapiz { it.copy(herramienta = herramienta) }
@@ -412,6 +487,9 @@ class DibujoViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun alternarModo() {
+        // Si se está ajustando el dibujo, primero se descarta el ajuste (la
+        // vista vuelve a su sitio) y recién ahí se cambia de modo.
+        asegurarSinAjuste()
         val m = motor ?: return
         m.cancelarTrazo()
         val nuevo = if (_estado.value.modo == Modo.EDICION) Modo.MOVER else Modo.EDICION
@@ -428,6 +506,7 @@ class DibujoViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun deshacer() {
+        asegurarSinAjuste()
         val m = motor ?: return
         m.deshacer()
         _estado.update {
@@ -441,6 +520,7 @@ class DibujoViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun rehacer() {
+        asegurarSinAjuste()
         val m = motor ?: return
         m.rehacer()
         _estado.update {
@@ -454,6 +534,7 @@ class DibujoViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun limpiar() {
+        asegurarSinAjuste()
         val m = motor ?: return
         m.limpiarHoja()
         _estado.update {
@@ -467,6 +548,7 @@ class DibujoViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun centrar() {
+        asegurarSinAjuste()
         val m = motor ?: return
         m.centrarVista()
         _estado.update { it.copy(camara = m.camara(), marco = it.marco + 1) }
@@ -478,6 +560,7 @@ class DibujoViewModel(app: Application) : AndroidViewModel(app) {
      * resultado en el historial (se puede deshacer).
      */
     fun limpiarTrazos() {
+        asegurarSinAjuste()
         val m = motor ?: return
         if (_estado.value.limpiando) return
         _estado.update { it.copy(limpiando = true) }
@@ -502,6 +585,7 @@ class DibujoViewModel(app: Application) : AndroidViewModel(app) {
      * disponible o falla, cae al adelgazado algorítmico (`limpiarTrazos`).
      */
     fun limpiarTrazosConModelo() {
+        asegurarSinAjuste()
         val m = motor ?: return
         if (_estado.value.limpiando) return
         _estado.update { it.copy(limpiando = true) }
@@ -601,6 +685,7 @@ class DibujoViewModel(app: Application) : AndroidViewModel(app) {
      * textura al nuevo tamaño (por eso se enciende `gpuCargando`).
      */
     fun expandirHoja(extraAncho: Int, extraAlto: Int) {
+        asegurarSinAjuste()
         val m = motor ?: return
         val dAncho = extraAncho.coerceAtLeast(0)
         val dAlto = extraAlto.coerceAtLeast(0)
@@ -619,6 +704,152 @@ class DibujoViewModel(app: Application) : AndroidViewModel(app) {
                 marco = it.marco + 1,
             )
         }
+    }
+
+    /**
+     * Transforma el dibujo dentro de la misma hoja: lo voltea
+     * (horizontal/vertical), lo mueve [desplazamientoX]/[desplazamientoY] px de
+     * hoja y lo escala [escala] alrededor del centro. Recorre la hoja completa,
+     * así que corre fuera del hilo principal y deja el resultado en el
+     * historial (se puede deshacer).
+     */
+    fun transformarDibujo(
+        voltearHorizontal: Boolean,
+        voltearVertical: Boolean,
+        desplazamientoX: Float,
+        desplazamientoY: Float,
+        escala: Float,
+    ) {
+        asegurarSinAjuste()
+        val m = motor ?: return
+        if (_estado.value.ajustandoLienzo) return
+        val cambia = voltearHorizontal || voltearVertical ||
+            desplazamientoX != 0f || desplazamientoY != 0f || escala != 1f
+        if (!cambia || escala <= 0f) return
+        _estado.update { it.copy(ajustandoLienzo = true) }
+        viewModelScope.launch {
+            val cambio = withContext(Dispatchers.Default) {
+                m.transformarHoja(voltearHorizontal, voltearVertical, desplazamientoX, desplazamientoY, escala)
+            }
+            _estado.update {
+                it.copy(
+                    ajustandoLienzo = false,
+                    puedeDeshacer = m.puedeDeshacer(),
+                    puedeRehacer = m.puedeRehacer(),
+                    modificado = it.modificado || cambio,
+                    marco = if (cambio) it.marco + 1 else it.marco,
+                )
+            }
+        }
+    }
+
+    /**
+     * Entra al **ajuste libre del dibujo**: los gestos mueven (un dedo) y
+     * escalan (dos dedos) la vista, que hace de vista previa; al tocar "Listo"
+     * ([terminarAjusteDibujo]) ese movimiento se hornea en la hoja con una sola
+     * entrada de historial. Es el equivalente a acomodar el calco, pero sobre
+     * el dibujo mismo. No rota (el giro de la vista se conserva tal cual).
+     */
+    fun iniciarAjusteDibujo() {
+        val m = motor ?: return
+        if (_estado.value.ajustandoLienzo) return
+        m.cancelarTrazo()
+        camaraBaseAjuste = m.camara()
+        _estado.update {
+            it.copy(
+                ajustandoDibujo = true,
+                calcoEnEdicion = false,
+                trazoEnCurso = null,
+                marco = it.marco + 1,
+            )
+        }
+    }
+
+    /**
+     * Termina el ajuste libre: convierte el cambio de cámara desde que se
+     * empezó (pan y zoom) en una transformación de la hoja y la aplica. La
+     * vista se restaura a su estado inicial para que el resultado no salte.
+     *
+     * Sea `z0, pan0` la cámara al empezar y `z1, pan1` la actual, la relación
+     * `hoja = R(−rot)·(pantalla + pan)/zoom` da
+     * `escala = z1/z0` y
+     * `desplazamiento = R(−rot)·(pan0 − pan1)/z0 + (escala − 1)·centro`,
+     * que es justo lo que espera `transformarHoja` (escala alrededor del
+     * centro `((ancho−1)/2, (alto−1)/2)`).
+     */
+    fun terminarAjusteDibujo() {
+        val m = motor ?: return
+        val base = camaraBaseAjuste
+        camaraBaseAjuste = null
+        if (base == null) {
+            _estado.update { it.copy(ajustandoDibujo = false) }
+            return
+        }
+        val cur = m.camara()
+        val escala = if (base.zoom != 0f) cur.zoom / base.zoom else 1f
+        val c = kotlin.math.cos(base.rotacion.toDouble()).toFloat()
+        val s = kotlin.math.sin(base.rotacion.toDouble()).toFloat()
+        val dxp = base.panX - cur.panX
+        val dyp = base.panY - cur.panY
+        val rx = (c * dxp + s * dyp) / base.zoom
+        val ry = (-s * dxp + c * dyp) / base.zoom
+        val centroX = (m.ancho - 1) / 2f
+        val centroY = (m.alto - 1) / 2f
+        val dx = rx + (escala - 1f) * centroX
+        val dy = ry + (escala - 1f) * centroY
+        val cambia = kotlin.math.abs(escala - 1f) > 1e-4f ||
+            kotlin.math.abs(dx) > 1e-3f || kotlin.math.abs(dy) > 1e-3f
+        if (!cambia || escala <= 0f) {
+            restaurarCamaraAjuste(base)
+            _estado.update { it.copy(ajustandoDibujo = false) }
+            return
+        }
+        _estado.update { it.copy(ajustandoLienzo = true) }
+        viewModelScope.launch {
+            val cambio = withContext(Dispatchers.Default) {
+                m.transformarHoja(false, false, dx, dy, escala)
+            }
+            restaurarCamaraAjuste(base)
+            _estado.update {
+                it.copy(
+                    ajustandoLienzo = false,
+                    ajustandoDibujo = false,
+                    puedeDeshacer = m.puedeDeshacer(),
+                    puedeRehacer = m.puedeRehacer(),
+                    modificado = it.modificado || cambio,
+                    marco = if (cambio) it.marco + 1 else it.marco,
+                )
+            }
+        }
+    }
+
+    /** Sale del ajuste libre sin hornear nada: la vista vuelve a como estaba. */
+    fun cancelarAjusteDibujo() {
+        val m = motor ?: return
+        val base = camaraBaseAjuste
+        camaraBaseAjuste = null
+        if (base != null) restaurarCamaraAjuste(base)
+        _estado.update { it.copy(ajustandoDibujo = false) }
+    }
+
+    /**
+     * Cualquier acción que toque la cámara o la hoja (centrar, deshacer,
+     * limpiar, otra transformación…) cancela el ajuste libre pendiente: la
+     * vista vuelve a su sitio y el ajuste se descarta sin hornear.
+     */
+    private fun asegurarSinAjuste() {
+        if (_estado.value.ajustandoDibujo) cancelarAjusteDibujo()
+    }
+
+    /** Devuelve la cámara a [base] con deltas de pan/zoom (sin exponer setCamara). */
+    private fun restaurarCamaraAjuste(base: Camara) {
+        val m = motor ?: return
+        val cur = m.camara()
+        if (cur.zoom != base.zoom && cur.zoom != 0f) m.zoom(base.zoom / cur.zoom)
+        val ahora = m.camara()
+        m.pan(base.panX - ahora.panX, base.panY - ahora.panY)
+        if (ahora.rotacion != base.rotacion) m.rotar(base.rotacion - ahora.rotacion)
+        _estado.update { it.copy(camara = m.camara(), marco = it.marco + 1) }
     }
 
     /**
@@ -643,6 +874,7 @@ class DibujoViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     private fun procesarLienzo(recortar: Boolean, nuevoAncho: Int, nuevoAlto: Int) {
+        asegurarSinAjuste()
         val m = motor ?: return
         if (_estado.value.ajustandoLienzo) return
         val ancho = m.ancho
@@ -727,6 +959,9 @@ class DibujoViewModel(app: Application) : AndroidViewModel(app) {
 
     /** Fija (o quita con null) la imagen de calco y la muestra al elegirla. */
     fun elegirCalco(uri: String?) {
+        // Elegir una imagen corta el ajuste libre del dibujo (no se puede
+        // ajustar el calco y la hoja a la vez).
+        asegurarSinAjuste()
         _estado.update {
             it.copy(
                 calcoUri = uri,
@@ -759,6 +994,8 @@ class DibujoViewModel(app: Application) : AndroidViewModel(app) {
     /** Activa/desactiva el ajuste del calco (mover/escalar con los gestos). */
     fun alternarEdicionCalco() {
         if (_estado.value.calcoUri == null) return
+        // No se puede ajustar el calco y la hoja a la vez: se cancela el ajuste.
+        asegurarSinAjuste()
         _estado.update {
             it.copy(
                 calcoEnEdicion = !it.calcoEnEdicion,
@@ -926,5 +1163,8 @@ class DibujoViewModel(app: Application) : AndroidViewModel(app) {
         /** Límites de escala del calco sobre su ajuste automático. */
         const val CALCO_ESCALA_MIN = 0.1f
         const val CALCO_ESCALA_MAX = 20f
+
+        /** Cuántos colores recientes se recuerdan en la barra. */
+        const val MAX_RECIENTES = 12
     }
 }

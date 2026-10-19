@@ -43,6 +43,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.automirrored.rounded.Redo
+import androidx.compose.material.icons.automirrored.rounded.TrendingFlat
 import androidx.compose.material.icons.automirrored.rounded.Undo
 import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material.icons.rounded.AddPhotoAlternate
@@ -50,6 +51,8 @@ import androidx.compose.material.icons.rounded.AspectRatio
 import androidx.compose.material.icons.rounded.AutoFixHigh
 import androidx.compose.material.icons.rounded.Brush
 import androidx.compose.material.icons.rounded.CenterFocusWeak
+import androidx.compose.material.icons.rounded.Colorize
+import androidx.compose.material.icons.rounded.ColorLens
 import androidx.compose.material.icons.rounded.Delete
 import androidx.compose.material.icons.rounded.Draw
 import androidx.compose.material.icons.rounded.FormatColorFill
@@ -66,6 +69,9 @@ import androidx.compose.material.icons.rounded.Save
 import androidx.compose.material.icons.rounded.SaveAlt
 import androidx.compose.material.icons.rounded.ScreenRotation
 import androidx.compose.material.icons.rounded.Settings
+import androidx.compose.material.icons.rounded.SwapHoriz
+import androidx.compose.material.icons.rounded.SwapVert
+import androidx.compose.material.icons.rounded.Transform
 import androidx.compose.material.icons.rounded.Visibility
 import androidx.compose.material.icons.rounded.VisibilityOff
 import androidx.compose.material3.AlertDialog
@@ -204,6 +210,9 @@ fun PantallaDibujo(
     // Limpiar la hoja borra todo y es irreversible si no se deshace: se pide
     // confirmación (ahora vive dentro del menú de la barra superior).
     var mostrarLimpiar by remember { mutableStateOf(false) }
+    // Transformar el dibujo (voltear/mover/escalar) y la rueda HSV.
+    var mostrarTransformar by remember { mutableStateOf(false) }
+    var mostrarColor by remember { mutableStateOf(false) }
 
     // Volver al menú principal (botón atrás del sistema o de la barra).
     BackHandler(onBack = alVolver)
@@ -393,6 +402,8 @@ fun PantallaDibujo(
                     )
                 },
                 alAjustarLienzo = { mostrarAjustarLienzo = true },
+                alTransformar = { mostrarTransformar = true },
+                alAlternarAsistencia = vm::alternarAsistenciaRecta,
                 exportando = exportando,
                 alAbrirConfig = alAbrirOpciones,
             )
@@ -410,12 +421,15 @@ fun PantallaDibujo(
                 alAlternarCalco = vm::alternarCalco,
                 alAbrirCalco = { mostrarCalco = true },
                 alTerminarCalco = vm::terminarEdicionCalco,
+                alTerminarAjuste = vm::terminarAjusteDibujo,
+                alCancelarAjuste = vm::cancelarAjusteDibujo,
                 alAbrirIa = {
                     mostrarIa = true
                     if (estado.calcoUri != null && estado.coloresCalco.isEmpty()) {
                         vm.analizarCalco()
                     }
                 },
+                alAbrirColor = { mostrarColor = true },
             )
         },
         // Transparente: deja ver la superficie GPU que va en una capa detrás
@@ -518,6 +532,37 @@ fun PantallaDibujo(
             },
         )
     }
+
+    if (mostrarTransformar) {
+        DialogoTransformar(
+            ocupado = estado.ajustandoLienzo,
+            alVoltearHorizontal = {
+                vm.transformarDibujo(true, false, 0f, 0f, 1f)
+            },
+            alVoltearVertical = {
+                vm.transformarDibujo(false, true, 0f, 0f, 1f)
+            },
+            alAjustarLibre = {
+                vm.iniciarAjusteDibujo()
+                mostrarTransformar = false
+            },
+            alEscalar = { escala ->
+                vm.transformarDibujo(false, false, 0f, 0f, escala)
+                mostrarTransformar = false
+            },
+            alCerrar = { mostrarTransformar = false },
+        )
+    }
+
+    if (mostrarColor) {
+        DialogoColor(
+            colorInicial = estado.lapiz.color,
+            recientes = estado.coloresRecientes,
+            alPrevisualizar = vm::previsualizarColorHsv,
+            alConfirmar = { vm.confirmarColorHsv(it) },
+            alCerrar = { mostrarColor = false },
+        )
+    }
 }
 
 /**
@@ -542,6 +587,8 @@ private fun BarraSuperior(
     alExportar: () -> Unit,
     alImportarImagen: () -> Unit,
     alAjustarLienzo: () -> Unit,
+    alTransformar: () -> Unit,
+    alAlternarAsistencia: () -> Unit,
     exportando: Boolean,
     alAbrirConfig: () -> Unit,
 ) {
@@ -596,6 +643,15 @@ private fun BarraSuperior(
                 habilitado = estado.camara.rotacion != 0f,
                 alPulsar = alEnderezar,
             )
+            // Trazo asistido a la vista (no escondido en el menú): al activarlo
+            // las líneas dibujadas a mano se enderezan al soltar. Se resalta
+            // cuando está encendido.
+            BotonIcono(
+                icono = Icons.AutoMirrored.Rounded.TrendingFlat,
+                descripcion = stringResource(R.string.cd_asistencia_recta),
+                seleccionado = estado.asistenciaRecta,
+                alPulsar = alAlternarAsistencia,
+            )
             Box {
                 BotonIcono(
                     icono = Icons.Rounded.MoreVert,
@@ -644,6 +700,16 @@ private fun BarraSuperior(
                         onClick = {
                             menuAbierto = false
                             alAjustarLienzo()
+                        },
+                    )
+                    DropdownMenuItem(
+                        text = { Text(stringResource(R.string.transformar_titulo)) },
+                        leadingIcon = {
+                            Icon(Icons.Rounded.Transform, contentDescription = null)
+                        },
+                        onClick = {
+                            menuAbierto = false
+                            alTransformar()
                         },
                     )
                     DropdownMenuItem(
@@ -899,16 +965,29 @@ private fun CapaGestos(
     // EDICION: un dedo dibuja; MOVER: pan y pinch de la cámara; y si se está
     // ajustando el calco, los gestos mueven/escalan la imagen (no la hoja).
     val modo = estadoState.value.modo
+    val cuentagotas = estadoState.value.cuentagotasActivo
+    val ajustandoDibujo = estadoState.value.ajustandoDibujo
     val editandoCalco = estadoState.value.calcoEnEdicion &&
         estadoState.value.calcoUri != null &&
         estadoState.value.calcoVisible
     Canvas(
-        modifier.pointerInput(modo, editandoCalco) {
-            if (editandoCalco) {
+        modifier.pointerInput(modo, editandoCalco, cuentagotas, ajustandoDibujo) {
+            if (cuentagotas) {
+                // Cuentagotas: un toque toma el color del píxel de la hoja.
+                detectTapGestures { punto -> vm.recogerColor(punto.x, punto.y) }
+            } else if (editandoCalco) {
                 // Un dedo mueve el calco; dos dedos lo escalan (anclado al foco).
                 detectTransformGestures(panZoomLock = true) { foco, pan, zoom, _ ->
                     if (zoom != 1f) vm.escalarCalco(zoom, foco.x, foco.y)
                     if (pan != Offset.Zero) vm.moverCalco(pan.x, pan.y)
+                }
+            } else if (ajustandoDibujo) {
+                // Ajuste libre del dibujo: la vista hace de vista previa. Un
+                // dedo mueve y dos escalan (sin rotación); al tocar "Listo" el
+                // movimiento se hornea en la hoja de una sola vez.
+                detectTransformGestures(panZoomLock = true) { foco, pan, zoom, _ ->
+                    if (zoom != 1f) vm.zoomear(zoom, foco.x, foco.y)
+                    if (pan != Offset.Zero) vm.panear(pan.x, pan.y)
                 }
             } else if (modo == Modo.MOVER) {
                 // Pan + pinch de zoom + rotación de dos dedos, todos anclados
@@ -939,8 +1018,8 @@ private fun CapaGestos(
             }
         }
             // Toque sin arrastre: punto con el lápiz o relleno con PINTAR.
-            .pointerInput(modo, editandoCalco) {
-                if (!editandoCalco && modo == Modo.EDICION) {
+            .pointerInput(modo, editandoCalco, cuentagotas, ajustandoDibujo) {
+                if (!cuentagotas && !editandoCalco && !ajustandoDibujo && modo == Modo.EDICION) {
                     detectTapGestures { punto -> vm.tocarHoja(punto.x, punto.y) }
                 }
             },
@@ -1071,7 +1150,10 @@ private fun BarraHerramientas(
     alAlternarCalco: () -> Unit,
     alAbrirCalco: () -> Unit,
     alTerminarCalco: () -> Unit,
+    alTerminarAjuste: () -> Unit,
+    alCancelarAjuste: () -> Unit,
     alAbrirIa: () -> Unit,
+    alAbrirColor: () -> Unit,
 ) {
     Surface(modifier = Modifier.absorberToque(), tonalElevation = 3.dp) {
         Column(
@@ -1081,6 +1163,40 @@ private fun BarraHerramientas(
                 // esto la paleta quedaba debajo y no se podía tocar.
                 .windowInsetsPadding(WindowInsets.navigationBars),
         ) {
+            // Aviso mientras se ajusta el dibujo, con "Listo" y "Cancelar".
+            if (estado.ajustandoDibujo) {
+                Row(
+                    Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 12.dp, vertical = 6.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Icon(
+                        Icons.Rounded.OpenWith,
+                        contentDescription = null,
+                        modifier = Modifier.size(18.dp),
+                        tint = MaterialTheme.colorScheme.primary,
+                    )
+                    Spacer(Modifier.width(8.dp))
+                    Text(
+                        stringResource(R.string.ajuste_dibujo_hint),
+                        style = MaterialTheme.typography.bodySmall,
+                        modifier = Modifier.weight(1f),
+                    )
+                    TextButton(
+                        onClick = alCancelarAjuste,
+                        enabled = !estado.ajustandoLienzo,
+                    ) {
+                        Text(stringResource(R.string.ajuste_cancelar))
+                    }
+                    TextButton(
+                        onClick = alTerminarAjuste,
+                        enabled = !estado.ajustandoLienzo,
+                    ) {
+                        Text(stringResource(R.string.ajuste_listo))
+                    }
+                }
+            }
             // Aviso mientras se ajusta el calco, con el botón para terminar.
             if (estado.calcoEnEdicion) {
                 Row(
@@ -1195,6 +1311,19 @@ private fun BarraHerramientas(
                     descripcion = stringResource(R.string.cd_grosor_mas),
                     alPulsar = { vm.cambiarGrosor(1) },
                 )
+                Spacer(Modifier.width(4.dp))
+                IconoToggle(
+                    icono = Icons.Rounded.ColorLens,
+                    descripcion = stringResource(R.string.cd_rueda_color),
+                    seleccionado = false,
+                    alPulsar = alAbrirColor,
+                )
+                IconoToggle(
+                    icono = Icons.Rounded.Colorize,
+                    descripcion = stringResource(R.string.cd_cuentagotas),
+                    seleccionado = estado.cuentagotasActivo,
+                    alPulsar = { vm.alternarCuentagotas() },
+                )
                 Spacer(Modifier.width(8.dp))
                 Row(
                     Modifier
@@ -1203,6 +1332,26 @@ private fun BarraHerramientas(
                     horizontalArrangement = Arrangement.spacedBy(10.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
+                    // Recientes primero (paleta, cuentagotas y rueda HSV) y luego
+                    // la paleta fija, separadas por una línea.
+                    estado.coloresRecientes.forEach { argb ->
+                        CabezaColor(
+                            color = com.dibujo.core.Color(
+                                "#%06X".format(argb and 0xFFFFFF),
+                                argb,
+                            ),
+                            seleccionado = estado.lapiz.color == argb,
+                            onElegir = { vm.elegirColor(argb) },
+                        )
+                    }
+                    if (estado.coloresRecientes.isNotEmpty()) {
+                        Box(
+                            Modifier
+                                .width(1.dp)
+                                .height(24.dp)
+                                .background(MaterialTheme.colorScheme.outline),
+                        )
+                    }
                     Colores.PALETA.forEach { color ->
                         CabezaColor(
                             color = color,
@@ -1366,6 +1515,91 @@ private fun DialogoAjustarLienzo(
         dismissButton = {
             TextButton(onClick = alCerrar) {
                 Text(stringResource(R.string.cancelar))
+            }
+        },
+    )
+}
+
+/**
+ * Diálogo "Transformar dibujo": voltea el dibujo (horizontal/vertical) y abre
+ * el **ajuste libre** (un dedo mueve, dos dedos escalan, como el calco). El
+ * tamaño también se puede fijar con el control deslizante. Cada acción queda en
+ * el historial (se puede deshacer).
+ */
+@Composable
+private fun DialogoTransformar(
+    ocupado: Boolean,
+    alVoltearHorizontal: () -> Unit,
+    alVoltearVertical: () -> Unit,
+    alAjustarLibre: () -> Unit,
+    alEscalar: (Float) -> Unit,
+    alCerrar: () -> Unit,
+) {
+    var escala by remember { mutableStateOf(1f) }
+    AlertDialog(
+        onDismissRequest = alCerrar,
+        title = { Text(stringResource(R.string.transformar_titulo)) },
+        text = {
+            Column {
+                Text(
+                    stringResource(R.string.transformar_desc),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Spacer(Modifier.height(8.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    TextButton(onClick = alVoltearHorizontal, enabled = !ocupado) {
+                        Icon(Icons.Rounded.SwapHoriz, contentDescription = null, Modifier.size(18.dp))
+                        Spacer(Modifier.width(6.dp))
+                        Text(stringResource(R.string.transformar_voltear_h))
+                    }
+                    TextButton(onClick = alVoltearVertical, enabled = !ocupado) {
+                        Icon(Icons.Rounded.SwapVert, contentDescription = null, Modifier.size(18.dp))
+                        Spacer(Modifier.width(6.dp))
+                        Text(stringResource(R.string.transformar_voltear_v))
+                    }
+                }
+                Spacer(Modifier.height(12.dp))
+                Text(
+                    stringResource(R.string.transformar_mover),
+                    style = MaterialTheme.typography.labelLarge,
+                )
+                Spacer(Modifier.height(2.dp))
+                Text(
+                    stringResource(R.string.transformar_libre_hint),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Spacer(Modifier.height(6.dp))
+                Button(
+                    onClick = alAjustarLibre,
+                    enabled = !ocupado,
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Icon(Icons.Rounded.OpenWith, contentDescription = null, Modifier.size(18.dp))
+                    Spacer(Modifier.width(6.dp))
+                    Text(stringResource(R.string.transformar_libre))
+                }
+                Spacer(Modifier.height(12.dp))
+                Text(
+                    stringResource(R.string.transformar_escala, (escala * 100).roundToInt()),
+                    style = MaterialTheme.typography.labelLarge,
+                )
+                Slider(
+                    value = escala,
+                    onValueChange = { escala = it },
+                    valueRange = 0.25f..2f,
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = { alEscalar(escala) }, enabled = !ocupado) {
+                Text(stringResource(R.string.transformar_aplicar))
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = alCerrar) {
+                Text(stringResource(R.string.cerrar))
             }
         },
     )
@@ -1607,12 +1841,22 @@ private fun BotonIcono(
     descripcion: String,
     alPulsar: () -> Unit,
     habilitado: Boolean = true,
+    seleccionado: Boolean = false,
 ) {
     IconButton(
         onClick = alPulsar,
         enabled = habilitado,
         colors = IconButtonDefaults.iconButtonColors(
-            contentColor = MaterialTheme.colorScheme.onSurfaceVariant,
+            containerColor = if (seleccionado) {
+                MaterialTheme.colorScheme.secondaryContainer
+            } else {
+                Color.Transparent
+            },
+            contentColor = if (seleccionado) {
+                MaterialTheme.colorScheme.onSecondaryContainer
+            } else {
+                MaterialTheme.colorScheme.onSurfaceVariant
+            },
         ),
     ) {
         Icon(

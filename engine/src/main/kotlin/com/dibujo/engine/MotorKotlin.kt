@@ -17,6 +17,7 @@ class MotorKotlin(
     private val hoja = Lienzo(anchoInicial, altoInicial)
     private val historial = com.dibujo.core.Historial()
     private var lapiz = Lapiz()
+    private var asistencia = false
 
     override val ancho: Int get() = hoja.ancho
     override val alto: Int get() = hoja.alto
@@ -37,6 +38,10 @@ class MotorKotlin(
 
     override fun configurarLapiz(lapiz: Lapiz) {
         this.lapiz = lapiz
+    }
+
+    override fun asistenciaRecta(activa: Boolean) {
+        asistencia = activa
     }
 
     override fun iniciarTrazo(x: Float, y: Float) {
@@ -61,6 +66,15 @@ class MotorKotlin(
     override fun terminarTrazo(): Boolean {
         if (puntos == 0) return false
         historial.guardar(hoja)
+        // Trazo asistido: se descarta el recorrido tembloroso y se dibuja una
+        // recta entre el primer y el último punto (coincide con el C++).
+        if (asistencia && lapiz.herramienta != com.dibujo.core.Herramienta.PINTAR && puntos >= 4) {
+            val x1 = trazo[(puntos - 1) * 2]
+            val y1 = trazo[(puntos - 1) * 2 + 1]
+            trazo[2] = x1
+            trazo[3] = y1
+            puntos = 2
+        }
         // La herramienta PINTAR ignora el trazo: rellena la región donde se
         // tocó con el color del lápiz (balde de pintura).
         if (lapiz.herramienta == com.dibujo.core.Herramienta.PINTAR) {
@@ -194,6 +208,20 @@ class MotorKotlin(
         return true
     }
 
+    override fun transformarHoja(
+        voltearHorizontal: Boolean,
+        voltearVertical: Boolean,
+        desplazamientoX: Float,
+        desplazamientoY: Float,
+        escala: Float,
+    ): Boolean {
+        val cambia = voltearHorizontal || voltearVertical ||
+            desplazamientoX != 0f || desplazamientoY != 0f || escala != 1f
+        if (!cambia || escala <= 0f) return false
+        historial.guardar(hoja)
+        return hoja.transformar(voltearHorizontal, voltearVertical, desplazamientoX, desplazamientoY, escala)
+    }
+
     override fun reemplazarHoja(pixeles: IntArray): Boolean {
         if (pixeles.size != hoja.ancho * hoja.alto) return false
         historial.guardar(hoja)
@@ -201,8 +229,7 @@ class MotorKotlin(
         return true
     }
 
-    /** Color de un píxel de la hoja (para tests). */
-    fun pixelHoja(x: Int, y: Int): Int = hoja.pixel(x, y)
+    override fun pixelHoja(x: Int, y: Int): Int = hoja.pixel(x, y)
 
     override fun close() {
         // Sin recursos nativos: nada que liberar.

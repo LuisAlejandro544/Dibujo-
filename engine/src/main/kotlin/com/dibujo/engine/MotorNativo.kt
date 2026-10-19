@@ -50,6 +50,9 @@ class MotorNativo(
         )
     }
 
+    override fun asistenciaRecta(activa: Boolean) =
+        NativeEngine.nativoAsistenciaRecta(handle, activa)
+
     override fun iniciarTrazo(x: Float, y: Float) = NativeEngine.nativoIniciarTrazo(handle, x, y)
     override fun continuarTrazo(x: Float, y: Float) = NativeEngine.nativoContinuarTrazo(handle, x, y)
     override fun terminarTrazo(): Boolean = NativeEngine.nativoTerminarTrazo(handle)
@@ -96,8 +99,20 @@ class MotorNativo(
     override fun copiarHoja(destino: IntArray): Boolean =
         NativeEngine.nativoCopiarHoja(handle, destino)
 
+    override fun transformarHoja(
+        voltearHorizontal: Boolean,
+        voltearVertical: Boolean,
+        desplazamientoX: Float,
+        desplazamientoY: Float,
+        escala: Float,
+    ): Boolean = NativeEngine.nativoTransformar(
+        handle, voltearHorizontal, voltearVertical, desplazamientoX, desplazamientoY, escala,
+    )
+
     override fun reemplazarHoja(pixeles: IntArray): Boolean =
         NativeEngine.nativoReemplazarHoja(handle, pixeles)
+
+    override fun pixelHoja(x: Int, y: Int): Int = NativeEngine.nativoPixelHoja(handle, x, y)
 
     override fun close() {
         NativeEngine.nativoDestruir(handle)

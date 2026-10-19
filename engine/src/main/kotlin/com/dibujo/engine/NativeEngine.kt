@@ -16,6 +16,7 @@ object NativeEngine {
     external fun nativoCrear(ancho: Int, alto: Int): Long
     external fun nativoDestruir(handle: Long)
     external fun nativoConfigurarLapiz(handle: Long, color: Int, grosor: Int, puntaRedonda: Boolean, herramienta: Int)
+    external fun nativoAsistenciaRecta(handle: Long, activa: Boolean)
     external fun nativoIniciarTrazo(handle: Long, x: Float, y: Float)
     external fun nativoContinuarTrazo(handle: Long, x: Float, y: Float)
     external fun nativoTerminarTrazo(handle: Long): Boolean
@@ -43,6 +44,19 @@ object NativeEngine {
 
     /** Reemplaza la hoja completa por [pixeles] (ancho*alto); false si el tamaño difiere. */
     external fun nativoReemplazarHoja(handle: Long, pixeles: IntArray): Boolean
+
+    /** Transforma el contenido de la hoja (espejo/mover/escala); false si no cambia. */
+    external fun nativoTransformar(
+        handle: Long,
+        voltearHorizontal: Boolean,
+        voltearVertical: Boolean,
+        desplazamientoX: Float,
+        desplazamientoY: Float,
+        escala: Float,
+    ): Boolean
+
+    /** Color ARGB de un píxel de la hoja (cuentagotas); fondo si está fuera. */
+    external fun nativoPixelHoja(handle: Long, x: Int, y: Int): Int
     external fun nativoVersion(): String
 
     // --- Render GPU (Android) ---

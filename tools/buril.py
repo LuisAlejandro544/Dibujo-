@@ -43,8 +43,29 @@ con hojas de 512 px y muchos parches eso pasaba de 10 GB y el proceso moría con
 
 La **pérdida** es BCE + Dice + **clDice** (Shit et al., CVPR'21): clDice es
 diferenciable (esqueleto morfológico blando) y empuja a preservar la topología
-de la línea, no sólo la superposición. El **LR** usa decaimiento coseno
-(`--lr`), y por defecto se corren 60 épocas.
+de la línea, no sólo la superposición.
+
+**Entrenamiento rápido y con pulido (por defecto).** El cuello de botella era el
+número de pasos, no el peso del modelo, así que el schedule arranca rápido y
+termina fino:
+
+- **Fase rápida** (`--fase-rapida`, 75 % de las épocas): lote grande (`--lote`,
+  64) y LR alto con **calentamiento** lineal (`--calentamiento`, 2 épocas) y
+  luego **coseno** hasta `--alpha-fase-rapida`·`--lr`. Lote grande = menos pasos
+  por época y GPU mejor aprovechada.
+- **Fase de pulido** (25 % restante): lote chico (`--lote-final`, 32) con LR ya
+  bajo (coseno hasta `--alpha-final`), que da más pasos y refina detalles sin
+  mover el resultado brusco. El total de épocas es `--epocas` (60).
+
+En GPU se usa **precisión mixta** float16 (`--precision auto`) y, si se puede,
+**XLA** (`--xla auto`), que aceleran sin cambiar la calidad (el resultado se
+exporta float16 igual). El `clDice` **no** se pide además como métrica: ya está
+en la pérdida y recalcularlo duplicaba su costo.
+
+**Puntos de control.** Se guarda `ultimo.weights.h5` en cada época
+(`--checkpoints`) y `mejor.weights.h5` con el mejor `val_loss`; con `--reanudar`
+se continúa desde donde quedó y **se exporta el mejor**, no el último. Esto es
+lo que permite sobrevivir a un corte del entorno (Kaggle/Colab/Actions).
 
 El modelo (mini U-Net 32/64/128, ~0,9 MB en float16 y ~466k parámetros) se
 exporta a .tflite (float16) para correrlo en el móvil con LiteRT; es más ancho
@@ -69,12 +90,14 @@ con las metricas y la atribucion del dataset.
 Escribe `app/src/main/assets/modelos/limpiar_trazos.tflite` (y su `.json`). Esa
 ruta esta en `.gitignore`: el modelo NO se versiona para no engordar el repo.
 
-La via recomendada es Google Colab: `tools/buril_colab.ipynb`
-es un driver fino que llama a este script y publica el `.tflite` en la release
-`modelo-buril`; `android-apk.yml` la baja y la inyecta en los assets antes de
-armar el APK. Como respaldo, el workflow
-`entrenar-limpiar-trazos-planb.yml` entrena en Actions y publica en la misma
-release. `--nombre` / `--version` quedan en el manifiesto (por defecto
+La via recomendada es **Kaggle** (`tools/buril_kaggle.ipynb`, GPU T4 x2 gratis y
+*Save & Run All* en segundo plano, sin corte por inactividad): es un driver fino
+que llama a este script y publica el `.tflite` en la release `modelo-buril`;
+`android-apk.yml` la baja y la inyecta en los assets antes de armar el APK.
+**Google Colab** (`tools/buril_colab.ipynb`) queda para **probar otros modelos** y
+experimentos cortos; como respaldo, el workflow
+`entrenar-limpiar-trazos-planb.yml` entrena en Actions (CPU) y publica en la
+misma release. `--nombre` / `--version` quedan en el manifiesto (por defecto
 `Buril v1.0.0-experimental.1a`).
 """
 
@@ -473,8 +496,29 @@ def modelo():
     x = tf.keras.layers.Concatenate()([x, s1])
     x = tf.keras.layers.Conv2D(32, 3, padding="same", activation="relu")(x)
     x = tf.keras.layers.Conv2D(32, 3, padding="same", activation="relu")(x)
-    out = tf.keras.layers.Conv2D(1, 1, activation="sigmoid")(x)
+    # Salida en float32 aunque se entrene con precisión mixta (float16): la
+    # sigmoide y la pérdida (BCE con log) necesitan rango float32 para no
+    # subdesbordar ni perder precisión. Con `float32` no cambia nada.
+    out = tf.keras.layers.Conv2D(1, 1, activation="sigmoid", dtype="float32")(x)
     return tf.keras.Model(inp, out)
+
+
+def modelo_float32(entrenado):
+    """Copia un modelo a float32 para poder exportarlo a `.tflite`.
+
+    TFLite no convierte bien un modelo entrenado con política `mixed_float16`
+    (los `Conv2D` en float16 quedan como ops TF y pedirían Flex). Como igual
+    exportamos float16 con `TFLiteConverter` (cuantización), se clona el modelo
+    bajo política float32 y se copian los pesos; el resultado es equivalente.
+    """
+    anterior = tf.keras.mixed_precision.global_policy()
+    tf.keras.mixed_precision.set_global_policy("float32")
+    try:
+        copia = modelo()
+    finally:
+        tf.keras.mixed_precision.set_global_policy(anterior)
+    copia.set_weights([np.asarray(w, np.float32) for w in entrenado.get_weights()])
+    return copia
 
 
 def dice(y_true, y_pred):
@@ -586,6 +630,110 @@ def evaluar(tflite, x, y, max_muestras=48):
     }
 
 
+class CalentamientoCoseno(tf.keras.optimizers.schedules.LearningRateSchedule):
+    """Calentamiento lineal y después decaimiento coseno.
+
+    El calentamiento evita que un lote grande y un LR alto desestabilicen las
+    primeras épocas; el coseno baja el LR de forma suave para que el modelo
+    converja fino al final de la fase rápida.
+    """
+
+    def __init__(self, lr_max, lr_fin, pasos_calentamiento, pasos_decay):
+        super().__init__()
+        self.lr_max = float(lr_max)
+        self.lr_fin = float(lr_fin)
+        self.pasos_calentamiento = max(0, int(pasos_calentamiento))
+        self.pasos_decay = max(1, int(pasos_decay))
+
+    def __call__(self, paso):
+        paso = tf.cast(paso, tf.float32)
+        p_cal = float(self.pasos_calentamiento)
+        # Coseno desde lr_max hasta lr_fin a lo largo de la fase.
+        progreso = tf.clip_by_value(
+            (paso - p_cal) / tf.cast(self.pasos_decay, tf.float32), 0.0, 1.0
+        )
+        lr_cos = self.lr_fin + 0.5 * (self.lr_max - self.lr_fin) * (
+            1.0 + tf.cos(np.pi * progreso)
+        )
+        if self.pasos_calentamiento <= 0:
+            return lr_cos
+        lr_cal = self.lr_max * (paso + 1.0) / p_cal
+        return tf.where(paso < p_cal, lr_cal, lr_cos)
+
+    def get_config(self):
+        return {
+            "lr_max": self.lr_max,
+            "lr_fin": self.lr_fin,
+            "pasos_calentamiento": self.pasos_calentamiento,
+            "pasos_decay": self.pasos_decay,
+        }
+
+
+class EstadoEntrenamiento(tf.keras.callbacks.Callback):
+    """Escribe cuántas épocas van completadas (para `--reanudar`).
+
+    Se lleva un contador propio en vez de leer el número de época de Keras:
+    así el valor es el total absoluto aunque el `fit` arranque con
+    `initial_epoch` (fase de pulido o reanudación).
+    """
+
+    def __init__(self, carpeta, epocas_previas=0):
+        super().__init__()
+        self.carpeta = carpeta
+        self.epocas = int(epocas_previas)
+        os.makedirs(carpeta, exist_ok=True)
+
+    def on_epoch_end(self, epoch, logs=None):
+        self.epocas += 1
+        with open(os.path.join(self.carpeta, "estado.json"), "w", encoding="utf-8") as f:
+            json.dump({"epoca_completadas": self.epocas}, f)
+
+
+def configurar_precision(modo):
+    """Resuelve `auto` y fija la política de precisión mixta si corresponde."""
+    if modo == "auto":
+        modo = "mixed_float16" if tf.config.list_physical_devices("GPU") else "float32"
+    if modo == "mixed_float16":
+        tf.keras.mixed_precision.set_global_policy("mixed_float16")
+    print(f"precision: {modo}")
+    return modo
+
+
+def resolver_xla(modo):
+    """Resuelve `auto` (XLA sólo si hay GPU) a un booleano de `jit_compile`."""
+    if modo == "auto":
+        modo = "si" if tf.config.list_physical_devices("GPU") else "no"
+    activo = modo == "si"
+    print(f"XLA (jit_compile): {'si' if activo else 'no'}")
+    return activo
+
+
+def leer_epocas_hechas(carpeta):
+    """Devuelve las épocas ya completadas de un punto de control (0 si no hay).
+
+    Acepta un directorio (usa `estado.json` + `ultimo.weights.h5`) o el archivo
+    `estado.json` directamente. No valida los pesos; sólo cuántas épocas van.
+    """
+    if not carpeta:
+        return 0
+    estado = carpeta if carpeta.endswith(".json") else os.path.join(carpeta, "estado.json")
+    if os.path.exists(estado):
+        try:
+            with open(estado, encoding="utf-8") as f:
+                return int(json.load(f).get("epoca_completadas", 0))
+        except (ValueError, OSError):
+            return 0
+    return 0
+
+
+def pesos_reanudar(carpeta):
+    """Ruta del `ultimo.weights.h5` de una carpeta de puntos de control (o None)."""
+    if not carpeta:
+        return None
+    candidato = os.path.join(carpeta, "ultimo.weights.h5")
+    return candidato if os.path.exists(candidato) else None
+
+
 def argumentos():
     p = argparse.ArgumentParser(description="Entrena el limpiador de trazos.")
     p.add_argument("--muestras", type=int, default=1400, help="pares sintéticos de entrenamiento")
@@ -597,11 +745,32 @@ def argumentos():
                    help="parches 64x64 maximos por hoja del cache --pares")
     p.add_argument("--aumentos", type=int, default=3, help="copias aumentadas por muestra de entrenamiento")
     p.add_argument("--epocas", type=int, default=60)
-    p.add_argument("--lote", type=int, default=32)
+    p.add_argument("--lote", type=int, default=64,
+                   help="lote de la fase rápida (lote grande = menos pasos y GPU mejor usada)")
+    p.add_argument("--lote-final", type=int, default=32,
+                   help="lote de la fase de pulido (0 = igual que --lote)")
+    p.add_argument("--fase-rapida", type=float, default=0.75,
+                   help="fracción de épocas con lote grande y LR alto (resto = pulido)")
+    p.add_argument("--calentamiento", type=int, default=2,
+                   help="épocas de calentamiento lineal del LR en la fase rápida")
+    p.add_argument("--alpha-fase-rapida", type=float, default=0.05,
+                   help="LR al terminar la fase rápida, como fracción de --lr")
+    p.add_argument("--alpha-final", type=float, default=0.1,
+                   help="LR al terminar el pulido, como fracción del LR de arranque de esa fase")
     p.add_argument("--lr", type=float, default=1e-3,
-                   help="LR inicial (decae en coseno hasta ~5%% en las --epocas)")
+                   help="LR máximo de la fase rápida (calentamiento + coseno)")
     p.add_argument("--banda", type=int, default=1,
                    help="radio de la banda objetivo en px (0 = línea de 1 px; 1 = 3 px)")
+    p.add_argument("--precision", choices=["auto", "float32", "mixed_float16"],
+                   default="auto",
+                   help="precisión de cómputo (auto = float16 mixto en GPU, float32 en CPU)")
+    p.add_argument("--xla", choices=["auto", "si", "no"], default="auto",
+                   help="compilar el paso de entrenamiento con XLA (auto = sí en GPU)")
+    p.add_argument("--checkpoints", type=str,
+                   default=os.path.join(RAIZ, ".cache", "modelos", "checkpoints"),
+                   help="carpeta de puntos de control (ultimo/mejor.weights.h5)")
+    p.add_argument("--reanudar", type=str, default=None,
+                   help="carpeta de checkpoints (o estado.json) para continuar entrenando")
     p.add_argument("--semilla", type=int, default=1)
     p.add_argument("--nombre", type=str, default="Buril",
                    help="nombre del modelo (va al manifiesto y a la release)")
@@ -654,30 +823,105 @@ def main():
           f"vuelo) | validación: {xva.shape[0]} pares | objetivo: banda de "
           f"{2 * args.banda + 1} px")
 
-    tren = flujo(xtr, ytr, args.lote,
-                 aumentos=args.aumentos, entrenando=True, semilla=args.semilla)
-    val = flujo(xva, yva, args.lote) if xva.shape[0] else None
+    # Precision/XLA antes de construir y compilar la red (la politica global de
+    # precision mixta tiene que estar fijada desde el inicio).
+    precision = configurar_precision(args.precision)
+    jit = resolver_xla(args.xla)
+
+    # Schedule: fase rápida (lote grande + LR alto) y fase de pulido (lote chico
+    # + LR bajo). Ver el docstring del módulo.
+    epocas = max(1, int(args.epocas))
+    epocas_rapida = int(round(epocas * min(max(args.fase_rapida, 0.0), 1.0)))
+    epocas_rapida = min(max(epocas_rapida, 0), epocas)
+    lote_final = args.lote_final if args.lote_final and args.lote_final > 0 else args.lote
+    total = xtr.shape[0] * (args.aumentos + 1)
+
+    os.makedirs(args.checkpoints, exist_ok=True)
+    pesos = pesos_reanudar(args.reanudar)
+    hechas = leer_epocas_hechas(args.reanudar) if pesos else 0
+    if args.reanudar and pesos:
+        print(f"reanudando desde {pesos} ({hechas} épocas completadas)")
+    elif args.reanudar:
+        print(f"[reanudar] no hay punto de control en {args.reanudar}; se entrena de cero")
 
     red = modelo()
-    pasos = max(1, int(np.ceil(xtr.shape[0] * (args.aumentos + 1) / args.lote)))
-    plan_lr = tf.keras.optimizers.schedules.CosineDecay(
-        initial_learning_rate=args.lr,
-        decay_steps=max(1, pasos * args.epocas),
-        alpha=0.05,
-    )
-    red.compile(
-        optimizer=tf.keras.optimizers.Adam(plan_lr),
-        loss=perdida,
-        metrics=[dice, cldice_metrica],
-    )
     parametros = int(red.count_params())
     print(f"modelo: {parametros:,} parametros (~{parametros * 2 / 1e6:.2f} MB en float16)")
-    red.fit(
-        tren, validation_data=val,
-        epochs=args.epocas, verbose=2,
-    )
+    if pesos:
+        red.load_weights(pesos)
 
-    conv = tf.lite.TFLiteConverter.from_keras_model(red)
+    def _callbacks(previas, tiene_val):
+        cbs = [
+            tf.keras.callbacks.ModelCheckpoint(
+                os.path.join(args.checkpoints, "ultimo.weights.h5"),
+                save_weights_only=True, save_freq="epoch", verbose=0),
+            EstadoEntrenamiento(args.checkpoints, previas),
+            tf.keras.callbacks.TerminateOnNaN(),
+        ]
+        if tiene_val:
+            cbs.insert(1, tf.keras.callbacks.ModelCheckpoint(
+                os.path.join(args.checkpoints, "mejor.weights.h5"),
+                monitor="val_loss", save_best_only=True, save_weights_only=True,
+                verbose=0))
+        return cbs
+
+    def _ajustar(plan_lr, lote):
+        tren = flujo(xtr, ytr, lote, aumentos=args.aumentos,
+                     entrenando=True, semilla=args.semilla)
+        val = flujo(xva, yva, lote) if xva.shape[0] else None
+        red.compile(
+            optimizer=tf.keras.optimizers.Adam(plan_lr),
+            loss=perdida,
+            metrics=[dice],
+            jit_compile=jit,
+        )
+        return tren, val
+
+    # --- Fase rápida: lote grande, LR con calentamiento y coseno (menos pasos). ---
+    if hechas < epocas_rapida:
+        cal = min(args.calentamiento, max(0, epocas_rapida - hechas - 1))
+        pasos_epoca = max(1, int(np.ceil(total / args.lote)))
+        plan = CalentamientoCoseno(
+            args.lr, args.lr * args.alpha_fase_rapida,
+            cal * pasos_epoca, epocas_rapida * pasos_epoca)
+        tren, val = _ajustar(plan, args.lote)
+        print(f"fase rapida: lote {args.lote}, {epocas_rapida} epocas "
+              f"({pasos_epoca} pasos/epoca), LR {args.lr} -> "
+              f"{args.lr * args.alpha_fase_rapida} (calentamiento {cal})")
+        red.fit(tren, validation_data=val, epochs=epocas_rapida,
+                initial_epoch=hechas, callbacks=_callbacks(hechas, val is not None),
+                verbose=2)
+        hechas = epocas_rapida
+
+    # --- Pulido: lote chico, LR bajo y más pasos para refinar el detalle. ---
+    if hechas < epocas:
+        inicio = max(hechas, epocas_rapida)
+        lr0 = args.lr * args.alpha_fase_rapida
+        pasos_epoca = max(1, int(np.ceil(total / lote_final)))
+        plan = tf.keras.optimizers.schedules.CosineDecay(
+            initial_learning_rate=lr0,
+            decay_steps=max(1, pasos_epoca * (epocas - inicio)),
+            alpha=args.alpha_final,
+        )
+        tren, val = _ajustar(plan, lote_final)
+        print(f"pulido: lote {lote_final}, {epocas - inicio} epocas "
+              f"({pasos_epoca} pasos/epoca), LR {lr0} -> "
+              f"{lr0 * args.alpha_final}")
+        red.fit(tren, validation_data=val, epochs=epocas,
+                initial_epoch=inicio, callbacks=_callbacks(inicio, val is not None),
+                verbose=2)
+
+    # Exportamos el MEJOR val_loss (si existe), no el último: así un sobreajuste
+    # de las últimas épocas no degrada el modelo que va al móvil.
+    mejor = os.path.join(args.checkpoints, "mejor.weights.h5")
+    if os.path.exists(mejor):
+        red.load_weights(mejor)
+        print("exportando el mejor punto de control (menor val_loss)")
+
+    # Se exporta un clon en float32 (aunque se haya entrenado con precisión
+    # mixta): el conversor no acepta el modelo fp16 tal cual y terminaría
+    # pidiendo Flex ops. La cuantización a float16 la hace el propio conversor.
+    conv = tf.lite.TFLiteConverter.from_keras_model(modelo_float32(red))
     conv.optimizations = [tf.lite.Optimize.DEFAULT]
     conv.target_spec.supported_types = [tf.float16]
     tflite = conv.convert()
@@ -700,9 +944,15 @@ def main():
         "formato": "tflite float16",
         "bytes": len(tflite),
         "parametros": parametros,
-        "epocas": args.epocas,
+        "epocas": epocas,
         "aumentos": args.aumentos,
         "lr": args.lr,
+        "lote": args.lote,
+        "lote_final": lote_final,
+        "fase_rapida": args.fase_rapida,
+        "calentamiento": args.calentamiento,
+        "precision": precision,
+        "xla": jit,
         "banda_objetivo_px": 2 * args.banda + 1,
         "perdida": "BCE + Dice + 0.5*clDice",
         "pares": args.pares,

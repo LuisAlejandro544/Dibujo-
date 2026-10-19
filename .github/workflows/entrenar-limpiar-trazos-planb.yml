@@ -17,7 +17,11 @@
 # cuaderno de Colab y con este workflow), asi que reentrenar no vuelve a bajar
 # ni preprocesar. La version del dataset y del modelo se pasa con `version`.
 #
-# Disparo: manual (workflow_dispatch) o al tocar los archivos del pipeline.
+# Disparo: SOLO manual (workflow_dispatch). Antes tambien corria al tocar los
+# archivos del pipeline, pero eso lanzaba un entrenamiento de ~90 min en CPU en
+# cada edicion (y encima solia pasar el timeout sin publicar). El entrenamiento
+# normal ahora corre en Kaggle (`tools/buril_kaggle.ipynb`); este workflow queda
+# como respaldo manual. Para lanzarlo desde Actions: Run workflow.
 
 name: "Entrenar limpiador de trazos (Plan B, Quick Draw)"
 
@@ -52,12 +56,6 @@ on:
         description: "Version del dataset y del modelo (release)"
         default: "v1.0.0-experimental.1a"
         type: string
-  push:
-    paths:
-      - "tools/buril.py"
-      - "tools/preparar_dataset_limpiar_trazos_planb.py"
-      - "tools/datasets_limpiar_trazos_planb.json"
-      - ".github/workflows/entrenar-limpiar-trazos-planb.yml"
 
 permissions:
   contents: write

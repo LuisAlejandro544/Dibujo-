@@ -58,6 +58,17 @@ implementaciones y pasar `MotorTest` (paridad píxel a píxel). Las diferencias:
   redondeado en ambos lados) y mezcla con el fondo con `pintarMezcla` /
   `pintarMezcla()` (aritmética entera idéntica). Por eso los trazos tienen
   borde suave y `Lienzo.pintarMezcla` no debe "optimizarse" en un solo lado.
+- **Trazo redondo = cápsula, no discos**: `lineaGruesa`/`polilineaGruesa`
+  calculan la cobertura de cada píxel por distancia al segmento y guardan el
+  **máximo** en una máscara; al final se mezcla **una sola vez** por píxel. Así
+  los segmentos de una polilínea que comparten vértice no acumulan cobertura
+  (antes se estampaba un disco cada ≤1 px y los bordes quedaban irregulares).
+  La cobertura se redondea con `floor(v + 0.5)` en ambos motores.
+- **Render de presentación bilineal**: `renderizar` (Kotlin y C++) muestrea
+  los 4 texeles vecinos con la misma asociación de operaciones
+  (`arriba/abajo + lerp` en `Double`, redondeo `floor(v + 0.5)`), con el centro
+  del texel en la coordenada entera. GL y Vulkan usan `texture()` con filtro
+  `LINEAR`. Al acercar ya no se ven bloques duros.
 - BORRADOR pinta con el color de fondo de la hoja; la vista previa de Compose
   lo imita (fondo + grosor efectivo) para que el borrado se vea al instante.
 - FUERA de hoja en render = gris `0xFFECECEC`.
@@ -81,11 +92,13 @@ ulp de la libm. De ahí salen (ver `README_AI.md`):
 
 ### Herramienta DOBLE
 `Herramienta.DOBLE` (ordinal 5, mismo orden que `Tool::DOBLE` en C++) dibuja
-**dos trazos paralelos**: cada segmento se replica desplazado perpendicularmente
-`separacion = (grosor + 2) * 0.5` hacia ambos lados (C++ `separacionDoble`, Kotlin
-igual). El trazo original y su gemelo se rasterizan con la misma lógica de línea
-gruesa; un toque sin arrastre dibuja un único disco/bloque centrado. La paridad
-la cubre `MotorTest.dobleParidadNativoKotlin`.
+**dos trazos paralelos** separados `separacion = (grosor + 2) * 0.5`. Ya no se
+calcula la normal segmento a segmento: `polilineaDoble` desplaza la
+**polilínea completa** con una normal suavizada por vértice (promedio de las
+direcciones de los segmentos vecinos), así las dos líneas no tiemblan en los
+empalmes. Luego cada lado se rasteriza con `polilineaGruesa`; un toque sin
+arrastre dibuja un único disco/bloque centrado. La paridad la cubre
+`MotorTest.dobleParidadNativoKotlin`.
 
 ### Hoja
 `Lienzo` admite 1..4096 por lado, ARGB, fondo configurable (BLANCO por defecto).
@@ -631,10 +644,12 @@ corresponde.
   presenta; recrea la cadena ante `VK_ERROR_OUT_OF_DATE_KHR`.
 - Los shaders presentan la hoja como textura y resuelven la cámara en la GPU:
   `hoja = R(−rot)·(pantalla + pan) / zoom` (`rot` en el uniform `uRot`) con
-  `texelFetch`; el color se lee del `0xAARRGGBB` en bytes B,G,R,A y se reordena
-  a RGBA. Parámetros en un bloque std430 de 64 bytes —`rot` + 3 de relleno,
-  `static_assert` lo fija— (`ParametrosPresentacion.h`). El rasterizado del
-  trazo sigue en CPU (paridad `MotorTest` intacta); la GPU sólo presenta.
+  `texture()` y sampler `LINEAR` (muestreo bilineal; el centro del texel cae en
+  la coordenada entera, de ahí `uv = (hoja + 0.5) / uHojaTam`). El color se lee
+  del `0xAARRGGBB` en bytes B,G,R,A y se reordena a RGBA. Parámetros en un
+  bloque std430 de 64 bytes —`rot` + 3 de relleno, `static_assert` lo fija—
+  (`ParametrosPresentacion.h`). El rasterizado del trazo sigue en CPU (paridad
+  `MotorTest` intacta); la GPU sólo presenta.
 - `GpuJni.cpp` expone `nativoGpuCrear/Render/Redimensionar/Nombre/Destruir` y
   guarda el `ANativeWindow` (`ANativeWindow_fromSurface`).
 - Vulkan GLSL se compila a SPIR-V en configure (glslc del NDK) e incrusta en

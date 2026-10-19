@@ -10,6 +10,9 @@ out/
 __pycache__/
 *.pyc
 
+# Capturas y mockups adjuntos por el usuario: no se versionan.
+.opencode/attachments/
+
 # Modelo IA entrenado (limpiar trazos): NO se versiona para no pesar el repo.
 # Lo produce el workflow `entrenar-limpiar-trazos-planb.yml` y `android-apk.yml`
 # lo inyecta en `app/src/main/assets/modelos/` antes de armar el APK.

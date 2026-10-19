@@ -88,38 +88,24 @@ class MotorKotlin(
         }
         val grosor = grosorEfectivo()
         val color = if (lapiz.herramienta == com.dibujo.core.Herramienta.BORRADOR) hoja.fondo else lapiz.color
-        val radio = grosor / 2.0f
         if (lapiz.herramienta == com.dibujo.core.Herramienta.DOBLE) {
-            // Doble lápiz: dos líneas paralelas separadas respecto a la normal
-            // del segmento. Misma aritmética que `lineaDoble` del C++.
-            val separacion = separacionDoble(grosor)
-            if (puntos == 1) {
-                if (lapiz.punta == com.dibujo.core.Punta.REDONDA) hoja.disco(trazo[0], trazo[1], radio, color)
-                else hoja.bloque(trazo[0], trazo[1], radio, color)
-            } else {
-                for (i in 0 until puntos - 1) {
-                    hoja.lineaDoble(
-                        trazo[i * 2], trazo[i * 2 + 1],
-                        trazo[(i + 1) * 2], trazo[(i + 1) * 2 + 1],
-                        grosor, lapiz.punta == com.dibujo.core.Punta.REDONDA, color, separacion,
-                    )
-                }
-            }
+            // Doble lápiz: dos líneas paralelas con la normal suavizada por
+            // vértice (polilínea completa), para que no tiemblen en los
+            // empalmes. Misma aritmética que el C++.
+            hoja.polilineaDoble(
+                trazo, puntos * 2, grosor,
+                lapiz.punta == com.dibujo.core.Punta.REDONDA, color,
+                separacionDoble(grosor),
+            )
             puntos = 0
             return true
         }
-        if (puntos == 1) {
-            if (lapiz.punta == com.dibujo.core.Punta.REDONDA) hoja.disco(trazo[0], trazo[1], radio, color)
-            else hoja.bloque(trazo[0], trazo[1], radio, color)
-        } else {
-            for (i in 0 until puntos - 1) {
-                hoja.lineaGruesa(
-                    trazo[i * 2], trazo[i * 2 + 1],
-                    trazo[(i + 1) * 2], trazo[(i + 1) * 2 + 1],
-                    grosor, lapiz.punta == com.dibujo.core.Punta.REDONDA, color,
-                )
-            }
-        }
+        // Se rasteriza toda la polilínea con cobertura máxima por píxel y una
+        // sola mezcla: sin discos superpuestos ni bordes acumulados.
+        hoja.polilineaGruesa(
+            trazo, puntos * 2, grosor,
+            lapiz.punta == com.dibujo.core.Punta.REDONDA, color,
+        )
         puntos = 0
         return true
     }
@@ -190,15 +176,50 @@ class MotorKotlin(
                 val ey = y + panY
                 val hx = (c * ex + s * ey) / zoomF
                 val hy = (-s * ex + c * ey) / zoomF
-                val ix = kotlin.math.floor(hx.toDouble()).toInt()
-                val iy = kotlin.math.floor(hy.toDouble()).toInt()
-                destino[y * vw + x] = if (ix in 0 until ancho && iy in 0 until alto) {
-                    hoja.pixeles[iy * ancho + ix]
-                } else {
-                    FUERA
-                }
+                destino[y * vw + x] = muestrearBilineal(hx, hy)
             }
         }
+    }
+
+    /**
+     * Muestreo bilineal de la hoja en coordenadas continuas (centro del texel
+     * en el entero). Al acercar ya no se ven bloques duros: el color se
+     * interpola entre los 4 texeles vecinos. Idéntico al C++ (paridad).
+     * Fuera de la hoja devuelve [FUERA].
+     */
+    private fun muestrearBilineal(hx: Float, hy: Float): Int {
+        val ix = kotlin.math.floor(hx.toDouble()).toInt()
+        val iy = kotlin.math.floor(hy.toDouble()).toInt()
+        if (ix < 0 || iy < 0 || ix >= ancho || iy >= alto) return FUERA
+        val fx = hx.toDouble() - ix
+        val fy = hy.toDouble() - iy
+        val ix1 = if (ix + 1 < ancho) ix + 1 else ix
+        val iy1 = if (iy + 1 < alto) iy + 1 else iy
+        val fila0 = iy * ancho
+        val fila1 = iy1 * ancho
+        val c00 = hoja.pixeles[fila0 + ix]
+        val c10 = hoja.pixeles[fila0 + ix1]
+        val c01 = hoja.pixeles[fila1 + ix]
+        val c11 = hoja.pixeles[fila1 + ix1]
+        val a = canalBilineal((c00 ushr 24) and 0xFF, (c10 ushr 24) and 0xFF,
+            (c01 ushr 24) and 0xFF, (c11 ushr 24) and 0xFF, fx, fy)
+        val r = canalBilineal((c00 ushr 16) and 0xFF, (c10 ushr 16) and 0xFF,
+            (c01 ushr 16) and 0xFF, (c11 ushr 16) and 0xFF, fx, fy)
+        val g = canalBilineal((c00 ushr 8) and 0xFF, (c10 ushr 8) and 0xFF,
+            (c01 ushr 8) and 0xFF, (c11 ushr 8) and 0xFF, fx, fy)
+        val b = canalBilineal(c00 and 0xFF, c10 and 0xFF, c01 and 0xFF, c11 and 0xFF, fx, fy)
+        return (a shl 24) or (r shl 16) or (g shl 8) or b
+    }
+
+    /** Interpola un canal entre los 4 vecinos y redondea a entero (paridad C++). */
+    private fun canalBilineal(
+        c00: Int, c10: Int, c01: Int, c11: Int,
+        fx: Double, fy: Double,
+    ): Int {
+        val arriba = c00 + (c10 - c00) * fx
+        val abajo = c01 + (c11 - c01) * fx
+        val v = arriba + (abajo - arriba) * fy
+        return kotlin.math.floor(v + 0.5).toInt()
     }
 
     override fun copiarHoja(destino: IntArray): Boolean {

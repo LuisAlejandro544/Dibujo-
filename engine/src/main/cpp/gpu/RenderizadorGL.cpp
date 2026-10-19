@@ -41,18 +41,22 @@ out vec4 salida;
 void main() {
     float c = cos(uRot);
     float s = sin(uRot);
-    vec2 e = vPantalla + uPan;
+    // vPantalla llega en el centro del píxel (+0.5); se descuenta para que la
+    // coordenada de hoja coincida con la del render por CPU.
+    vec2 e = (vPantalla - vec2(0.5)) + uPan;
     // R(−rot) aplicado a e y des-escalado por el zoom.
     vec2 hoja = vec2(c * e.x + s * e.y, -s * e.x + c * e.y) / uZoom;
-    ivec2 p = ivec2(floor(hoja));
-    if (p.x < 0 || p.y < 0 || p.x >= int(uHojaTam.x) || p.y >= int(uHojaTam.y)) {
+    if (hoja.x < 0.0 || hoja.y < 0.0 ||
+        hoja.x >= uHojaTam.x || hoja.y >= uHojaTam.y) {
         salida = uFuera;
         return;
     }
     // La hoja llega en ARGB (0xAARRGGBB): en memoria los bytes son B,G,R,A, así
     // que al leerla como RGBA hay que intercambiar R y B para que coincida con
-    // el render por CPU (paridad píxel a píxel).
-    vec4 c2 = texelFetch(uHoja, p, 0);
+    // el render por CPU (paridad píxel a píxel). `texture` con filtro LINEAR
+    // interpola los 4 texeles vecinos: al acercar ya no se ven bloques duros.
+    vec2 uv = (hoja + vec2(0.5)) / uHojaTam;
+    vec4 c2 = texture(uHoja, uv);
     salida = vec4(c2.b, c2.g, c2.r, c2.a);
 }
 )";
@@ -164,8 +168,10 @@ bool RenderizadorGL::iniciar(ANativeWindow* ventana, DibujoEngine* motor) {
 
     glGenTextures(1, &textura_);
     glBindTexture(GL_TEXTURE_2D, textura_);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    // Filtro lineal en ambos sentidos: al hacer zoom el trazo se interpola en
+    // vez de mostrar cada texel como un cuadrado duro (GL_NEAREST).
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
     glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, anchoHoja_, altoHoja_, 0, GL_RGBA,

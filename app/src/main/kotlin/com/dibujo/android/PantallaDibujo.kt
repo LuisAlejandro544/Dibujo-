@@ -40,6 +40,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.automirrored.rounded.Redo
@@ -51,14 +52,15 @@ import androidx.compose.material.icons.rounded.AspectRatio
 import androidx.compose.material.icons.rounded.AutoFixHigh
 import androidx.compose.material.icons.rounded.Brush
 import androidx.compose.material.icons.rounded.CenterFocusWeak
+import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.Colorize
-import androidx.compose.material.icons.rounded.ColorLens
 import androidx.compose.material.icons.rounded.Delete
 import androidx.compose.material.icons.rounded.Draw
 import androidx.compose.material.icons.rounded.FormatColorFill
 import androidx.compose.material.icons.rounded.Gesture
 import androidx.compose.material.icons.rounded.Layers
 import androidx.compose.material.icons.rounded.Mode
+import androidx.compose.material.icons.rounded.MoreHoriz
 import androidx.compose.material.icons.rounded.MoreVert
 import androidx.compose.material.icons.rounded.OpenInFull
 import androidx.compose.material.icons.rounded.OpenWith
@@ -82,11 +84,14 @@ import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilterChipDefaults
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.IconButtonDefaults
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Shapes
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
@@ -94,6 +99,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
+import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
@@ -117,6 +123,7 @@ import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.withTransform
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
@@ -176,6 +183,44 @@ class MainActivity : ComponentActivity() {
 }
 
 /**
+ * Paleta clara de la app: violeta suave sobre fondos casi blancos. Da un aire
+ * profesional y mantiene el contraste del lienzo (que va detrás de la ventana).
+ */
+private val EsquemaDibujo = lightColorScheme(
+    primary = Color(0xFF6750A4),
+    onPrimary = Color(0xFFFFFFFF),
+    primaryContainer = Color(0xFFEADDFF),
+    onPrimaryContainer = Color(0xFF21005D),
+    secondary = Color(0xFF625B71),
+    onSecondary = Color(0xFFFFFFFF),
+    secondaryContainer = Color(0xFFE8DEF8),
+    onSecondaryContainer = Color(0xFF1D192B),
+    tertiary = Color(0xFF7D5260),
+    onTertiary = Color(0xFFFFFFFF),
+    tertiaryContainer = Color(0xFFFFD8E4),
+    onTertiaryContainer = Color(0xFF31111D),
+    background = Color(0xFFFDF7FF),
+    onBackground = Color(0xFF1D1B20),
+    surface = Color(0xFFFDF7FF),
+    onSurface = Color(0xFF1D1B20),
+    surfaceVariant = Color(0xFFE7E0EC),
+    onSurfaceVariant = Color(0xFF49454F),
+    outline = Color(0xFF79747E),
+    outlineVariant = Color(0xFFCAC4D0),
+    error = Color(0xFFB3261E),
+    onError = Color(0xFFFFFFFF),
+)
+
+/** Esquinas redondeadas coherentes en toda la app. */
+private val FormasDibujo = Shapes(
+    extraSmall = RoundedCornerShape(6.dp),
+    small = RoundedCornerShape(10.dp),
+    medium = RoundedCornerShape(14.dp),
+    large = RoundedCornerShape(20.dp),
+    extraLarge = RoundedCornerShape(28.dp),
+)
+
+/**
  * Tema de la app. Fija `fontScale = 1` para que el tamaño del texto no
  * dependa de la configuración de letra del teléfono del usuario (la UI de una
  * app de dibujo debe verse igual en todos los equipos).
@@ -189,7 +234,11 @@ fun TemaDibujo(content: @Composable () -> Unit) {
             fontScale = 1f,
         ),
     ) {
-        MaterialTheme(content = content)
+        MaterialTheme(
+            colorScheme = EsquemaDibujo,
+            shapes = FormasDibujo,
+            content = content,
+        )
     }
 }
 
@@ -213,6 +262,9 @@ fun PantallaDibujo(
     // Transformar el dibujo (voltear/mover/escalar) y la rueda HSV.
     var mostrarTransformar by remember { mutableStateOf(false) }
     var mostrarColor by remember { mutableStateOf(false) }
+    // Acciones secundarias de la hoja (calco, IA, expandir): viven en una hoja
+    // inferior para no amontonar la barra de dibujo.
+    var mostrarMasHerramientas by remember { mutableStateOf(false) }
 
     // Volver al menú principal (botón atrás del sistema o de la barra).
     BackHandler(onBack = alVolver)
@@ -430,6 +482,7 @@ fun PantallaDibujo(
                     }
                 },
                 alAbrirColor = { mostrarColor = true },
+                alAbrirMasHerramientas = { mostrarMasHerramientas = true },
             )
         },
         // Transparente: deja ver la superficie GPU que va en una capa detrás
@@ -563,15 +616,44 @@ fun PantallaDibujo(
             alCerrar = { mostrarColor = false },
         )
     }
+
+    if (mostrarMasHerramientas) {
+        HojaHerramientasHoja(
+            estado = estado,
+            alCerrar = { mostrarMasHerramientas = false },
+            alElegirImagen = {
+                mostrarMasHerramientas = false
+                elegirImagen.launch(
+                    PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly),
+                )
+            },
+            alAlternarCalco = vm::alternarCalco,
+            alAbrirCalco = {
+                mostrarMasHerramientas = false
+                mostrarCalco = true
+            },
+            alAbrirIa = {
+                mostrarMasHerramientas = false
+                mostrarIa = true
+                if (estado.calcoUri != null && estado.coloresCalco.isEmpty()) {
+                    vm.analizarCalco()
+                }
+            },
+            alAbrirExpandir = {
+                mostrarMasHerramientas = false
+                mostrarExpandir = true
+            },
+        )
+    }
 }
 
 /**
- * Barra superior: título + motor, las acciones de historial/vista y un menú
- * "más opciones". Antes las siete acciones iban sueltas y, en pantallas
- * angostas, no dejaban ancho para el título: se dibujaba en vertical (el bug
- * de diseño). Ahora deshacer/rehacer/centrar/enderezar quedan a la vista y lo
- * de uso menos frecuente (limpiar, exportar, configuración) va en el menú. El
- * título se acota a una línea con elipsis por si igual falta espacio.
+ * Barra superior sobria: volver, título, deshacer/rehacer y centrar a la
+ * vista; todo lo demás (enderezar, trazo asistido, guardar, importar, ajustar
+ * lienzo, transformar, exportar, limpiar y configuración) vive en el menú de
+ * "más opciones". Antes había cinco iconos sueltos y el título quedaba
+ * aplastado ("Dib…", con el motor en una segunda línea). El título se acota a
+ * una línea con elipsis por si igual falta espacio.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -604,20 +686,11 @@ private fun BarraSuperior(
             }
         },
         title = {
-            Column {
-                Text(
-                    stringResource(R.string.app_name),
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-                Text(
-                    stringResource(R.string.estado_motor, estado.motorNombre),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-            }
+            Text(
+                stringResource(R.string.app_name),
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
         },
         actions = {
             BotonIcono(
@@ -637,21 +710,6 @@ private fun BarraSuperior(
                 descripcion = stringResource(R.string.cd_centrar),
                 alPulsar = alCentrar,
             )
-            BotonIcono(
-                icono = Icons.Rounded.ScreenRotation,
-                descripcion = stringResource(R.string.cd_enderezar),
-                habilitado = estado.camara.rotacion != 0f,
-                alPulsar = alEnderezar,
-            )
-            // Trazo asistido a la vista (no escondido en el menú): al activarlo
-            // las líneas dibujadas a mano se enderezan al soltar. Se resalta
-            // cuando está encendido.
-            BotonIcono(
-                icono = Icons.AutoMirrored.Rounded.TrendingFlat,
-                descripcion = stringResource(R.string.cd_asistencia_recta),
-                seleccionado = estado.asistenciaRecta,
-                alPulsar = alAlternarAsistencia,
-            )
             Box {
                 BotonIcono(
                     icono = Icons.Rounded.MoreVert,
@@ -662,16 +720,38 @@ private fun BarraSuperior(
                     expanded = menuAbierto,
                     onDismissRequest = { menuAbierto = false },
                 ) {
+                    // Vista: enderezar y trazo asistido.
                     DropdownMenuItem(
-                        text = { Text(stringResource(R.string.cd_limpiar)) },
+                        text = { Text(stringResource(R.string.cd_enderezar)) },
                         leadingIcon = {
-                            Icon(Icons.Rounded.Delete, contentDescription = null)
+                            Icon(Icons.Rounded.ScreenRotation, contentDescription = null)
+                        },
+                        enabled = estado.camara.rotacion != 0f,
+                        onClick = {
+                            menuAbierto = false
+                            alEnderezar()
+                        },
+                    )
+                    DropdownMenuItem(
+                        text = { Text(stringResource(R.string.cd_asistencia_recta)) },
+                        leadingIcon = {
+                            Icon(
+                                Icons.AutoMirrored.Rounded.TrendingFlat,
+                                contentDescription = null,
+                            )
+                        },
+                        trailingIcon = if (estado.asistenciaRecta) {
+                            { Icon(Icons.Rounded.Check, contentDescription = null) }
+                        } else {
+                            null
                         },
                         onClick = {
                             menuAbierto = false
-                            alLimpiar()
+                            alAlternarAsistencia()
                         },
                     )
+                    HorizontalDivider()
+                    // Hoja: guardar, importar, tamaño y transformar.
                     DropdownMenuItem(
                         text = { Text(stringResource(R.string.guardar_en_app)) },
                         leadingIcon = {
@@ -721,6 +801,18 @@ private fun BarraSuperior(
                         onClick = {
                             menuAbierto = false
                             alExportar()
+                        },
+                    )
+                    HorizontalDivider()
+                    // Acción destructiva y configuración, al final.
+                    DropdownMenuItem(
+                        text = { Text(stringResource(R.string.cd_limpiar)) },
+                        leadingIcon = {
+                            Icon(Icons.Rounded.Delete, contentDescription = null)
+                        },
+                        onClick = {
+                            menuAbierto = false
+                            alLimpiar()
                         },
                     )
                     DropdownMenuItem(
@@ -1138,8 +1230,10 @@ private fun CapaCalco(
 }
 
 /**
- * Barra inferior. Tres filas para no depender del scroll horizontal (que era
- * incómodo): modo + acciones de hoja/calco, herramientas + grosor, y paleta.
+ * Barra inferior agrupada en tres franjas: herramientas, color y ajustes del
+ * pincel. Las acciones secundarias (calco, IA, expandir) se movieron a una hoja
+ * inferior para dejar respirar la barra: el lienzo manda y cada grupo tiene un
+ * propósito claro, como en las apps de dibujo táctiles.
  */
 @Composable
 private fun BarraHerramientas(
@@ -1154,21 +1248,28 @@ private fun BarraHerramientas(
     alCancelarAjuste: () -> Unit,
     alAbrirIa: () -> Unit,
     alAbrirColor: () -> Unit,
+    alAbrirMasHerramientas: () -> Unit,
 ) {
-    Surface(modifier = Modifier.absorberToque(), tonalElevation = 3.dp) {
+    Surface(
+        modifier = Modifier.absorberToque(),
+        tonalElevation = 3.dp,
+        shape = RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp),
+    ) {
         Column(
             Modifier
                 .fillMaxWidth()
                 // Deja libre la barra de navegación (gestos o botones): sin
                 // esto la paleta quedaba debajo y no se podía tocar.
-                .windowInsetsPadding(WindowInsets.navigationBars),
+                .windowInsetsPadding(WindowInsets.navigationBars)
+                .padding(top = 8.dp, bottom = 8.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp),
         ) {
             // Aviso mientras se ajusta el dibujo, con "Listo" y "Cancelar".
             if (estado.ajustandoDibujo) {
                 Row(
                     Modifier
                         .fillMaxWidth()
-                        .padding(horizontal = 12.dp, vertical = 6.dp),
+                        .padding(horizontal = 12.dp, vertical = 2.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     Icon(
@@ -1202,7 +1303,7 @@ private fun BarraHerramientas(
                 Row(
                     Modifier
                         .fillMaxWidth()
-                        .padding(horizontal = 12.dp, vertical = 6.dp),
+                        .padding(horizontal = 12.dp, vertical = 2.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     Icon(
@@ -1222,146 +1323,258 @@ private fun BarraHerramientas(
                     }
                 }
             }
-            // Fila 1: modo + acciones de calco y hoja.
-            Row(
-                Modifier
+            // Franja 1: herramientas, en una tarjeta que agrupa la selección.
+            Surface(
+                modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 8.dp, vertical = 6.dp),
-                horizontalArrangement = Arrangement.spacedBy(4.dp),
-                verticalAlignment = Alignment.CenterVertically,
+                    .padding(horizontal = 12.dp),
+                shape = MaterialTheme.shapes.large,
+                color = MaterialTheme.colorScheme.surfaceVariant,
             ) {
-                FiltroChip(
-                    seleccionado = estado.modo == Modo.EDICION,
-                    etiqueta = stringResource(
-                        if (estado.modo == Modo.EDICION) R.string.modo_editar else R.string.modo_mover,
+                Row(
+                    Modifier
+                        .fillMaxWidth()
+                        .padding(4.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Herramientas(estado, vm)
+                }
+            }
+            // Franja 2: color actual, paleta y cuentagotas.
+            FilaColor(estado, vm, alAbrirColor)
+            // Franja 3: modo de gesto, grosor y acceso a más herramientas.
+            FilaPincel(estado, vm, alAbrirMasHerramientas)
+        }
+    }
+}
+
+/** Franja de color: color actual (abre la rueda HSV), paleta y cuentagotas. */
+@Composable
+private fun FilaColor(
+    estado: DibujoEstado,
+    vm: DibujoViewModel,
+    alAbrirColor: () -> Unit,
+) {
+    val descColor = stringResource(R.string.cd_rueda_color)
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        // Círculo del color actual: toca y se abre la rueda de color.
+        Box(
+            Modifier
+                .size(36.dp)
+                .background(Color(estado.lapiz.color), CircleShape)
+                .border(2.dp, MaterialTheme.colorScheme.outline, CircleShape)
+                .clickable(onClick = alAbrirColor)
+                .semantics { contentDescription = descColor },
+        )
+        Row(
+            Modifier
+                .weight(1f)
+                .horizontalScroll(rememberScrollState()),
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            // Recientes primero (paleta, cuentagotas y rueda HSV) y luego la
+            // paleta fija, separadas por una línea.
+            estado.coloresRecientes.forEach { argb ->
+                CabezaColor(
+                    color = com.dibujo.core.Color(
+                        "#%06X".format(argb and 0xFFFFFF),
+                        argb,
                     ),
-                    icono = if (estado.modo == Modo.EDICION) Icons.Rounded.Gesture else Icons.Rounded.PanTool,
-                    descripcion = stringResource(
-                        if (estado.modo == Modo.EDICION) R.string.cd_modo_editar else R.string.cd_modo_mover,
-                    ),
-                    alPulsar = { vm.alternarModo() },
-                )
-                Spacer(Modifier.weight(1f))
-                IconoToggle(
-                    icono = Icons.Rounded.AddPhotoAlternate,
-                    descripcion = stringResource(R.string.cd_calco_elegir),
-                    seleccionado = false,
-                    alPulsar = alElegirImagen,
-                )
-                IconoToggle(
-                    icono = if (estado.calcoVisible) {
-                        Icons.Rounded.Visibility
-                    } else {
-                        Icons.Rounded.VisibilityOff
-                    },
-                    descripcion = stringResource(R.string.cd_calco_alternar),
-                    seleccionado = estado.calcoVisible,
-                    habilitado = estado.calcoUri != null,
-                    alPulsar = alAlternarCalco,
-                )
-                IconoToggle(
-                    icono = Icons.Rounded.Layers,
-                    descripcion = stringResource(R.string.cd_calco_opciones),
-                    seleccionado = false,
-                    alPulsar = alAbrirCalco,
-                )
-                IconoToggle(
-                    icono = Icons.Rounded.AutoFixHigh,
-                    descripcion = stringResource(R.string.cd_ia_local),
-                    seleccionado = false,
-                    alPulsar = alAbrirIa,
-                )
-                IconoToggle(
-                    icono = Icons.Rounded.OpenInFull,
-                    descripcion = stringResource(R.string.cd_expandir),
-                    seleccionado = false,
-                    alPulsar = alAbrirExpandir,
+                    seleccionado = estado.lapiz.color == argb,
+                    onElegir = { vm.elegirColor(argb) },
                 )
             }
-
-            // Fila 2: herramientas, cada una con su nombre debajo. Antes iban
-            // sólo iconos y "Doble" (un icono de "copiar") no se entendía.
-            Row(
-                Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 6.dp, vertical = 4.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Herramientas(estado, vm)
+            if (estado.coloresRecientes.isNotEmpty()) {
+                Box(
+                    Modifier
+                        .width(1.dp)
+                        .height(24.dp)
+                        .background(MaterialTheme.colorScheme.outline),
+                )
             }
+            Colores.PALETA.forEach { color ->
+                CabezaColor(
+                    color = color,
+                    seleccionado = estado.lapiz.color == color.argb,
+                    onElegir = { vm.elegirColor(color.argb) },
+                )
+            }
+        }
+        IconoToggle(
+            icono = Icons.Rounded.Colorize,
+            descripcion = stringResource(R.string.cd_cuentagotas),
+            seleccionado = estado.cuentagotasActivo,
+            alPulsar = { vm.alternarCuentagotas() },
+        )
+    }
+}
 
-            // Fila 3: grosor + paleta de colores.
-            Row(
-                Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 8.dp, vertical = 6.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                BotonIcono(
+/** Franja del pincel: modo de gesto, control de grosor y más herramientas. */
+@Composable
+private fun FilaPincel(
+    estado: DibujoEstado,
+    vm: DibujoViewModel,
+    alAbrirMasHerramientas: () -> Unit,
+) {
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        FiltroChip(
+            seleccionado = estado.modo == Modo.EDICION,
+            etiqueta = stringResource(
+                if (estado.modo == Modo.EDICION) R.string.modo_editar else R.string.modo_mover,
+            ),
+            icono = if (estado.modo == Modo.EDICION) Icons.Rounded.Gesture else Icons.Rounded.PanTool,
+            descripcion = stringResource(
+                if (estado.modo == Modo.EDICION) R.string.cd_modo_editar else R.string.cd_modo_mover,
+            ),
+            alPulsar = { vm.alternarModo() },
+        )
+        Spacer(Modifier.weight(1f))
+        Surface(
+            shape = MaterialTheme.shapes.extraLarge,
+            color = MaterialTheme.colorScheme.surfaceVariant,
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                IconoToggle(
                     icono = Icons.Rounded.Remove,
                     descripcion = stringResource(R.string.cd_grosor_menos),
+                    seleccionado = false,
                     alPulsar = { vm.cambiarGrosor(-1) },
+                    tamano = 36.dp,
                 )
                 Text(
                     stringResource(R.string.estado_grosor, estado.lapiz.grosor),
                     style = MaterialTheme.typography.labelLarge,
                 )
-                BotonIcono(
+                IconoToggle(
                     icono = Icons.Rounded.Add,
                     descripcion = stringResource(R.string.cd_grosor_mas),
-                    alPulsar = { vm.cambiarGrosor(1) },
-                )
-                Spacer(Modifier.width(4.dp))
-                IconoToggle(
-                    icono = Icons.Rounded.ColorLens,
-                    descripcion = stringResource(R.string.cd_rueda_color),
                     seleccionado = false,
-                    alPulsar = alAbrirColor,
+                    alPulsar = { vm.cambiarGrosor(1) },
+                    tamano = 36.dp,
                 )
-                IconoToggle(
-                    icono = Icons.Rounded.Colorize,
-                    descripcion = stringResource(R.string.cd_cuentagotas),
-                    seleccionado = estado.cuentagotasActivo,
-                    alPulsar = { vm.alternarCuentagotas() },
-                )
-                Spacer(Modifier.width(8.dp))
-                Row(
-                    Modifier
-                        .weight(1f)
-                        .horizontalScroll(rememberScrollState()),
-                    horizontalArrangement = Arrangement.spacedBy(10.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    // Recientes primero (paleta, cuentagotas y rueda HSV) y luego
-                    // la paleta fija, separadas por una línea.
-                    estado.coloresRecientes.forEach { argb ->
-                        CabezaColor(
-                            color = com.dibujo.core.Color(
-                                "#%06X".format(argb and 0xFFFFFF),
-                                argb,
-                            ),
-                            seleccionado = estado.lapiz.color == argb,
-                            onElegir = { vm.elegirColor(argb) },
-                        )
-                    }
-                    if (estado.coloresRecientes.isNotEmpty()) {
-                        Box(
-                            Modifier
-                                .width(1.dp)
-                                .height(24.dp)
-                                .background(MaterialTheme.colorScheme.outline),
-                        )
-                    }
-                    Colores.PALETA.forEach { color ->
-                        CabezaColor(
-                            color = color,
-                            seleccionado = estado.lapiz.color == color.argb,
-                            onElegir = { vm.elegirColor(color.argb) },
-                        )
-                    }
-                }
             }
         }
+        IconoToggle(
+            icono = Icons.Rounded.MoreHoriz,
+            descripcion = stringResource(R.string.cd_mas_herramientas),
+            seleccionado = false,
+            alPulsar = alAbrirMasHerramientas,
+        )
+    }
+}
+
+/**
+ * Hoja inferior con las acciones secundarias sobre la hoja: elegir/ver/ajustar
+ * la imagen de calco, las herramientas con IA local y expandir el lienzo.
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun HojaHerramientasHoja(
+    estado: DibujoEstado,
+    alCerrar: () -> Unit,
+    alElegirImagen: () -> Unit,
+    alAlternarCalco: () -> Unit,
+    alAbrirCalco: () -> Unit,
+    alAbrirIa: () -> Unit,
+    alAbrirExpandir: () -> Unit,
+) {
+    ModalBottomSheet(onDismissRequest = alCerrar) {
+        Column(
+            Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 12.dp)
+                .padding(bottom = 24.dp),
+        ) {
+            Text(
+                stringResource(R.string.hoja_acciones_titulo),
+                style = MaterialTheme.typography.titleMedium,
+                modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+            )
+            AccionHoja(
+                icono = Icons.Rounded.AddPhotoAlternate,
+                etiqueta = stringResource(R.string.cd_calco_elegir),
+                alPulsar = alElegirImagen,
+            )
+            AccionHoja(
+                icono = if (estado.calcoVisible) {
+                    Icons.Rounded.Visibility
+                } else {
+                    Icons.Rounded.VisibilityOff
+                },
+                etiqueta = stringResource(R.string.cd_calco_alternar),
+                habilitado = estado.calcoUri != null,
+                alPulsar = alAlternarCalco,
+            )
+            AccionHoja(
+                icono = Icons.Rounded.Layers,
+                etiqueta = stringResource(R.string.cd_calco_opciones),
+                habilitado = estado.calcoUri != null,
+                alPulsar = alAbrirCalco,
+            )
+            HorizontalDivider(Modifier.padding(vertical = 4.dp))
+            AccionHoja(
+                icono = Icons.Rounded.AutoFixHigh,
+                etiqueta = stringResource(R.string.cd_ia_local),
+                alPulsar = alAbrirIa,
+            )
+            AccionHoja(
+                icono = Icons.Rounded.OpenInFull,
+                etiqueta = stringResource(R.string.cd_expandir),
+                alPulsar = alAbrirExpandir,
+            )
+        }
+    }
+}
+
+/** Fila de una acción secundaria dentro de la hoja inferior. */
+@Composable
+private fun AccionHoja(
+    icono: ImageVector,
+    etiqueta: String,
+    alPulsar: () -> Unit,
+    habilitado: Boolean = true,
+) {
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .clip(MaterialTheme.shapes.medium)
+            .clickable(enabled = habilitado, onClick = alPulsar)
+            .padding(horizontal = 12.dp, vertical = 14.dp)
+            .semantics { contentDescription = etiqueta },
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(
+            imageVector = icono,
+            contentDescription = null,
+            tint = if (habilitado) {
+                MaterialTheme.colorScheme.primary
+            } else {
+                MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.38f)
+            },
+        )
+        Spacer(Modifier.width(16.dp))
+        Text(
+            etiqueta,
+            style = MaterialTheme.typography.bodyLarge,
+            color = if (habilitado) {
+                MaterialTheme.colorScheme.onSurface
+            } else {
+                MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.38f)
+            },
+        )
     }
 }
 
@@ -1918,8 +2131,8 @@ private fun Herramientas(
 ) {
     // Cada herramienta lleva su nombre debajo del icono: sin etiqueta, el
     // borrador y sobre todo "Doble" (antes un icono de "copiar") no se
-    // entendían. Con `SpaceBetween` entran las seis en una fila, también en
-    // pantallas angostas.
+    // entendían. Cada botón ocupa el mismo ancho (weight) y el seleccionado se
+    // resalta con un fondo tonal, así la fila se lee como un segmentado.
     val pares = listOf(
         Triple(Herramienta.LAPIZ, R.string.herramienta_lapiz, Icons.Rounded.Draw),
         Triple(Herramienta.PORTAMINA, R.string.herramienta_portamina, Icons.Rounded.Mode),
@@ -1935,16 +2148,42 @@ private fun Herramientas(
     ) {
         pares.forEach { (herramienta, etiquetaRes, icono) ->
             val etiqueta = stringResource(etiquetaRes)
-            Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                IconoToggle(
-                    icono = icono,
-                    descripcion = etiqueta,
-                    seleccionado = estado.lapiz.herramienta == herramienta,
-                    alPulsar = { vm.elegirHerramienta(herramienta) },
+            val seleccionado = estado.lapiz.herramienta == herramienta
+            Column(
+                Modifier
+                    .weight(1f)
+                    .clip(MaterialTheme.shapes.medium)
+                    .background(
+                        if (seleccionado) {
+                            MaterialTheme.colorScheme.primaryContainer
+                        } else {
+                            Color.Transparent
+                        },
+                    )
+                    .clickable(onClick = { vm.elegirHerramienta(herramienta) })
+                    .semantics { contentDescription = etiqueta }
+                    .padding(vertical = 6.dp, horizontal = 2.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+            ) {
+                Icon(
+                    imageVector = icono,
+                    contentDescription = null,
+                    modifier = Modifier.size(22.dp),
+                    tint = if (seleccionado) {
+                        MaterialTheme.colorScheme.onPrimaryContainer
+                    } else {
+                        MaterialTheme.colorScheme.onSurfaceVariant
+                    },
                 )
+                Spacer(Modifier.height(2.dp))
                 Text(
                     etiqueta,
                     style = MaterialTheme.typography.labelSmall,
+                    color = if (seleccionado) {
+                        MaterialTheme.colorScheme.onPrimaryContainer
+                    } else {
+                        MaterialTheme.colorScheme.onSurfaceVariant
+                    },
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )

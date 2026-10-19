@@ -57,6 +57,8 @@
     <string name="cd_modo_mover">Modo mover: tocar para cambiar a edición</string>
     <string name="cd_configuracion">Abrir configuración</string>
     <string name="cd_mas_opciones">Más opciones</string>
+    <string name="cd_mas_herramientas">Abrir más herramientas de la hoja</string>
+    <string name="hoja_acciones_titulo">Herramientas de la hoja</string>
     <string name="cd_cargando_render">Preparando el motor gráfico</string>
     <string name="cd_calco">Imagen de calco</string>
     <string name="cd_calco_elegir">Elegir imagen para calcar</string>

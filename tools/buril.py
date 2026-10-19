@@ -35,37 +35,51 @@ simular más grosores de repase. `--aumentos N` agrega N copias aumentadas por
 muestra (por defecto 3).
 
 **Memoria (arreglo de OOM).** La aumentación se aplica **al vuelo** con
-`tf.data` (una pasada extra por `--aumentos`, en `Dataset.map` con
-`num_parallel_calls`), no materializando el set completo en RAM. Antes
-`aumentar_conjunto` creaba `1 + aumentos` copias en float32 y las concatenaba:
-con hojas de 512 px y muchos parches eso pasaba de 10 GB y el proceso moría con
-`SIGKILL: 9` (el OOM killer del kernel), no por el tamaño del modelo.
+`tf.data` (una pasada extra por `--aumentos`), no materializando el set completo
+en RAM. Antes `aumentar_conjunto` creaba `1 + aumentos` copias en float32 y las
+concatenaba: con hojas de 512 px y muchos parches eso pasaba de 10 GB y el
+proceso moría con `SIGKILL: 9` (el OOM killer del kernel), no por el tamaño del
+modelo. La aumentación es ahora **grafo nativo de TensorFlow** (flips, giros,
+desplazamientos, pools y ruido): antes se hacía en NumPy con
+`tf.numpy_function`, que no paraleliza de verdad por el GIL y bloqueaba el
+pipeline. La geometría se aplica a ambos tensores; la forma/fotometría sólo a la
+entrada.
 
 La **pérdida** es BCE + Dice + **clDice** (Shit et al., CVPR'21): clDice es
 diferenciable (esqueleto morfológico blando) y empuja a preservar la topología
-de la línea, no sólo la superposición.
+de la línea, no sólo la superposición. Para abaratarlo sin perder precisión, el
+objetivo viaja en **dos canales**: la banda que ve la app y el **esqueleto real
+de 1 px** (`--banda` no lo toca). Así clDice sólo esqueletiza la predicción
+(`--cldice-iteraciones`, 5) en vez de recalcular también el esqueleto del
+objetivo en cada paso.
 
 **Entrenamiento rápido y con pulido (por defecto).** El cuello de botella era el
 número de pasos, no el peso del modelo, así que el schedule arranca rápido y
-termina fino:
+termina fino, pensado para **cerrar en ~15 min** en una T4:
 
 - **Fase rápida** (`--fase-rapida`, 75 % de las épocas): lote grande (`--lote`,
-  64) y LR alto con **calentamiento** lineal (`--calentamiento`, 2 épocas) y
-  luego **coseno** hasta `--alpha-fase-rapida`·`--lr`. Lote grande = menos pasos
-  por época y GPU mejor aprovechada.
-- **Fase de pulido** (25 % restante): lote chico (`--lote-final`, 32) con LR ya
-  bajo (coseno hasta `--alpha-final`), que da más pasos y refina detalles sin
-  mover el resultado brusco. El total de épocas es `--epocas` (60).
+  256) y LR alto (`--lr`, 2e-3) con **calentamiento** lineal (`--calentamiento`,
+  1 época) y luego **coseno** hasta `--alpha-fase-rapida`·`--lr`. Lote grande =
+  menos pasos por época y GPU mejor aprovechada.
+- **Fase de pulido** (25 % restante): lote más chico (`--lote-final`, 128) con
+  LR ya bajo (coseno hasta `--alpha-final`), que da más pasos y refina detalles
+  sin mover el resultado brusco. El total de épocas es `--epocas` (30) y la
+  validación corre cada `--validacion-cada` épocas (2).
 
 En GPU se usa **precisión mixta** float16 (`--precision auto`) y, si se puede,
 **XLA** (`--xla auto`), que aceleran sin cambiar la calidad (el resultado se
-exporta float16 igual). El `clDice` **no** se pide además como métrica: ya está
-en la pérdida y recalcularlo duplicaba su costo.
+exporta float16 igual). `--pasos-por-ejecucion` amortiza el overhead de Python
+por paso y `--distribucion auto` usa **MirroredStrategy** cuando hay 2 GPUs
+(Kaggle T4 x2). El `clDice` **no** se pide además como métrica: ya está en la
+pérdida y recalcularlo duplicaba su costo.
 
 **Puntos de control.** Se guarda `ultimo.weights.h5` en cada época
 (`--checkpoints`) y `mejor.weights.h5` con el mejor `val_loss`; con `--reanudar`
-se continúa desde donde quedó y **se exporta el mejor**, no el último. Esto es
-lo que permite sobrevivir a un corte del entorno (Kaggle/Colab/Actions).
+se continúa desde donde quedó y **se exporta el mejor**, no el último. También
+se guarda el **estado del optimizador** (momentos de Adam y contador de pasos)
+y la fase, así al reanudar no se reinicia el LR ni se pierden los momentos.
+`--paciencia` (0 = apagado) activa un `EarlyStopping` sobre `val_loss`. Todo
+esto permite sobrevivir a un corte del entorno (Kaggle/Colab/Actions).
 
 El modelo (mini U-Net 32/64/128, ~0,9 MB en float16 y ~466k parámetros) se
 exporta a .tflite (float16) para correrlo en el móvil con LiteRT; es más ancho
@@ -186,31 +200,11 @@ def muestra(rng):
     return entrada[..., None], objetivo[..., None]
 
 
-def _vecinos(v):
-    return [
-        np.roll(np.roll(v, dy, axis=0), dx, axis=1)
-        for dy in (-1, 0, 1)
-        for dx in (-1, 0, 1)
-    ]
-
-
-def _difuminar(v):
-    return sum(_vecinos(v)) / 9.0
-
-
-def _engrosar(v):
-    return np.maximum.reduce(_vecinos(v))
-
-
-def _adelgazar(v):
-    return np.minimum.reduce(_vecinos(v))
-
-
 def _dilatar(v):
     """Dilatación 3x3 (máximo) por las dos dimensiones espaciales.
 
-    A diferencia de `_engrosar` (que asume una sola muestra 2D), respeta el lote:
-    para `(N, H, W, 1)` dilata H y W y deja N intacto; para `(H, W)` dilata todo.
+    Respeta el lote: para `(N, H, W, 1)` dilata H y W y deja N intacto; para
+    `(H, W)` dilata todo.
     """
     ejes = (-3, -2) if (v.ndim >= 3 and v.shape[-1] == 1) else (-2, -1)
     salida = v
@@ -234,41 +228,6 @@ def banda(mask, radio=1):
     for _ in range(int(radio)):
         v = _dilatar(v)
     return v
-
-
-def aumentar(x, y, rng):
-    """Aumenta un par (entrada, objetivo) sin mover la etiqueta.
-
-    La geometría se aplica a ambos; la forma/fotometría solo a la entrada, que
-    es lo que queremos que el modelo tolere (más grosores, más ruido).
-    """
-    # Geometría que preserva la etiqueta.
-    if rng.random() < 0.5:
-        x, y = x[:, ::-1], y[:, ::-1]
-    if rng.random() < 0.5:
-        x, y = x[::-1, :], y[::-1, :]
-    giro = int(rng.integers(0, 4))
-    if giro:
-        x, y = np.rot90(x, giro), np.rot90(y, giro)
-    dy, dx = int(rng.integers(-3, 4)), int(rng.integers(-3, 4))
-    if dy or dx:
-        x = np.roll(np.roll(x, dy, axis=0), dx, axis=1)
-        y = np.roll(np.roll(y, dy, axis=0), dx, axis=1)
-
-    # Forma/fotometría solo en la entrada.
-    if rng.random() < 0.4:
-        x = _difuminar(x)
-    if rng.random() < 0.4:
-        x = _engrosar(x)
-    if rng.random() < 0.3:
-        x = _adelgazar(x)
-    if rng.random() < 0.5:
-        gamma = rng.uniform(0.7, 1.4)
-        x = np.clip(x ** gamma, 0.0, 1.0)
-    if rng.random() < 0.5:
-        x = np.clip(x + rng.normal(0.0, rng.uniform(0.0, 0.06), x.shape), 0.0, 1.0)
-
-    return x.astype(np.float32), y.astype(np.float32)
 
 
 def dataset(n, rng):
@@ -341,21 +300,72 @@ def cargar_reales(carpeta):
     return np.stack(xs), np.stack(ys)
 
 
-def _aumentar_uno(x, y, semilla):
-    """Aumenta un par con una semilla propia (seguro para `tf.data` paralelo)."""
-    rng = np.random.default_rng(int(semilla))
-    xa, ya = aumentar(x, y, rng)
-    return xa.astype(np.float32), ya.astype(np.float32)
+def _difuminar_tf(v):
+    """Difuminado 3x3 separable en el grafo (equivalente a la media 3x3)."""
+    return tf.nn.avg_pool2d(tf.expand_dims(v, 0), 3, 1, "SAME")[0]
+
+
+def _engrosar_tf(v):
+    return tf.nn.max_pool2d(tf.expand_dims(v, 0), 3, 1, "SAME")[0]
+
+
+def _adelgazar_tf(v):
+    return -tf.nn.max_pool2d(-tf.expand_dims(v, 0), 3, 1, "SAME")[0]
+
+
+def _aumentar_par(x, y):
+    """Aumenta un par (entrada, objetivo) con ops nativas de TensorFlow.
+
+    Reemplaza la aumentación en NumPy + `tf.numpy_function`: esa última no se
+    paraleliza de verdad por el GIL. La geometría (flips, giros, desplazamiento)
+    se aplica a ambos tensores; la forma/fotometría (difuminar, engrosar,
+    adelgazar, gamma, ruido) sólo a la entrada, que es lo que queremos que el
+    modelo tolere. `y` puede traer 2 canales (banda + esqueleto exacto).
+    """
+    x, y = tf.cond(
+        tf.random.uniform([]) < 0.5,
+        lambda: (tf.image.flip_left_right(x), tf.image.flip_left_right(y)),
+        lambda: (x, y),
+    )
+    x, y = tf.cond(
+        tf.random.uniform([]) < 0.5,
+        lambda: (tf.image.flip_up_down(x), tf.image.flip_up_down(y)),
+        lambda: (x, y),
+    )
+    giro = tf.random.uniform([], 0, 4, dtype=tf.int32)
+    x = tf.image.rot90(x, giro)
+    y = tf.image.rot90(y, giro)
+    dy = tf.random.uniform([], -3, 4, dtype=tf.int32)
+    dx = tf.random.uniform([], -3, 4, dtype=tf.int32)
+    x = tf.roll(x, [dy, dx], axis=[0, 1])
+    y = tf.roll(y, [dy, dx], axis=[0, 1])
+
+    x = tf.cond(tf.random.uniform([]) < 0.4, lambda: _difuminar_tf(x), lambda: x)
+    x = tf.cond(tf.random.uniform([]) < 0.4, lambda: _engrosar_tf(x), lambda: x)
+    x = tf.cond(tf.random.uniform([]) < 0.3, lambda: _adelgazar_tf(x), lambda: x)
+    gamma = tf.random.uniform([], 0.7, 1.4)
+    x = tf.cond(
+        tf.random.uniform([]) < 0.5,
+        lambda: tf.pow(tf.clip_by_value(x, 0.0, 1.0), gamma),
+        lambda: x,
+    )
+    sigma = tf.random.uniform([], 0.0, 0.06)
+    x = tf.cond(
+        tf.random.uniform([]) < 0.5,
+        lambda: tf.clip_by_value(
+            x + tf.random.normal(tf.shape(x), 0.0, sigma), 0.0, 1.0
+        ),
+        lambda: x,
+    )
+    return x, y
 
 
 def _map_aumento(x, y):
-    """Aplica `aumentar` a un par dentro de un `Dataset.map`."""
-    semilla = tf.random.uniform([], 0, 2 ** 31 - 1, dtype=tf.int64)
-    xa, ya = tf.numpy_function(
-        _aumentar_uno, [x, y, semilla], [tf.float32, tf.float32]
-    )
+    """Aplica `_aumentar_par` dentro de un `Dataset.map` (grafo, sin GIL)."""
+    canales = int(y.shape[-1]) if y.shape[-1] is not None else 1
+    xa, ya = _aumentar_par(x, y)
     xa.set_shape([LADO, LADO, 1])
-    ya.set_shape([LADO, LADO, 1])
+    ya.set_shape([LADO, LADO, canales])
     return xa, ya
 
 
@@ -365,18 +375,25 @@ def flujo(x, y, lote, aumentos=0, entrenando=False, semilla=1):
     Antes `aumentar_conjunto` materializaba `1 + aumentos` copias del set
     completo en float32 y las concatenaba: con hojas de 512 px y muchos parches
     eso pasaba de 10 GB y el proceso moría por OOM del kernel (`SIGKILL: 9`), no
-    por el tamaño del modelo. Acá cada muestra se aumenta en `map` (con semilla
-    por llamada), así la memoria es del orden del lote y no del set entero. La
-    pasada extra por `--aumentos` mantiene la misma cantidad de ejemplos por
-    época que antes.
+    por el tamaño del modelo. Acá cada muestra se aumenta en `map` con ops
+    nativas (semilla por llamada), así la memoria es del orden del lote y no del
+    set entero. La pasada extra por `--aumentos` mantiene la misma cantidad de
+    ejemplos por época que antes. `drop_remainder` en entrenamiento deja lotes
+    de forma fija (XLA y `steps_per_execution` lo agradecen).
     """
     ds = tf.data.Dataset.from_tensor_slices((x, y))
+    opciones = tf.data.Options()
+    opciones.experimental_deterministic = False
+    ds = ds.with_options(opciones)
     if entrenando and aumentos > 0:
         ds = ds.repeat(int(aumentos) + 1)
-        ds = ds.shuffle(min(int(x.shape[0]), 8192), seed=semilla,
+        ds = ds.shuffle(min(int(x.shape[0]), 4096), seed=semilla,
                         reshuffle_each_iteration=True)
-        ds = ds.map(_map_aumento, num_parallel_calls=tf.data.AUTOTUNE)
-    return ds.batch(lote).prefetch(tf.data.AUTOTUNE)
+        ds = ds.map(_map_aumento, num_parallel_calls=tf.data.AUTOTUNE,
+                    deterministic=False)
+    return ds.batch(lote, drop_remainder=bool(entrenando)).prefetch(
+        tf.data.AUTOTUNE
+    )
 
 
 def cargar_pares_cache(ruta, lado=LADO, paso=32, max_por_imagen=16, min_tinta=4, semilla=1):
@@ -468,7 +485,23 @@ def autoprueba():
     assert xtr[0, 20, 10, 0] == 1.0, "la tinta (oscura) no se invirtió a 1"
     assert xtr[0, 0, 0, 0] == 0.0, "el fondo deberia ser 0"
     assert ytr[0, 20, 10, 0] == 1.0, "el objetivo debe seguir siendo tinta=1"
-    print("autoprueba OK: contrato de datos (entrada tinta=1/fondo=0, objetivo tinta=1)")
+
+    # 4. La aumentación nativa de TF corre y conserva canales (banda + esqueleto).
+    x0 = np.zeros((LADO, LADO, 1), np.float32)
+    x0[10:30, 10, 0] = 1.0
+    y0 = np.concatenate([x0, x0], axis=-1)
+    xa, ya = _aumentar_par(tf.constant(x0), tf.constant(y0))
+    assert tuple(xa.shape) == (LADO, LADO, 1), xa.shape
+    assert tuple(ya.shape) == (LADO, LADO, 2), ya.shape
+    assert 0.0 <= float(xa.numpy().min()) and float(xa.numpy().max()) <= 1.0, "rango de x"
+
+    # 5. `flujo` entrega lotes (x 1 canal, y 2 canales) para entrenamiento.
+    ds = flujo(x0[None], y0[None], lote=1, aumentos=0, entrenando=True)
+    xb, yb = next(iter(ds))
+    assert tuple(xb.shape) == (1, LADO, LADO, 1), xb.shape
+    assert tuple(yb.shape) == (1, LADO, LADO, 2), yb.shape
+    print("autoprueba OK: contrato de datos (entrada tinta=1/fondo=0, objetivo "
+          "banda+esqueleto) y aumentación nativa de TF")
 
 
 def modelo():
@@ -522,6 +555,9 @@ def modelo_float32(entrenado):
 
 
 def dice(y_true, y_pred):
+    """Dice de la máscara; usa el primer canal si el objetivo trae banda + esqueleto."""
+    if y_true.shape[-1] is not None and int(y_true.shape[-1]) > 1:
+        y_true = y_true[..., :1]
     y_true = tf.reshape(y_true, [-1])
     y_pred = tf.reshape(y_pred, [-1])
     inter = tf.reduce_sum(y_true * y_pred)
@@ -539,15 +575,18 @@ def _dilatacion_soft(imagen):
     return tf.nn.max_pool2d(imagen, (3, 3), (1, 1), "SAME")
 
 
-def _esqueletizar_soft(imagen, iteraciones=10):
+def _esqueletizar_soft(imagen, iteraciones=5):
     """Esqueleto morfológico blando (clDice, Shit et al., CVPR'21).
 
     Es diferenciable (erosión/dilatación con max-pooling), así que la pérdida
     puede "ver" la topología del esqueleto y no sólo la superposición de píxeles.
+    Cada iteración cuesta O(n²); con trazos de pocos px alcanzan 5 (antes 10),
+    y si el objetivo trae el esqueleto real en su segundo canal ya no hay que
+    esqueletizar `y_true` en absoluto.
     """
     imagen1 = _dilatacion_soft(_erosion_soft(imagen))
     esqueleto = tf.nn.relu(imagen - imagen1)
-    for _ in range(int(iteraciones)):
+    for _ in range(max(0, int(iteraciones))):
         imagen = _erosion_soft(imagen)
         imagen1 = _dilatacion_soft(_erosion_soft(imagen))
         delta = tf.nn.relu(imagen - imagen1)
@@ -555,15 +594,23 @@ def _esqueletizar_soft(imagen, iteraciones=10):
     return esqueleto
 
 
-def cldice_loss(y_true, y_pred):
+def cldice_loss(y_true, y_pred, iteraciones=5):
     """clDice (Shit et al., CVPR'21): preserva la topología del esqueleto.
 
     Con un objetivo fino el IoU castiga fuerte el grosor; clDice premia que la
     predicción siga la conectividad correcta. `1 - clDice` es la pérdida.
+
+    Si `y_true` trae 2 canales (banda + esqueleto exacto de 1 px) usa el segundo
+    como `s_gt`; así no gasta tiempo esqueletizando el objetivo en cada paso.
     """
-    s_gt = _esqueletizar_soft(y_true)
-    s_pred = _esqueletizar_soft(y_pred)
-    t_prec = tf.reduce_sum(s_pred * y_true) / (tf.reduce_sum(s_pred) + 1.0)
+    if y_true.shape[-1] is not None and int(y_true.shape[-1]) > 1:
+        y = y_true[..., :1]
+        s_gt = y_true[..., 1:2]
+    else:
+        y = y_true
+        s_gt = _esqueletizar_soft(y_true, iteraciones)
+    s_pred = _esqueletizar_soft(y_pred, iteraciones)
+    t_prec = tf.reduce_sum(s_pred * y) / (tf.reduce_sum(s_pred) + 1.0)
     t_sens = tf.reduce_sum(s_gt * y_pred) / (tf.reduce_sum(s_gt) + 1.0)
     return 1.0 - (2.0 * t_prec * t_sens + 1.0) / (t_prec + t_sens + 1.0)
 
@@ -573,18 +620,30 @@ def cldice_metrica(y_true, y_pred):
     return 1.0 - cldice_loss(y_true, y_pred)
 
 
-def perdida(y_true, y_pred):
-    """BCE + Dice + 0.5*clDice (soft) para la línea limpia.
+def crear_perdida(iteraciones=5, peso_cldice=0.5):
+    """BCE + Dice + `peso_cldice`*clDice (soft) para la línea limpia.
 
     El BCE solo se hunde en el desbalance (la línea es ~2-15 % de los píxeles);
     el término Dice es sensible a la superposición y el clDice empuja a
-    preservar la topología (conectividad) de la línea.
+    preservar la topología (conectividad) de la línea. Devolver una función
+    cierra sobre las iteraciones de clDice, que no son serializables.
     """
-    y_pred = tf.clip_by_value(y_pred, 1e-6, 1.0 - 1e-6)
-    bce = -tf.reduce_mean(
-        y_true * tf.math.log(y_pred) + (1.0 - y_true) * tf.math.log(1.0 - y_pred)
-    )
-    return bce + dice(y_true, y_pred) + 0.5 * cldice_loss(y_true, y_pred)
+    def _perdida(y_true, y_pred):
+        y = y_true[..., :1]
+        y_pred_c = tf.clip_by_value(y_pred, 1e-6, 1.0 - 1e-6)
+        bce = -tf.reduce_mean(
+            y * tf.math.log(y_pred_c) + (1.0 - y) * tf.math.log(1.0 - y_pred_c)
+        )
+        return bce + dice(y_true, y_pred) + peso_cldice * cldice_loss(
+            y_true, y_pred, iteraciones
+        )
+
+    return _perdida
+
+
+def perdida(y_true, y_pred):
+    """BCE + Dice + 0.5*clDice (firma histórica, iteraciones por defecto)."""
+    return crear_perdida()(y_true, y_pred)
 
 
 def psnr(y_true, y_pred):
@@ -670,23 +729,108 @@ class CalentamientoCoseno(tf.keras.optimizers.schedules.LearningRateSchedule):
 
 
 class EstadoEntrenamiento(tf.keras.callbacks.Callback):
-    """Escribe cuántas épocas van completadas (para `--reanudar`).
+    """Guarda la época, la fase y el estado del optimizador (reanudación real).
 
-    Se lleva un contador propio en vez de leer el número de época de Keras:
-    así el valor es el total absoluto aunque el `fit` arranque con
-    `initial_epoch` (fase de pulido o reanudación).
+    Se lleva un contador propio en vez de leer el número de época de Keras: así
+    el valor es el total absoluto aunque el `fit` arranque con `initial_epoch`
+    (fase de pulido o reanudación). También guarda los momentos de Adam y el
+    contador de pasos, para que al reanudar no se reinicie el LR ni se pierdan
+    los momentos; y el mejor `val_loss` visto, para no sobrescribir un
+    `mejor.weights.h5` bueno con uno peor en la fase de pulido.
     """
 
-    def __init__(self, carpeta, epocas_previas=0):
+    def __init__(self, carpeta, epocas_previas=0, fase="", guardar_optimizador=True):
         super().__init__()
         self.carpeta = carpeta
         self.epocas = int(epocas_previas)
+        self.fase = str(fase)
+        self.guardar_optimizador = bool(guardar_optimizador)
         os.makedirs(carpeta, exist_ok=True)
 
     def on_epoch_end(self, epoch, logs=None):
         self.epocas += 1
+        estado = {"epoca_completadas": self.epocas, "fase": self.fase}
+        anterior = leer_estado(self.carpeta)
+        mejor = anterior.get("mejor_val_loss")
+        if logs and logs.get("val_loss") is not None:
+            actual = float(logs["val_loss"])
+            if mejor is None or actual < float(mejor):
+                mejor = actual
+        if mejor is not None:
+            estado["mejor_val_loss"] = float(mejor)
+        if self.guardar_optimizador:
+            try:
+                opt = getattr(self.model, "optimizer", None)
+                if opt is not None and getattr(opt, "variables", None):
+                    variables = list(opt.variables)
+                    estado["pasos_optimizador"] = int(opt.iterations.numpy())
+                    np.savez(
+                        os.path.join(self.carpeta, "optimizador.npz"),
+                        *[v.numpy() for v in variables],
+                        nombres=np.array([v.name for v in variables]),
+                    )
+            except Exception as exc:  # noqa: BLE001
+                print(f"[checkpoint] no se pudo guardar el optimizador: {exc}")
         with open(os.path.join(self.carpeta, "estado.json"), "w", encoding="utf-8") as f:
-            json.dump({"epoca_completadas": self.epocas}, f)
+            json.dump(estado, f)
+
+
+class ParadaTemprana(tf.keras.callbacks.Callback):
+    """EarlyStopping que convive con `validation_freq > 1`.
+
+    `EarlyStopping` de Keras avisa en cada época sin `val_loss` cuando la
+    validación corre cada N épocas. Este callback sólo cuenta las validaciones
+    reales y corta cuando pasan `paciencia` sin mejorar `val_loss`.
+    """
+
+    def __init__(self, paciencia):
+        super().__init__()
+        self.paciencia = max(1, int(paciencia))
+        self.mejor = None
+        self.esperas = 0
+
+    def on_epoch_end(self, epoch, logs=None):
+        if not logs or logs.get("val_loss") is None:
+            return
+        actual = float(logs["val_loss"])
+        if self.mejor is None or actual < self.mejor - 1e-4:
+            self.mejor = actual
+            self.esperas = 0
+            return
+        self.esperas += 1
+        if self.esperas >= self.paciencia:
+            self.model.stop_training = True
+            print(f"[early] sin mejora en {self.paciencia} validaciones; "
+                  f"corto en la época {epoch + 1}")
+
+
+def restaurar_optimizador(red, carpeta):
+    """Carga el estado del optimizador guardado por `EstadoEntrenamiento`.
+
+    Requiere que `red` ya esté compilado (el optimizador tiene que existir). Si
+    la lista de variables no coincide (otra arquitectura u otro optimizador) se
+    ignora y se devuelve `False` en vez de romper el entrenamiento.
+    """
+    ruta = os.path.join(carpeta, "optimizador.npz")
+    if not os.path.exists(ruta):
+        return False
+    try:
+        datos = np.load(ruta, allow_pickle=False)
+        nombres = [str(n) for n in datos["nombres"]]
+        opt = red.optimizer
+        if hasattr(opt, "build"):
+            opt.build(red.trainable_variables)
+        actuales = [v.name for v in opt.variables]
+        disponibles = {nombre: datos[f"arr_{i}"] for i, nombre in enumerate(nombres)}
+        if any(n not in disponibles for n in actuales):
+            print("[reanudar] el optimizador guardado no coincide; se reinicia su estado")
+            return False
+        opt.set_weights([disponibles[n] for n in actuales])
+        print(f"[reanudar] optimizador restaurado ({int(opt.iterations.numpy())} pasos)")
+        return True
+    except Exception as exc:  # noqa: BLE001
+        print(f"[reanudar] no se pudo restaurar el optimizador: {exc}")
+        return False
 
 
 def configurar_precision(modo):
@@ -708,22 +852,36 @@ def resolver_xla(modo):
     return activo
 
 
-def leer_epocas_hechas(carpeta):
-    """Devuelve las épocas ya completadas de un punto de control (0 si no hay).
+def resolver_distribucion(modo):
+    """Devuelve la estrategia de `tf.distribute` y usa las 2 GPUs si las hay.
 
-    Acepta un directorio (usa `estado.json` + `ultimo.weights.h5`) o el archivo
-    `estado.json` directamente. No valida los pesos; sólo cuántas épocas van.
+    `auto` = MirroredStrategy cuando hay más de una GPU (Kaggle T4 x2), si no
+    una sola. El modelo se crea y compila dentro del `scope` de la estrategia.
     """
+    gpus = tf.config.list_physical_devices("GPU")
+    if modo == "auto":
+        modo = "espejo" if len(gpus) > 1 else "uno"
+    if modo == "espejo" and len(gpus) > 1:
+        estrategia = tf.distribute.MirroredStrategy()
+        print(f"distribucion: espejo sobre {estrategia.num_replicas_in_sync} GPUs")
+        return estrategia
+    print("distribucion: una GPU/CPU")
+    return tf.distribute.get_strategy()
+
+
+def leer_estado(carpeta):
+    """Devuelve el `estado.json` de una carpeta de checkpoints ({} si no hay)."""
     if not carpeta:
-        return 0
+        return {}
     estado = carpeta if carpeta.endswith(".json") else os.path.join(carpeta, "estado.json")
     if os.path.exists(estado):
         try:
             with open(estado, encoding="utf-8") as f:
-                return int(json.load(f).get("epoca_completadas", 0))
+                datos = json.load(f)
+            return datos if isinstance(datos, dict) else {}
         except (ValueError, OSError):
-            return 0
-    return 0
+            return {}
+    return {}
 
 
 def pesos_reanudar(carpeta):
@@ -741,26 +899,38 @@ def argumentos():
     p.add_argument("--reales", type=str, default=None, help="carpeta con pares reales entrada/objetivo")
     p.add_argument("--pares", type=str, default=None,
                    help="cache .npz de un plan de dataset (tools/preparar_dataset_limpiar_trazos*.py)")
-    p.add_argument("--parches-por-imagen", type=int, default=16,
+    p.add_argument("--parches-por-imagen", type=int, default=8,
                    help="parches 64x64 maximos por hoja del cache --pares")
-    p.add_argument("--aumentos", type=int, default=3, help="copias aumentadas por muestra de entrenamiento")
-    p.add_argument("--epocas", type=int, default=60)
-    p.add_argument("--lote", type=int, default=64,
+    p.add_argument("--aumentos", type=int, default=2, help="copias aumentadas por muestra de entrenamiento")
+    p.add_argument("--epocas", type=int, default=30)
+    p.add_argument("--lote", type=int, default=256,
                    help="lote de la fase rápida (lote grande = menos pasos y GPU mejor usada)")
-    p.add_argument("--lote-final", type=int, default=32,
+    p.add_argument("--lote-final", type=int, default=128,
                    help="lote de la fase de pulido (0 = igual que --lote)")
     p.add_argument("--fase-rapida", type=float, default=0.75,
                    help="fracción de épocas con lote grande y LR alto (resto = pulido)")
-    p.add_argument("--calentamiento", type=int, default=2,
+    p.add_argument("--calentamiento", type=int, default=1,
                    help="épocas de calentamiento lineal del LR en la fase rápida")
     p.add_argument("--alpha-fase-rapida", type=float, default=0.05,
                    help="LR al terminar la fase rápida, como fracción de --lr")
-    p.add_argument("--alpha-final", type=float, default=0.1,
+    p.add_argument("--alpha-final", type=float, default=0.05,
                    help="LR al terminar el pulido, como fracción del LR de arranque de esa fase")
-    p.add_argument("--lr", type=float, default=1e-3,
+    p.add_argument("--lr", type=float, default=2e-3,
                    help="LR máximo de la fase rápida (calentamiento + coseno)")
     p.add_argument("--banda", type=int, default=1,
                    help="radio de la banda objetivo en px (0 = línea de 1 px; 1 = 3 px)")
+    p.add_argument("--cldice-iteraciones", type=int, default=5,
+                   help="iteraciones del esqueleto blando de clDice (menos = más rápido)")
+    p.add_argument("--peso-cldice", type=float, default=0.5,
+                   help="peso del término clDice en la pérdida")
+    p.add_argument("--validacion-cada", type=int, default=2,
+                   help="correr validación cada N épocas (1 = todas)")
+    p.add_argument("--pasos-por-ejecucion", type=int, default=1,
+                   help="steps_per_execution de Keras para amortizar el overhead por paso")
+    p.add_argument("--paciencia", type=int, default=0,
+                   help="validaciones sin mejora de val_loss para parar temprano (0 = apagado)")
+    p.add_argument("--distribucion", choices=["auto", "uno", "espejo"], default="auto",
+                   help="auto = MirroredStrategy en Kaggle T4 x2, una GPU/CPU si no")
     p.add_argument("--precision", choices=["auto", "float32", "mixed_float16"],
                    default="auto",
                    help="precisión de cómputo (auto = float16 mixto en GPU, float32 en CPU)")
@@ -812,21 +982,24 @@ def main():
         xva = np.concatenate([xva, xp_va], 0)
         yva = np.concatenate([yva, yp_va], 0)
 
-    # Objetivo de entrenamiento = banda limpia (no línea de 1 px): la app
-    # adelgaza con Zhang-Suen, así que el esqueleto final sigue siendo de 1 px.
-    ytr = banda(ytr, args.banda)
-    yva = banda(yva, args.banda)
+    # El objetivo viaja en 2 canales: la banda que ve la app y el esqueleto real
+    # de 1 px. clDice usa el segundo, así no recalcula el esqueleto del objetivo
+    # en cada paso (mitad del costo) y usa el esqueleto exacto, no el blando.
+    ytr_banda = banda(ytr, args.banda)
+    yva_banda = banda(yva, args.banda)
+    ytr = np.concatenate([ytr_banda, ytr], axis=-1)
+    yva = np.concatenate([yva_banda, yva], axis=-1)
 
-    # Aumentación al vuelo con tf.data: no se materializa el set ×(1+aumentos)
-    # en RAM (eso causaba el OOM / SIGKILL). Ver `flujo`.
     print(f"entrenamiento: {xtr.shape[0]} pares x{args.aumentos + 1} (aumento al "
-          f"vuelo) | validación: {xva.shape[0]} pares | objetivo: banda de "
-          f"{2 * args.banda + 1} px")
+          f"vuelo nativo TF) | validación: {xva.shape[0]} pares | objetivo: banda "
+          f"de {2 * args.banda + 1} px + esqueleto 1 px | clDice "
+          f"{args.cldice_iteraciones} iteraciones")
 
     # Precision/XLA antes de construir y compilar la red (la politica global de
     # precision mixta tiene que estar fijada desde el inicio).
     precision = configurar_precision(args.precision)
     jit = resolver_xla(args.xla)
+    estrategia = resolver_distribucion(args.distribucion)
 
     # Schedule: fase rápida (lote grande + LR alto) y fase de pulido (lote chico
     # + LR bajo). Ver el docstring del módulo.
@@ -835,81 +1008,112 @@ def main():
     epocas_rapida = min(max(epocas_rapida, 0), epocas)
     lote_final = args.lote_final if args.lote_final and args.lote_final > 0 else args.lote
     total = xtr.shape[0] * (args.aumentos + 1)
+    validacion_cada = max(1, int(args.validacion_cada))
+    pasos_por_ejecucion = max(1, int(args.pasos_por_ejecucion))
 
     os.makedirs(args.checkpoints, exist_ok=True)
     pesos = pesos_reanudar(args.reanudar)
-    hechas = leer_epocas_hechas(args.reanudar) if pesos else 0
+    estado_previo = leer_estado(args.reanudar) if pesos else {}
+    hechas = int(estado_previo.get("epoca_completadas", 0)) if pesos else 0
+    fase_previa = str(estado_previo.get("fase", "")) if pesos else ""
     if args.reanudar and pesos:
-        print(f"reanudando desde {pesos} ({hechas} épocas completadas)")
+        print(f"reanudando desde {pesos} ({hechas} épocas completadas, "
+              f"fase {fase_previa or '?'})")
     elif args.reanudar:
         print(f"[reanudar] no hay punto de control en {args.reanudar}; se entrena de cero")
+    else:
+        # Sin `--reanudar` es un entrenamiento nuevo: no arrastrar un `mejor` viejo
+        # (si no, el export final tomaría pesos de una corrida anterior).
+        for nombre in ("mejor.weights.h5", "ultimo.weights.h5", "estado.json",
+                       "optimizador.npz"):
+            ruta = os.path.join(args.checkpoints, nombre)
+            if os.path.exists(ruta):
+                os.remove(ruta)
 
-    red = modelo()
-    parametros = int(red.count_params())
-    print(f"modelo: {parametros:,} parametros (~{parametros * 2 / 1e6:.2f} MB en float16)")
-    if pesos:
-        red.load_weights(pesos)
+    perdida_fn = crear_perdida(args.cldice_iteraciones, args.peso_cldice)
 
-    def _callbacks(previas, tiene_val):
+    def _callbacks(previas, tiene_val, fase):
         cbs = [
             tf.keras.callbacks.ModelCheckpoint(
                 os.path.join(args.checkpoints, "ultimo.weights.h5"),
                 save_weights_only=True, save_freq="epoch", verbose=0),
-            EstadoEntrenamiento(args.checkpoints, previas),
+            EstadoEntrenamiento(args.checkpoints, previas, fase=fase),
             tf.keras.callbacks.TerminateOnNaN(),
         ]
         if tiene_val:
+            kwargs = {}
+            ruta_mejor = os.path.join(args.checkpoints, "mejor.weights.h5")
+            umbral = leer_estado(args.checkpoints).get("mejor_val_loss")
+            if os.path.exists(ruta_mejor) and umbral is not None:
+                kwargs["initial_value_threshold"] = float(umbral)
             cbs.insert(1, tf.keras.callbacks.ModelCheckpoint(
-                os.path.join(args.checkpoints, "mejor.weights.h5"),
-                monitor="val_loss", save_best_only=True, save_weights_only=True,
-                verbose=0))
+                ruta_mejor, monitor="val_loss", save_best_only=True,
+                save_weights_only=True, verbose=0, **kwargs))
+            if args.paciencia and args.paciencia > 0:
+                cbs.append(ParadaTemprana(args.paciencia))
         return cbs
 
-    def _ajustar(plan_lr, lote):
-        tren = flujo(xtr, ytr, lote, aumentos=args.aumentos,
-                     entrenando=True, semilla=args.semilla)
-        val = flujo(xva, yva, lote) if xva.shape[0] else None
-        red.compile(
-            optimizer=tf.keras.optimizers.Adam(plan_lr),
-            loss=perdida,
-            metrics=[dice],
-            jit_compile=jit,
-        )
-        return tren, val
+    with estrategia.scope():
+        red = modelo()
+        parametros = int(red.count_params())
+        print(f"modelo: {parametros:,} parametros (~{parametros * 2 / 1e6:.2f} MB en float16)")
+        if pesos:
+            red.load_weights(pesos)
 
-    # --- Fase rápida: lote grande, LR con calentamiento y coseno (menos pasos). ---
-    if hechas < epocas_rapida:
-        cal = min(args.calentamiento, max(0, epocas_rapida - hechas - 1))
-        pasos_epoca = max(1, int(np.ceil(total / args.lote)))
-        plan = CalentamientoCoseno(
-            args.lr, args.lr * args.alpha_fase_rapida,
-            cal * pasos_epoca, epocas_rapida * pasos_epoca)
-        tren, val = _ajustar(plan, args.lote)
-        print(f"fase rapida: lote {args.lote}, {epocas_rapida} epocas "
-              f"({pasos_epoca} pasos/epoca), LR {args.lr} -> "
-              f"{args.lr * args.alpha_fase_rapida} (calentamiento {cal})")
-        red.fit(tren, validation_data=val, epochs=epocas_rapida,
-                initial_epoch=hechas, callbacks=_callbacks(hechas, val is not None),
-                verbose=2)
-        hechas = epocas_rapida
+        def _ajustar(plan_lr, lote, fase):
+            tren = flujo(xtr, ytr, lote, aumentos=args.aumentos,
+                         entrenando=True, semilla=args.semilla)
+            val = flujo(xva, yva, lote) if xva.shape[0] else None
+            red.compile(
+                optimizer=tf.keras.optimizers.Adam(plan_lr),
+                loss=perdida_fn,
+                metrics=[dice],
+                jit_compile=jit,
+                steps_per_execution=pasos_por_ejecucion,
+            )
+            if pesos and fase == fase_previa:
+                restaurar_optimizador(red, args.reanudar)
+            return tren, val
 
-    # --- Pulido: lote chico, LR bajo y más pasos para refinar el detalle. ---
-    if hechas < epocas:
-        inicio = max(hechas, epocas_rapida)
-        lr0 = args.lr * args.alpha_fase_rapida
-        pasos_epoca = max(1, int(np.ceil(total / lote_final)))
-        plan = tf.keras.optimizers.schedules.CosineDecay(
-            initial_learning_rate=lr0,
-            decay_steps=max(1, pasos_epoca * (epocas - inicio)),
-            alpha=args.alpha_final,
-        )
-        tren, val = _ajustar(plan, lote_final)
-        print(f"pulido: lote {lote_final}, {epocas - inicio} epocas "
-              f"({pasos_epoca} pasos/epoca), LR {lr0} -> "
-              f"{lr0 * args.alpha_final}")
-        red.fit(tren, validation_data=val, epochs=epocas,
-                initial_epoch=inicio, callbacks=_callbacks(inicio, val is not None),
-                verbose=2)
+        # --- Fase rápida: lote grande, LR con calentamiento y coseno (menos pasos). ---
+        if hechas < epocas_rapida:
+            inicio = hechas
+            cal = min(args.calentamiento, max(0, epocas_rapida - inicio - 1))
+            pasos_epoca = max(1, int(np.ceil(total / args.lote)))
+            plan = CalentamientoCoseno(
+                args.lr, args.lr * args.alpha_fase_rapida,
+                cal * pasos_epoca, epocas_rapida * pasos_epoca)
+            tren, val = _ajustar(plan, args.lote, "rapida")
+            print(f"fase rapida: lote {args.lote}, {epocas_rapida} epocas "
+                  f"({pasos_epoca} pasos/epoca), LR {args.lr} -> "
+                  f"{args.lr * args.alpha_fase_rapida} (calentamiento {cal})")
+            hist = red.fit(tren, validation_data=val, epochs=epocas_rapida,
+                           initial_epoch=inicio,
+                           callbacks=_callbacks(inicio, val is not None, "rapida"),
+                           verbose=2, validation_freq=validacion_cada,
+                           shuffle=False)
+            hechas = inicio + len(hist.history.get("loss", []))
+
+        # --- Pulido: lote chico, LR bajo y más pasos para refinar el detalle. ---
+        if hechas < epocas:
+            inicio = hechas
+            lr0 = args.lr * args.alpha_fase_rapida
+            pasos_epoca = max(1, int(np.ceil(total / lote_final)))
+            plan = tf.keras.optimizers.schedules.CosineDecay(
+                initial_learning_rate=lr0,
+                decay_steps=max(1, pasos_epoca * (epocas - inicio)),
+                alpha=args.alpha_final,
+            )
+            tren, val = _ajustar(plan, lote_final, "pulido")
+            print(f"pulido: lote {lote_final}, {epocas - inicio} epocas "
+                  f"({pasos_epoca} pasos/epoca), LR {lr0} -> "
+                  f"{lr0 * args.alpha_final}")
+            hist = red.fit(tren, validation_data=val, epochs=epocas,
+                           initial_epoch=inicio,
+                           callbacks=_callbacks(inicio, val is not None, "pulido"),
+                           verbose=2, validation_freq=validacion_cada,
+                           shuffle=False)
+            hechas = inicio + len(hist.history.get("loss", []))
 
     # Exportamos el MEJOR val_loss (si existe), no el último: así un sobreajuste
     # de las últimas épocas no degrada el modelo que va al móvil.
@@ -945,16 +1149,22 @@ def main():
         "bytes": len(tflite),
         "parametros": parametros,
         "epocas": epocas,
+        "epocas_hechas": hechas,
         "aumentos": args.aumentos,
         "lr": args.lr,
         "lote": args.lote,
         "lote_final": lote_final,
         "fase_rapida": args.fase_rapida,
         "calentamiento": args.calentamiento,
+        "cldice_iteraciones": args.cldice_iteraciones,
+        "peso_cldice": args.peso_cldice,
+        "validacion_cada": validacion_cada,
+        "pasos_por_ejecucion": pasos_por_ejecucion,
+        "distribucion": args.distribucion,
         "precision": precision,
         "xla": jit,
         "banda_objetivo_px": 2 * args.banda + 1,
-        "perdida": "BCE + Dice + 0.5*clDice",
+        "perdida": f"BCE + Dice + {args.peso_cldice}*clDice",
         "pares": args.pares,
         "reales": args.reales,
         "validacion": metricas,

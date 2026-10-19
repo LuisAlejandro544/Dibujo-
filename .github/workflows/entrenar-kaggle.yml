@@ -1,0 +1,68 @@
+# Entrena Buril en Kaggle lanzando el kernel por la API (sin abrir sesión
+# interactiva, que en Kaggle sí tiene idle timeout). El kernel corre en modo
+# "Save & Run All (Commit)": GPU T4 x2, sin corte por inactividad.
+#
+# La lógica de entrenamiento vive en `tools/buril.py`; el kernel
+# `tools/buril_kaggle.ipynb` + `tools/kernel-metadata.json` sólo lo disparan.
+#
+# REQUISITOS (repo -> Settings -> Secrets and variables -> Actions):
+#   KAGGLE_USERNAME  -> tu usuario de Kaggle
+#   KAGGLE_KEY       -> el token de `~/.kaggle/kaggle.json` (account -> Create New Token)
+# Y en `tools/kernel-metadata.json` el campo `id` debe ser
+#   TU_USUARIO_KAGGLE/<slug>   (este workflow reemplaza TU_USUARIO_KAGGLE por el secret).
+#
+# Si faltan los secretos, el workflow no falla: avisa y termina.
+#
+# Disparo: manual (workflow_dispatch).
+
+name: "Entrenar Buril en Kaggle (push del kernel)"
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: entrenar-kaggle
+  cancel-in-progress: false
+
+jobs:
+  push:
+    name: Push del kernel a Kaggle
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Descargar el codigo
+        uses: actions/checkout@v4
+
+      - name: Comprobar credenciales de Kaggle
+        id: cred
+        run: |
+          if [ -z "${{ secrets.KAGGLE_USERNAME }}" ] || [ -z "${{ secrets.KAGGLE_KEY }}" ]; then
+            echo "faltan=true" >> "$GITHUB_OUTPUT"
+            echo "Sin KAGGLE_USERNAME/KAGGLE_KEY: se omite el push (nada que hacer)."
+          else
+            echo "faltan=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Preparar Python 3.11
+        if: steps.cred.outputs.faltan == 'false'
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Instalar la API de Kaggle y lanzar el kernel
+        if: steps.cred.outputs.faltan == 'false'
+        env:
+          KAGGLE_USERNAME: ${{ secrets.KAGGLE_USERNAME }}
+          KAGGLE_KEY: ${{ secrets.KAGGLE_KEY }}
+        run: |
+          python -m pip install --quiet --upgrade kaggle
+          mkdir -p ~/.kaggle
+          printf '{"username":"%s","key":"%s"}' "$KAGGLE_USERNAME" "$KAGGLE_KEY" > ~/.kaggle/kaggle.json
+          chmod 600 ~/.kaggle/kaggle.json
+          # `id` en kernel-metadata.json usa el placeholder; lo atamos al usuario real.
+          sed -i "s#TU_USUARIO_KAGGLE#$KAGGLE_USERNAME#" tools/kernel-metadata.json
+          kaggle kernels push -p tools
+          echo "Si es la primera vez, el kernel se crea en Kaggle y se empieza a ejecutar. Segui el estado en kaggle.com/code."

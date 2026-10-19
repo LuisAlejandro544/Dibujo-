@@ -123,10 +123,19 @@ Si tocás rasterizado, cámara, historial o herramientas: editá **los dos lados
 
 ## 7. Datos, herramientas y CI
 
-- `tools/` — scripts de IA/datasets: `buril.py`, `buril_colab.ipynb`,
+- `tools/` — scripts de IA/datasets: `buril.py`, `buril_kaggle.ipynb`
+  (entrenamiento recomendado), `buril_colab.ipynb` (pruebas),
   `benchmark_limpiar_trazos.{py,ipynb}`, `preparar_dataset_*`, JSON de datasets.
+  Pesos `.tflite` en la release `modelo-buril`; `.npz` en `dataset-buril`;
+  checkpoints en `checkpoints-buril`.
 - `.github/workflows/` — `android-apk.yml` (APK debug), `opencode.yml`,
-  `entrenar-*` y `preparar-dataset-*`.
+  `entrenar-*` (incluye `entrenar-kaggle.yml`) y `preparar-dataset-*`.
+- `.opencode/skills/` — skills de seguridad: `semgrep`, `codeql`,
+  `sarif-parsing`, `address-sanitizer` y `supply-chain-risk-auditor` (Trail of
+  Bits, CC BY-SA 4.0) para el motor C++, y `android-security-audit` (OWASP
+  MASVS v2.0, MIT) para `:app`. Procedencia y pines en
+  `.opencode/skills/README.md`; validar con
+  `npx -y @mondoohq/skillcheck@0.4.0 --project .`.
 - `gradle/libs.versions.toml` — **fuente única de versiones**; al agregar una
   dependencia, verificá Maven y documentala en `AI_CONTEXT.md`.
 - `AI_CONTEXT.md`, `README_AI.md`, `ROADMAP.md`, `AGENTS.md`, este archivo.
@@ -156,3 +165,4 @@ x86_64, NDK `27.3.13750724` / CMake 3.31.5.
 | UI / diálogos | `app/.../PantallaDibujo.kt` + `strings.xml` (cero texto duro) |
 | Render GPU (presentación) | `engine/src/main/cpp/gpu/*`, `app/.../SuperficieGpu.kt` |
 | IA local (Buril) | `app/.../LimpiadorTrazosIa.kt`, `tools/buril.py`, assets `modelos/` |
+| Auditar seguridad | `.opencode/skills/android-security-audit/` (`:app`), `.opencode/skills/{codeql,semgrep,sarif-parsing,address-sanitizer,supply-chain-risk-auditor}/` (C++/dependencias) |

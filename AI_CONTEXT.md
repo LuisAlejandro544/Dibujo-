@@ -461,10 +461,9 @@ Particularidades:
   "Transformar dibujo" (`DialogoTransformar`: voltear H/V, escalar 0.25–2× con
   `Slider` y el botón **"Ajustar libremente"** que abre el modo de ajuste por
   gestos — ver *Ajuste libre del dibujo*; todo deshacible). El trazo asistido de
-  **líneas rectas** tiene un botón propio en la barra superior (no escondido en
-  el menú) que se resalta al estar activo. La fila de color suma el botón de
-  rueda HSV (`DialogoColor` en `RuedaHsv.kt`) y el toggle de cuentagotas, y
-  arranca con los colores recientes antes de la paleta fija.
+  **líneas rectas** pasó al menú "más opciones" (con tilde cuando está activo).
+  La paleta arranca con los colores recientes antes de la paleta fija, y el
+  círculo del color actual abre la rueda HSV (`DialogoColor` en `RuedaHsv.kt`).
   Particularidades que costaron bugs reales:
   - Las barras del sistema usan `SystemBarStyle.light(...)`: el tema es claro
     y, con el teléfono en modo oscuro, `auto()` dejaba hora/batería blancas
@@ -475,9 +474,11 @@ Particularidades:
     no depende de la configuración de Android del usuario.
   - **Título en vertical (bug de diseño)**: las siete acciones iban sueltas en
     el `TopAppBar` y en pantallas angostas no dejaban ancho para el título, que
-    se dibujaba carácter por carácter. Se movió lo poco frecuente
-    (limpiar/exportar/configuración) a un `DropdownMenu` ("más opciones") y el
-    título quedó con `maxLines = 1` + `TextOverflow.Ellipsis`.
+    se dibujaba carácter por carácter. Se movió lo poco frecuente a un
+    `DropdownMenu` ("más opciones") y el título quedó con `maxLines = 1` +
+    `TextOverflow.Ellipsis`. La barra superior se dejó en lo mínimo
+    (volver, título, deshacer, rehacer, centrar y "más opciones"); el subtítulo
+    "Motor: …" se quitó (la información sigue en Opciones).
   - **Giro accidental en el pinch**: el gesto de dos dedos usaba
     `detectTransformGestures` sin `panZoomLock`, así que un pellizco de zoom
     también rotaba la hoja. Se pasó `panZoomLock = true`: la rotación sólo se
@@ -487,14 +488,21 @@ Particularidades:
   (BOM, iconos Rounded; deshacer/rehacer vía `Icons.AutoMirrored`). Sin
   símbolos de texto: cada icono lleva `contentDescription` desde strings.xml.
 - **Cero texto duro**: todo por `stringResource`.
-- **Barra inferior sin scroll incómodo** (issue 18): se pasó de chips de texto
-  en una fila deslizable a tres filas fijas → modo + acciones (calco/IA
-  local/expandir) + grosor de herramientas (iconos compactos `IconoToggle`, sin
-  scroll) +
-  paleta deslizable. La paleta creció a 58 colores (`Colores.PALETA`), con
-  brillos (neón), metálicos y pasteles al final; los primeros 12 conservan su
-  índice (la consola y sus tests los eligen por número), los nuevos van al
-  final.
+- **Barra inferior ordenada en tres franjas** (issue 63): se pasó de cuatro
+  filas amontonadas a tres franjas con propósito: (1) herramientas en una
+  tarjeta `Surface` donde el seleccionado se resalta con un fondo tonal, (2)
+  color actual (abre la rueda HSV) + paleta deslizable + cuentagotas, y (3) modo
+  de gesto (`FiltroChip`) + control de grosor agrupado (`Surface` redondeada con
+  `−`/`+`) + botón "más". Las acciones secundarias (elegir/ver/ajustar calco,
+  IA local, expandir hoja) se movieron a una hoja inferior
+  (`ModalBottomSheet` → `HojaHerramientasHoja`). La paleta tiene 58 colores
+  (`Colores.PALETA`), con brillos (neón), metálicos y pasteles al final; los
+  primeros 12 conservan su índice (la consola y sus tests los eligen por
+  número), los nuevos van al final.
+- **Tema Material 3 propio** (issue 63): `TemaDibujo` define
+  `EsquemaDibujo` (violeta suave sobre fondos casi blancos, `lightColorScheme`)
+  y `FormasDibujo` (`Shapes` con esquinas redondeadas coherentes) en vez del
+  esquema por defecto. La barra inferior tiene esquinas superiores redondeadas.
 - **Imagen de calco** (issue 18): `CapaCalco` es una capa Compose translúcida
   sobre la hoja (GPU o CPU) y debajo del trazo; la imagen se ajusta dentro de
   la hoja y sigue la cámara. Se elige con el Photo Picker (sin permisos), se

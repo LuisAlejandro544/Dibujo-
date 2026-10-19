@@ -173,13 +173,16 @@
     <string name="transformar_desc">Volteá, mové o cambiá de tamaño tu dibujo. Cada paso se puede deshacer.</string>
     <string name="transformar_voltear_h">Voltear horizontal</string>
     <string name="transformar_voltear_v">Voltear vertical</string>
-    <string name="transformar_mover">Mover</string>
+    <string name="transformar_mover">Mover y escalar</string>
+    <string name="transformar_libre">Ajustar libremente</string>
+    <string name="transformar_libre_hint">Un dedo mueve el dibujo y dos dedos lo escalan, como al acomodar el calco.</string>
     <string name="transformar_escala">Tamaño: %1$d%%</string>
     <string name="transformar_aplicar">Aplicar tamaño</string>
-    <string name="cd_mover_izquierda">Mover a la izquierda</string>
-    <string name="cd_mover_derecha">Mover a la derecha</string>
-    <string name="cd_mover_arriba">Mover hacia arriba</string>
-    <string name="cd_mover_abajo">Mover hacia abajo</string>
+
+    <!-- Ajuste libre del dibujo (mover/escalar con los gestos) -->
+    <string name="ajuste_dibujo_hint">Ajustando el dibujo: un dedo lo mueve, dos dedos lo escalan.</string>
+    <string name="ajuste_listo">Listo</string>
+    <string name="ajuste_cancelar">Cancelar</string>
 
     <!-- Trazo asistido (endereza las líneas al soltar) -->
     <string name="cd_asistencia_recta">Líneas rectas asistidas: al soltar, el trazo se endereza</string>

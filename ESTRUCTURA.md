@@ -103,8 +103,8 @@ Si tocás rasterizado, cámara, historial o herramientas: editá **los dos lados
 - `MainActivity`/navegación: `Navegacion.kt`, `PantallaMenu.kt`,
   `PantallaCargar.kt`, `PantallaOpciones.kt`.
 - `PantallaDibujo.kt` — pantalla del lienzo: barras superior/inferior, gestos
-  (`CapaGestos`/`CapaCalco`), `DialogoTransformar` (voltear/mover/escalar),
-  `DialogoColor`, etc.
+  (`CapaGestos`/`CapaCalco`), `DialogoTransformar` (voltear/escalar + ajuste
+  libre por gestos), `DialogoColor`, etc.
 - `RuedaHsv.kt` — rueda de color HSV (`DialogoColor` + `RuedaHsv` privada).
 - `DibujoViewModel.kt` — **dueño del motor** y del estado (MVI estricto con
   `_estado.update { copy() }`): lápiz, paleta, recientes, cuentagotas,

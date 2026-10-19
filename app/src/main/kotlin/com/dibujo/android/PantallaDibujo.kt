@@ -42,14 +42,11 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
-import androidx.compose.material.icons.automirrored.rounded.ArrowForward
 import androidx.compose.material.icons.automirrored.rounded.Redo
 import androidx.compose.material.icons.automirrored.rounded.TrendingFlat
 import androidx.compose.material.icons.automirrored.rounded.Undo
 import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material.icons.rounded.AddPhotoAlternate
-import androidx.compose.material.icons.rounded.ArrowDownward
-import androidx.compose.material.icons.rounded.ArrowUpward
 import androidx.compose.material.icons.rounded.AspectRatio
 import androidx.compose.material.icons.rounded.AutoFixHigh
 import androidx.compose.material.icons.rounded.Brush
@@ -424,6 +421,8 @@ fun PantallaDibujo(
                 alAlternarCalco = vm::alternarCalco,
                 alAbrirCalco = { mostrarCalco = true },
                 alTerminarCalco = vm::terminarEdicionCalco,
+                alTerminarAjuste = vm::terminarAjusteDibujo,
+                alCancelarAjuste = vm::cancelarAjusteDibujo,
                 alAbrirIa = {
                     mostrarIa = true
                     if (estado.calcoUri != null && estado.coloresCalco.isEmpty()) {
@@ -543,7 +542,10 @@ fun PantallaDibujo(
             alVoltearVertical = {
                 vm.transformarDibujo(false, true, 0f, 0f, 1f)
             },
-            alMover = { dx, dy -> vm.transformarDibujo(false, false, dx, dy, 1f) },
+            alAjustarLibre = {
+                vm.iniciarAjusteDibujo()
+                mostrarTransformar = false
+            },
             alEscalar = { escala ->
                 vm.transformarDibujo(false, false, 0f, 0f, escala)
                 mostrarTransformar = false
@@ -964,11 +966,12 @@ private fun CapaGestos(
     // ajustando el calco, los gestos mueven/escalan la imagen (no la hoja).
     val modo = estadoState.value.modo
     val cuentagotas = estadoState.value.cuentagotasActivo
+    val ajustandoDibujo = estadoState.value.ajustandoDibujo
     val editandoCalco = estadoState.value.calcoEnEdicion &&
         estadoState.value.calcoUri != null &&
         estadoState.value.calcoVisible
     Canvas(
-        modifier.pointerInput(modo, editandoCalco, cuentagotas) {
+        modifier.pointerInput(modo, editandoCalco, cuentagotas, ajustandoDibujo) {
             if (cuentagotas) {
                 // Cuentagotas: un toque toma el color del píxel de la hoja.
                 detectTapGestures { punto -> vm.recogerColor(punto.x, punto.y) }
@@ -977,6 +980,14 @@ private fun CapaGestos(
                 detectTransformGestures(panZoomLock = true) { foco, pan, zoom, _ ->
                     if (zoom != 1f) vm.escalarCalco(zoom, foco.x, foco.y)
                     if (pan != Offset.Zero) vm.moverCalco(pan.x, pan.y)
+                }
+            } else if (ajustandoDibujo) {
+                // Ajuste libre del dibujo: la vista hace de vista previa. Un
+                // dedo mueve y dos escalan (sin rotación); al tocar "Listo" el
+                // movimiento se hornea en la hoja de una sola vez.
+                detectTransformGestures(panZoomLock = true) { foco, pan, zoom, _ ->
+                    if (zoom != 1f) vm.zoomear(zoom, foco.x, foco.y)
+                    if (pan != Offset.Zero) vm.panear(pan.x, pan.y)
                 }
             } else if (modo == Modo.MOVER) {
                 // Pan + pinch de zoom + rotación de dos dedos, todos anclados
@@ -1007,8 +1018,8 @@ private fun CapaGestos(
             }
         }
             // Toque sin arrastre: punto con el lápiz o relleno con PINTAR.
-            .pointerInput(modo, editandoCalco, cuentagotas) {
-                if (!cuentagotas && !editandoCalco && modo == Modo.EDICION) {
+            .pointerInput(modo, editandoCalco, cuentagotas, ajustandoDibujo) {
+                if (!cuentagotas && !editandoCalco && !ajustandoDibujo && modo == Modo.EDICION) {
                     detectTapGestures { punto -> vm.tocarHoja(punto.x, punto.y) }
                 }
             },
@@ -1139,6 +1150,8 @@ private fun BarraHerramientas(
     alAlternarCalco: () -> Unit,
     alAbrirCalco: () -> Unit,
     alTerminarCalco: () -> Unit,
+    alTerminarAjuste: () -> Unit,
+    alCancelarAjuste: () -> Unit,
     alAbrirIa: () -> Unit,
     alAbrirColor: () -> Unit,
 ) {
@@ -1150,6 +1163,40 @@ private fun BarraHerramientas(
                 // esto la paleta quedaba debajo y no se podía tocar.
                 .windowInsetsPadding(WindowInsets.navigationBars),
         ) {
+            // Aviso mientras se ajusta el dibujo, con "Listo" y "Cancelar".
+            if (estado.ajustandoDibujo) {
+                Row(
+                    Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 12.dp, vertical = 6.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Icon(
+                        Icons.Rounded.OpenWith,
+                        contentDescription = null,
+                        modifier = Modifier.size(18.dp),
+                        tint = MaterialTheme.colorScheme.primary,
+                    )
+                    Spacer(Modifier.width(8.dp))
+                    Text(
+                        stringResource(R.string.ajuste_dibujo_hint),
+                        style = MaterialTheme.typography.bodySmall,
+                        modifier = Modifier.weight(1f),
+                    )
+                    TextButton(
+                        onClick = alCancelarAjuste,
+                        enabled = !estado.ajustandoLienzo,
+                    ) {
+                        Text(stringResource(R.string.ajuste_cancelar))
+                    }
+                    TextButton(
+                        onClick = alTerminarAjuste,
+                        enabled = !estado.ajustandoLienzo,
+                    ) {
+                        Text(stringResource(R.string.ajuste_listo))
+                    }
+                }
+            }
             // Aviso mientras se ajusta el calco, con el botón para terminar.
             if (estado.calcoEnEdicion) {
                 Row(
@@ -1474,21 +1521,21 @@ private fun DialogoAjustarLienzo(
 }
 
 /**
- * Diálogo "Transformar dibujo": voltea el dibujo (horizontal/vertical), lo
- * mueve con flechas (en pasos de 40 px de hoja) y lo escala alrededor del
- * centro. Cada acción queda en el historial (se puede deshacer).
+ * Diálogo "Transformar dibujo": voltea el dibujo (horizontal/vertical) y abre
+ * el **ajuste libre** (un dedo mueve, dos dedos escalan, como el calco). El
+ * tamaño también se puede fijar con el control deslizante. Cada acción queda en
+ * el historial (se puede deshacer).
  */
 @Composable
 private fun DialogoTransformar(
     ocupado: Boolean,
     alVoltearHorizontal: () -> Unit,
     alVoltearVertical: () -> Unit,
-    alMover: (Float, Float) -> Unit,
+    alAjustarLibre: () -> Unit,
     alEscalar: (Float) -> Unit,
     alCerrar: () -> Unit,
 ) {
     var escala by remember { mutableStateOf(1f) }
-    val paso = 40f
     AlertDialog(
         onDismissRequest = alCerrar,
         title = { Text(stringResource(R.string.transformar_titulo)) },
@@ -1517,35 +1564,21 @@ private fun DialogoTransformar(
                     stringResource(R.string.transformar_mover),
                     style = MaterialTheme.typography.labelLarge,
                 )
-                Row(
-                    Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceEvenly,
-                    verticalAlignment = Alignment.CenterVertically,
+                Spacer(Modifier.height(2.dp))
+                Text(
+                    stringResource(R.string.transformar_libre_hint),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Spacer(Modifier.height(6.dp))
+                Button(
+                    onClick = alAjustarLibre,
+                    enabled = !ocupado,
+                    modifier = Modifier.fillMaxWidth(),
                 ) {
-                    BotonIcono(
-                        icono = Icons.AutoMirrored.Rounded.ArrowBack,
-                        descripcion = stringResource(R.string.cd_mover_izquierda),
-                        habilitado = !ocupado,
-                        alPulsar = { alMover(-paso, 0f) },
-                    )
-                    BotonIcono(
-                        icono = Icons.Rounded.ArrowUpward,
-                        descripcion = stringResource(R.string.cd_mover_arriba),
-                        habilitado = !ocupado,
-                        alPulsar = { alMover(0f, -paso) },
-                    )
-                    BotonIcono(
-                        icono = Icons.Rounded.ArrowDownward,
-                        descripcion = stringResource(R.string.cd_mover_abajo),
-                        habilitado = !ocupado,
-                        alPulsar = { alMover(0f, paso) },
-                    )
-                    BotonIcono(
-                        icono = Icons.AutoMirrored.Rounded.ArrowForward,
-                        descripcion = stringResource(R.string.cd_mover_derecha),
-                        habilitado = !ocupado,
-                        alPulsar = { alMover(paso, 0f) },
-                    )
+                    Icon(Icons.Rounded.OpenWith, contentDescription = null, Modifier.size(18.dp))
+                    Spacer(Modifier.width(6.dp))
+                    Text(stringResource(R.string.transformar_libre))
                 }
                 Spacer(Modifier.height(12.dp))
                 Text(

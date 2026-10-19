@@ -335,6 +335,24 @@ no quedan huecos; lo que no se cubre queda con el fondo. Redondeo unificado
 La operación **entra al historial** (se deshace). Paridad cubierta por
 `MotorTest.transformarParidadNativoKotlin` y `voltearDosVecesVuelveAlOriginal`.
 
+**Ajuste libre del dibujo (issue 57)**: en vez de mover el dibujo con flechas,
+el diálogo "Transformar dibujo" abre un modo (`DibujoEstado.ajustandoDibujo`)
+donde la **vista hace de vista previa**: un dedo mueve y dos escalan (como el
+calco reposicionable), sin rotación. Al tocar "Listo"
+(`DibujoViewModel.terminarAjusteDibujo`) el cambio de cámara (pan/zoom) se
+convierte en una única llamada a `transformarHoja` (una sola entrada de
+historial) y la cámara se restaura, así el resultado no salta. La conversión
+sale de `hoja = R(−rot)·(pantalla + pan)/zoom`: con `z0,pan0` la cámara al
+entrar y `z1,pan1` la actual,
+`escala = z1/z0` y
+`desplazamiento = R(−rot)·(pan0 − pan1)/z0 + (escala − 1)·centro`
+(centro `((ancho−1)/2, (alto−1)/2)`, igual que `transformarHoja`). La vista
+previa por cámara y el horneado final son el **mismo mapeo**, así que no hay
+salto (sólo el borde fuera de hoja pasa de gris a fondo al vaciarse). Cualquier
+acción que toque cámara u hoja (`asegurarSinAjuste`: centrar, deshacer,
+limpiar, expandir, transformar, cambiar de modo…) cancela el ajuste pendiente
+sin hornearlo.
+
 ### Trazo asistido (líneas rectas)
 `MotorDibujo.asistenciaRecta(activa: Boolean)`: al soltar el trazo, si está
 activa, se descarta el recorrido tembloroso y se dibuja una **recta** entre el
@@ -407,8 +425,9 @@ Particularidades:
   (…+ DOBLE), con botones compactos (`IconoToggle(tamano = 34.dp)`) para que
   entren en una fila sin scroll.
 - **Transformar y color (issue 52)**: el menú "más opciones" suma
-  "Transformar dibujo" (`DialogoTransformar`: voltear H/V, mover en pasos de
-  40 px, escalar 0.25–2× con `Slider`; todo deshacible). El trazo asistido de
+  "Transformar dibujo" (`DialogoTransformar`: voltear H/V, escalar 0.25–2× con
+  `Slider` y el botón **"Ajustar libremente"** que abre el modo de ajuste por
+  gestos — ver *Ajuste libre del dibujo*; todo deshacible). El trazo asistido de
   **líneas rectas** tiene un botón propio en la barra superior (no escondido en
   el menú) que se resalta al estar activo. La fila de color suma el botón de
   rueda HSV (`DialogoColor` en `RuedaHsv.kt`) y el toggle de cuentagotas, y

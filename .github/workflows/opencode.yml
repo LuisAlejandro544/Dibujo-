@@ -185,10 +185,47 @@ jobs:
         run: |
           gh api "repos/${REPO}/issues/comments/${COMMENT_ID}/reactions" -f content='eyes' || true
 
-      - name: Configurar Node.js (Runtime oficial de OpenCode)
+      # REA (Reverse Engineer Anything) es un MCP local que corre con Node.
+      # Exige Node 22.19+ (no funciona en Node 20), por eso el runtime del
+      # agente sube a 22. El servidor se registra en opencode.json.
+      - name: Configurar Node.js (Runtime oficial de OpenCode + REA)
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: '22'
+
+      # JADX headless es el motor que usa REA para APKs. Se cachea porque el
+      # JAR pesa ~41 MB y se verifica contra el SHA-256 fijado por REA.
+      - name: Cache de JADX para REA
+        if: steps.dedupe.outputs.skip != 'true'
+        continue-on-error: true
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/rea-android
+          key: rea-jadx-${{ runner.os }}-0.7.1
+
+      - name: Preparar REA + JADX (análisis estático de APK)
+        if: steps.dedupe.outputs.skip != 'true'
+        # Si falla la descarga, el agente sigue trabajando sin REA.
+        continue-on-error: true
+        env:
+          REA_VERSION: 6.7.0
+          JADX_VERSION: 0.7.1
+          JADX_SHA256: 6e5eacf500b64292bfb73c49797c1958f6ee44646e43e868039ae7feb573ff75
+        run: |
+          set -euo pipefail
+          DIR="$HOME/.cache/rea-android"
+          JAR="$DIR/jadx-headless-mcp-${JADX_VERSION}-all.jar"
+          mkdir -p "$DIR"
+          if [ ! -f "$JAR" ]; then
+            curl -fL --retry 3 --retry-delay 2 -o "$JAR" \
+              "https://github.com/1013503897/jadx-headless-mcp/releases/download/v${JADX_VERSION}/jadx-headless-mcp-${JADX_VERSION}-all.jar"
+          fi
+          echo "${JADX_SHA256}  ${JAR}" | sha256sum -c -
+          echo "REA_JADX_MCP_JAR=$JAR" >> "$GITHUB_ENV"
+          # Precalienta el caché de npx para que el primer tools/list del MCP
+          # no agote el timeout de arranque (el paquete se baja una sola vez).
+          npx -y "rea-agents@${REA_VERSION}" --help >/dev/null
+          npx -y "rea-agents@${REA_VERSION}" doctor || true
 
       - name: Resolver Prompt y Descargar Imágenes para OpenCode Multimodal
         id: prompt_resolver

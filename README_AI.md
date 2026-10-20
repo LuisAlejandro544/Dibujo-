@@ -65,6 +65,18 @@ primera subida de la hoja se hace con revisión 0 (si no, el lienzo queda negro
 hasta el primer trazo). El rasterizado del trazo sigue en C++/Kotlin (paridad
 `MotorTest` intacta).
 
+## Análisis con REA (MCP)
+
+`opencode.json` registra el MCP local **REA** (`rea-agents@6.7.0`, Node >= 22.19)
+para inspeccionar APKs propios o autorizados: manifest/permisos, clases,
+métodos y referencias (`inspect_android_package`, `search_android_classes`,
+`inspect_android_method`, `trace_android_references`). En Actions,
+`opencode.yml` prepara Node 22, el JAR de JADX 0.7.1 verificado por SHA-256 y
+`REA_JADX_MCP_JAR`. Sin adb/emulador ni Hopper/Ghidra/IDA en el runner: sólo
+análisis estático. Para analizar el APK: `./gradlew :app:assembleDebug` y pasar
+`app/build/outputs/apk/debug/app-debug.apk` a las herramientas. Lo reconstruido
+se implementa en C++ y Kotlin con paridad.
+
 ## Reglas duras (resumen de AGENTS.md)
 
 1. Español en todo (código, strings, docs, commits).

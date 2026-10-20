@@ -119,6 +119,16 @@ data class DibujoEstado(
     val cuentagotasActivo: Boolean = false,
     /** Trazo asistido: las líneas dibujadas a mano se enderezan al soltar. */
     val asistenciaRecta: Boolean = false,
+    /** Valores con los que arranca un dibujo nuevo (configurables). */
+    val herramientaInicial: Herramienta = Herramienta.LAPIZ,
+    val grosorInicial: Int = 2,
+    val texturaInicial: Textura = Textura.LISA,
+    /** Vibración háptica al dibujar/deshacer (persistida). */
+    val vibracionActiva: Boolean = true,
+    /** Sonidos breves al dibujar/deshacer (persistido, apagado por defecto). */
+    val sonidosActivos: Boolean = false,
+    /** Tope del historial de deshacer/rehacer (persistido). */
+    val limiteHistorial: Int = 30,
 )
 
 /**
@@ -161,6 +171,7 @@ class DibujoViewModel(app: Application) : AndroidViewModel(app) {
     private val aplicacion: Application = app
     private val preferencias =
         app.getSharedPreferences(PREFERENCIAS, Context.MODE_PRIVATE)
+    private val retroalimentacion = Retroalimentacion(app)
 
     private var motor: MotorDibujo? = null
     private var vistaAncho = 0
@@ -178,12 +189,27 @@ class DibujoViewModel(app: Application) : AndroidViewModel(app) {
     /** Vectores al empezar un gesto de mover/escalar (para un solo paso). */
     private var vectorAntesTransformacion: List<TrazoVectorial>? = null
     private val seleccionInicial = leerBackend()
+    private val herramientaInicialPreferida = leerHerramientaInicial()
+    private val grosorInicialPreferido = leerGrosorInicial()
+    private val texturaInicialPreferida = leerTexturaInicial()
+    private val limiteHistorialPreferido = leerLimiteHistorial()
     private val _estado = MutableStateFlow(
         DibujoEstado(
+            lapiz = Lapiz(
+                herramienta = herramientaInicialPreferida,
+                grosor = grosorInicialPreferido,
+                textura = texturaInicialPreferida,
+            ),
             backendSeleccionado = seleccionInicial,
             backendEfectivo = seleccionInicial.resolver(capacidades.vulkanSoportado),
             vulkanSoportado = capacidades.vulkanSoportado,
             openglEsVersion = capacidades.openglEsVersion,
+            herramientaInicial = herramientaInicialPreferida,
+            grosorInicial = grosorInicialPreferido,
+            texturaInicial = texturaInicialPreferida,
+            vibracionActiva = preferencias.getBoolean(CLAVE_VIBRACION, true),
+            sonidosActivos = preferencias.getBoolean(CLAVE_SONIDOS, false),
+            limiteHistorial = limiteHistorialPreferido,
         ),
     )
     val estado: StateFlow<DibujoEstado> = _estado.asStateFlow()
@@ -198,6 +224,7 @@ class DibujoViewModel(app: Application) : AndroidViewModel(app) {
             val m = Motores.crear(vw.coerceIn(1, MAX_LADO), vh.coerceIn(1, MAX_LADO))
             m.configurarLapiz(_estado.value.lapiz)
             m.asistenciaRecta(_estado.value.asistenciaRecta)
+            m.limiteHistorial(_estado.value.limiteHistorial)
             motor = m
             publicarContenido(m)
         } else if (_estado.value.motorNombre.isEmpty()) {
@@ -264,6 +291,7 @@ class DibujoViewModel(app: Application) : AndroidViewModel(app) {
         val nuevo = Motores.crear(ancho.coerceIn(1, MAX_LADO), alto.coerceIn(1, MAX_LADO))
         nuevo.configurarLapiz(_estado.value.lapiz)
         nuevo.asistenciaRecta(_estado.value.asistenciaRecta)
+        nuevo.limiteHistorial(_estado.value.limiteHistorial)
         nuevo.reemplazarHoja(pixeles)
         motor = nuevo
         siguienteIdTexto = (textos.maxOfOrNull { it.id } ?: 0L) + 1L
@@ -333,6 +361,11 @@ class DibujoViewModel(app: Application) : AndroidViewModel(app) {
         vectorAntesTransformacion = null
         _estado.update {
             it.copy(
+                lapiz = Lapiz(
+                    herramienta = it.herramientaInicial,
+                    grosor = it.grosorInicial,
+                    textura = it.texturaInicial,
+                ),
                 motorNombre = "",
                 trazoEnCurso = null,
                 puedeDeshacer = false,
@@ -411,6 +444,63 @@ class DibujoViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    // --- Configuración: valores iniciales, retroalimentación e historial -----
+
+    /** Herramienta con la que arranca un dibujo nuevo (se aplica al empezarlo). */
+    fun elegirHerramientaInicial(herramienta: Herramienta) {
+        preferencias.edit().putString(CLAVE_HERRAMIENTA_INICIAL, herramienta.name).apply()
+        _estado.update { it.copy(herramientaInicial = herramienta) }
+    }
+
+    /** Grosor con el que arranca un dibujo nuevo. */
+    fun elegirGrosorInicial(grosor: Int) {
+        val valor = grosor.coerceIn(Lapiz.GROSOR_MIN, Lapiz.GROSOR_MAX)
+        preferencias.edit().putInt(CLAVE_GROSOR_INICIAL, valor).apply()
+        _estado.update { it.copy(grosorInicial = valor) }
+    }
+
+    /** Textura con la que arranca un dibujo nuevo. */
+    fun elegirTexturaInicial(textura: Textura) {
+        preferencias.edit().putString(CLAVE_TEXTURA_INICIAL, textura.name).apply()
+        _estado.update { it.copy(texturaInicial = textura) }
+    }
+
+    fun alternarVibracion() {
+        val nuevo = !_estado.value.vibracionActiva
+        preferencias.edit().putBoolean(CLAVE_VIBRACION, nuevo).apply()
+        _estado.update { it.copy(vibracionActiva = nuevo) }
+        if (nuevo) retroalimentacion.emitir(EventoRetroalimentacion.DESHACER, true, false)
+    }
+
+    fun alternarSonidos() {
+        val nuevo = !_estado.value.sonidosActivos
+        preferencias.edit().putBoolean(CLAVE_SONIDOS, nuevo).apply()
+        _estado.update { it.copy(sonidosActivos = nuevo) }
+        if (nuevo) retroalimentacion.emitir(EventoRetroalimentacion.DESHACER, false, true)
+    }
+
+    /**
+     * Tope de pasos del historial (5..100). Se aplica en caliente al motor y
+     * al historial unificado; si baja, se descartan los pasos más viejos.
+     */
+    fun elegirLimiteHistorial(pasos: Int) {
+        val valor = pasos.coerceIn(LIMITE_HISTORIAL_MIN, LIMITE_HISTORIAL_MAX)
+        preferencias.edit().putInt(CLAVE_LIMITE_HISTORIAL, valor).apply()
+        motor?.limiteHistorial(valor)
+        _estado.update { it.copy(limiteHistorial = valor) }
+        limitarHistorial()
+        _estado.update {
+            it.copy(
+                puedeDeshacer = hayDeshacer(),
+                puedeRehacer = hayRehacer(),
+            )
+        }
+    }
+
+    private fun avisar(evento: EventoRetroalimentacion) {
+        val est = _estado.value
+        retroalimentacion.emitir(evento, est.vibracionActiva, est.sonidosActivos)
+    }
 
     fun iniciarTrazo(px: Float, py: Float) {
         val m = motor ?: return
@@ -448,7 +538,10 @@ class DibujoViewModel(app: Application) : AndroidViewModel(app) {
             rellenarConVectores(m, trazo[0], trazo[1])
             return
         }
-        if (m.terminarTrazo()) registrarPasoPixeles()
+        if (m.terminarTrazo()) {
+            registrarPasoPixeles()
+            avisar(EventoRetroalimentacion.TRAZO)
+        }
         _estado.update {
             it.copy(
                 trazoEnCurso = null,
@@ -853,6 +946,7 @@ class DibujoViewModel(app: Application) : AndroidViewModel(app) {
         val antes = _estado.value.vectores
         val despues = antes + objeto
         registrarPasoVectores(antes, despues)
+        avisar(EventoRetroalimentacion.TRAZO)
         _estado.update {
             it.copy(
                 vectores = despues,
@@ -1152,6 +1246,7 @@ class DibujoViewModel(app: Application) : AndroidViewModel(app) {
             }
         }
         indicePasos--
+        avisar(EventoRetroalimentacion.DESHACER)
         _estado.update {
             it.copy(
                 puedeDeshacer = hayDeshacer(),
@@ -1192,6 +1287,7 @@ class DibujoViewModel(app: Application) : AndroidViewModel(app) {
             }
         }
         indicePasos++
+        avisar(EventoRetroalimentacion.REHACER)
         _estado.update {
             it.copy(
                 puedeDeshacer = hayDeshacer(),
@@ -1788,6 +1884,7 @@ class DibujoViewModel(app: Application) : AndroidViewModel(app) {
                 val vigente = motor === m && _estado.value.vectores == vectores
                 if (resultado != null && vigente && m.reemplazarHoja(resultado)) {
                     registrarPasoPixeles()
+                    avisar(EventoRetroalimentacion.TRAZO)
                     _estado.update {
                         it.copy(
                             puedeDeshacer = hayDeshacer(),
@@ -2119,7 +2216,8 @@ class DibujoViewModel(app: Application) : AndroidViewModel(app) {
      * paso más viejo se pierde ese deshacer, pero el resto sigue en orden.
      */
     private fun limitarHistorial() {
-        while (pasos.size > MAX_PASOS) {
+        val tope = _estado.value.limiteHistorial.coerceAtLeast(1)
+        while (pasos.size > tope) {
             pasos.removeAt(0)
             if (indicePasos > 0) indicePasos--
         }
@@ -2159,6 +2257,7 @@ class DibujoViewModel(app: Application) : AndroidViewModel(app) {
     override fun onCleared() {
         motor?.close()
         motor = null
+        retroalimentacion.close()
         super.onCleared()
     }
 
@@ -2213,17 +2312,41 @@ class DibujoViewModel(app: Application) : AndroidViewModel(app) {
             ?.let { nombre -> runCatching { BackendRender.valueOf(nombre) }.getOrNull() }
             ?: BackendRender.AUTOMATICO
 
+    private fun leerHerramientaInicial(): Herramienta =
+        preferencias.getString(CLAVE_HERRAMIENTA_INICIAL, null)
+            ?.let { nombre -> runCatching { Herramienta.valueOf(nombre) }.getOrNull() }
+            ?: Herramienta.LAPIZ
+
+    private fun leerGrosorInicial(): Int =
+        preferencias.getInt(CLAVE_GROSOR_INICIAL, Lapiz().grosor)
+            .coerceIn(Lapiz.GROSOR_MIN, Lapiz.GROSOR_MAX)
+
+    private fun leerTexturaInicial(): Textura =
+        preferencias.getString(CLAVE_TEXTURA_INICIAL, null)
+            ?.let { nombre -> runCatching { Textura.valueOf(nombre) }.getOrNull() }
+            ?: Textura.LISA
+
+    private fun leerLimiteHistorial(): Int =
+        preferencias.getInt(CLAVE_LIMITE_HISTORIAL, HISTORIAL_POR_DEFECTO)
+            .coerceIn(LIMITE_HISTORIAL_MIN, LIMITE_HISTORIAL_MAX)
+
     private companion object {
         /** Coincide con el límite de Lienzo. */
         const val MAX_LADO = 4096
 
-        /**
-         * Tope del historial unificado. Coincide con el del motor (30) para
-         * que los pasos de píxeles y los de vectores no se desalineen.
-         */
-        const val MAX_PASOS = 30
+        /** Tope del historial (por defecto y rango configurable). */
+        const val HISTORIAL_POR_DEFECTO = 30
+        const val LIMITE_HISTORIAL_MIN = 5
+        const val LIMITE_HISTORIAL_MAX = 100
+
         const val PREFERENCIAS = "dibujo_config"
         const val CLAVE_BACKEND = "backend_render"
+        const val CLAVE_HERRAMIENTA_INICIAL = "herramienta_inicial"
+        const val CLAVE_GROSOR_INICIAL = "grosor_inicial"
+        const val CLAVE_TEXTURA_INICIAL = "textura_inicial"
+        const val CLAVE_VIBRACION = "vibracion"
+        const val CLAVE_SONIDOS = "sonidos"
+        const val CLAVE_LIMITE_HISTORIAL = "limite_historial"
 
         /** Colores que se sugieren al analizar el calco. */
         const val K_COLORES_CALCO = 8

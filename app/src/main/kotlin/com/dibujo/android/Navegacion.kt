@@ -26,7 +26,16 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 /** Pantallas de la app. La navegación es un estado simple, sin dependencias. */
-private enum class Destino { MENU, DIBUJO, CARGAR, OPCIONES }
+private enum class Destino {
+    MENU,
+    DIBUJO,
+    CARGAR,
+    OPCIONES,
+    OPCIONES_MOTOR,
+    OPCIONES_DIBUJO,
+    OPCIONES_RETROALIMENTACION,
+    OPCIONES_HISTORIAL,
+}
 
 /**
  * Raíz de la app: decide qué pantalla mostrar. Las pantallas son archivos
@@ -138,9 +147,38 @@ fun AppDibujo(vm: DibujoViewModel = viewModel()) {
         )
 
         Destino.OPCIONES -> PantallaOpciones(
+            alAbrirMotor = { destino = Destino.OPCIONES_MOTOR },
+            alAbrirDibujo = { destino = Destino.OPCIONES_DIBUJO },
+            alAbrirRetroalimentacion = { destino = Destino.OPCIONES_RETROALIMENTACION },
+            alAbrirHistorial = { destino = Destino.OPCIONES_HISTORIAL },
+            alVolver = { destino = origenOpciones },
+        )
+
+        Destino.OPCIONES_MOTOR -> PantallaOpcionesMotor(
             estado = vm.estado.collectAsState().value,
             alElegirBackend = vm::elegirBackend,
-            alVolver = { destino = origenOpciones },
+            alVolver = { destino = Destino.OPCIONES },
+        )
+
+        Destino.OPCIONES_DIBUJO -> PantallaOpcionesDibujo(
+            estado = vm.estado.collectAsState().value,
+            alElegirHerramienta = vm::elegirHerramientaInicial,
+            alElegirGrosor = vm::elegirGrosorInicial,
+            alElegirTextura = vm::elegirTexturaInicial,
+            alVolver = { destino = Destino.OPCIONES },
+        )
+
+        Destino.OPCIONES_RETROALIMENTACION -> PantallaOpcionesRetroalimentacion(
+            estado = vm.estado.collectAsState().value,
+            alAlternarVibracion = vm::alternarVibracion,
+            alAlternarSonidos = vm::alternarSonidos,
+            alVolver = { destino = Destino.OPCIONES },
+        )
+
+        Destino.OPCIONES_HISTORIAL -> PantallaOpcionesHistorial(
+            estado = vm.estado.collectAsState().value,
+            alElegirLimite = vm::elegirLimiteHistorial,
+            alVolver = { destino = Destino.OPCIONES },
         )
     }
 

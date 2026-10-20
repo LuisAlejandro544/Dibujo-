@@ -50,6 +50,10 @@ public:
     bool puedeDeshacer() const { return !pasado_.empty(); }
     bool puedeRehacer() const { return !futuro_.empty(); }
     void limpiarHoja();  // borra todo (queda en el historial)
+    // Tope de pasos configurable (por defecto 30). Al bajarlo se descartan
+    // los snapshots más viejos. Replica `Historial.fijarMaximo` en Kotlin.
+    void fijarLimiteHistorial(std::size_t maximo);
+    std::size_t limiteHistorial() const { return maxHistorial_; }
 
     // "Limpiar trazos": adelgaza toda la tinta a un esqueleto de 1 px
     // (Zhang-Suen) y la redibuja con ancho uniforme `radio`. Devuelve false si
@@ -157,7 +161,8 @@ private:
     std::vector<std::vector<uint32_t>> pasado_;
     std::vector<std::vector<uint32_t>> futuro_;
     // Igual que el límite de Historial en Kotlin: hojas grandes por snapshot.
-    static constexpr std::size_t kMaxHistorial = 30;
+    static constexpr std::size_t kMaxHistorialPorDefecto = 30;
+    std::size_t maxHistorial_ = kMaxHistorialPorDefecto;
 
     // Lado máximo de la hoja (coincide con Lienzo.MAX_LADO en Kotlin).
     static constexpr int kMaxLado = 4096;

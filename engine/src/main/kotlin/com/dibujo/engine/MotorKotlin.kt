@@ -126,6 +126,10 @@ class MotorKotlin(
     override fun puedeDeshacer(): Boolean = historial.puedeDeshacer()
     override fun puedeRehacer(): Boolean = historial.puedeRehacer()
 
+    override fun limiteHistorial(pasos: Int) {
+        historial.fijarMaximo(pasos)
+    }
+
     override fun limpiarHoja() {
         historial.guardar(hoja)
         hoja.limpiar()

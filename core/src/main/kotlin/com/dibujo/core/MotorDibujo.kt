@@ -40,6 +40,13 @@ interface MotorDibujo : AutoCloseable {
     fun limpiarHoja()
 
     /**
+     * Ajusta el tope de pasos del historial (por defecto 30). Al bajarlo se
+     * descartan los pasos más viejos. La app y el C++ usan el mismo tope para
+     * que los snapshots de píxeles y los objetos vivos no se desalineen.
+     */
+    fun limiteHistorial(pasos: Int)
+
+    /**
      * "Limpiar trazos": adelgaza la tinta de la hoja a un esqueleto de 1 px
      * (Zhang-Suen) y la vuelve a dibujar con ancho uniforme. Sirve cuando el
      * usuario repasa el mismo trazo muchas veces y la línea queda gruesa e

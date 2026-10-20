@@ -65,6 +65,9 @@ class MotorNativo(
     override fun puedeRehacer(): Boolean = NativeEngine.nativoPuedeRehacer(handle)
     override fun limpiarHoja() = NativeEngine.nativoLimpiarHoja(handle)
 
+    override fun limiteHistorial(pasos: Int) =
+        NativeEngine.nativoLimiteHistorial(handle, pasos)
+
     override fun limpiarTrazos(): Boolean = NativeEngine.nativoLimpiarTrazos(handle)
 
     override fun expandir(izquierda: Int, arriba: Int, derecha: Int, abajo: Int) {

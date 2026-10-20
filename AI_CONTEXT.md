@@ -463,7 +463,7 @@ y `abrirDibujo`).
 | Gradle | 9.8.1 (wrapper, `gradlew`) |
 | Kotlin | 2.4.21 (root `build.gradle.kts`; alias en `gradle/libs.versions.toml`) |
 | AGP | 9.4.1 (con *built-in Kotlin*: NO aplicar `org.jetbrains.kotlin.android` en `:app`) |
-| Compose | BOM 2026.09.00 + `kotlin.plugin.compose` 2.4.21 |
+| Compose | BOM 2026.09.00 + `kotlin.plugin.compose` 2.4.21; `androidx.compose.animation` (transiciones de pantalla) |
 | LeakCanary | 2.14 (solo `debugImplementation` en `:app`) |
 | LiteRT | `com.google.ai.edge.litert:litert` 2.3.0 (Google Maven; runtime del modelo IA de `:app`; delegado GPU con caída a CPU; trae `&lt;abi&gt;/libLiteRt.so` + `liblitert_jni.so`) |
 | SDK | compileSdk 37, minSdk 26, targetSdk 37, ABIs arm64-v8a + x86_64 |
@@ -670,10 +670,12 @@ principal** con cuatro accesos, cada uno en su propio archivo/pantalla.
 - **Navegación** (`Navegacion.kt`, `AppDibujo`): un estado simple
   (`enum Destino { MENU, DIBUJO, CARGAR, OPCIONES, OPCIONES_MOTOR,
   OPCIONES_DIBUJO, OPCIONES_RETROALIMENTACION, OPCIONES_HISTORIAL }` con
-  `rememberSaveable`) y un `when`; sin dependencias nuevas (no se agregó
-  Navigation Compose). `MainActivity` compone `AppDibujo()`. El `DibujoViewModel`
-  es el de la Activity, así que la hoja **sobrevive** al ir y volver del menú
-  (no se recrea el motor).
+  `rememberSaveable`) y un `when` dentro de `AnimatedContent` (Compose
+  `animation`): al entrar a un apartado el contenido entra deslizando desde la
+  derecha y el anterior se desvanece, y al volver el sentido se invierte según
+  `profundidad(Destino)`; sin Navigation Compose. `MainActivity` compone
+  `AppDibujo()`. El `DibujoViewModel` es el de la Activity, así que la hoja
+  **sobrevive** al ir y volver del menú (no se recrea el motor).
 - **`PantallaMenu.kt`** (`PantallaMenu`): cuatro tarjetas grandes.
   - *Nuevo dibujo*: empieza una hoja en blanco desde cero. Llama
     `DibujoViewModel.nuevoDibujo()`, que **descarta el motor** (`close()` y
@@ -700,12 +702,16 @@ principal** con cuatro accesos, cada uno en su propio archivo/pantalla.
     versión de OpenGL ES, Vulkan soportado y render GPU en uso.
   - **`PantallaOpcionesDibujo.kt`**: herramienta, grosor y textura con los que
     arranca un dibujo nuevo (`DibujoEstado.herramientaInicial`, `grosorInicial`,
-    `texturaInicial`; se aplican en `nuevoDibujo()`).
+    `texturaInicial`; se aplican en `nuevoDibujo()`). El número del grosor se
+    actualiza **mientras se arrastra** el slider (el valor se persiste al
+    soltar) y cada textura muestra su trazo real con `VistaPreviaTextura`
+    (`VistaPreviaTextura.kt`, compartido con el diálogo del lienzo).
   - **`PantallaOpcionesRetroalimentacion.kt`**: vibración háptica y sonidos al
     dibujar/deshacer/rehacer (`Retroalimentacion.kt`, `Vibrador` +
     `ToneGenerator`; vibración activada y sonidos apagados por defecto).
   - **`PantallaOpcionesHistorial.kt`**: tope del historial (5..100, por defecto
-    30) aplicado en caliente con `MotorDibujo.limiteHistorial`.
+    30) aplicado en caliente con `MotorDibujo.limiteHistorial`; el número
+    también se refresca en vivo mientras se arrastra el slider.
 - **`AlmacenDibujos.kt`**: persistencia en `filesDir/dibujos` como PNG (ARGB sin
   pérdida), sin permisos.
   - **Borrador en curso** (`actual.png`, [AlmacenDibujos.SLOT_ACTUAL]): el dibujo

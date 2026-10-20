@@ -1,6 +1,14 @@
 package com.dibujo.android
 
 import android.widget.Toast
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.SizeTransform
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
@@ -35,6 +43,21 @@ private enum class Destino {
     OPCIONES_DIBUJO,
     OPCIONES_RETROALIMENTACION,
     OPCIONES_HISTORIAL,
+}
+
+/**
+ * Profundidad de cada pantalla en la navegación. Sirve para elegir el sentido
+ * de la animación: al avanzar (más profundo) el contenido entra desde la
+ * derecha; al volver, desde la izquierda.
+ */
+private fun profundidad(destino: Destino): Int = when (destino) {
+    Destino.MENU, Destino.DIBUJO -> 0
+    Destino.CARGAR, Destino.OPCIONES -> 1
+    Destino.OPCIONES_MOTOR,
+    Destino.OPCIONES_DIBUJO,
+    Destino.OPCIONES_RETROALIMENTACION,
+    Destino.OPCIONES_HISTORIAL,
+    -> 2
 }
 
 /**
@@ -87,7 +110,30 @@ fun AppDibujo(vm: DibujoViewModel = viewModel()) {
         }
     }
 
-    when (destino) {
+    // Transición entre pantallas: al entrar a un apartado el contenido nuevo
+    // desliza desde el lado hacia el que se navega y el anterior se desvanece
+    // hacia el lado opuesto; al volver, el sentido se invierte.
+    AnimatedContent(
+        targetState = destino,
+        transitionSpec = {
+            val avance = profundidad(targetState) - profundidad(initialState)
+            val transicion = if (avance == 0) {
+                fadeIn(tween(180)) togetherWith fadeOut(tween(140))
+            } else {
+                val sentido = if (avance > 0) 1 else -1
+                val entrada = slideInHorizontally(tween(260)) { ancho ->
+                    sentido * ancho / 5
+                } + fadeIn(tween(180))
+                val salida = slideOutHorizontally(tween(260)) { ancho ->
+                    -sentido * ancho / 5
+                } + fadeOut(tween(140))
+                entrada togetherWith salida
+            }
+            transicion.using(SizeTransform(clip = false))
+        },
+        label = "navegacion",
+    ) { pantalla ->
+        when (pantalla) {
         Destino.MENU -> PantallaMenu(
             alNuevo = {
                 // Descarta el borrador y abre una hoja en blanco.
@@ -180,6 +226,7 @@ fun AppDibujo(vm: DibujoViewModel = viewModel()) {
             alElegirLimite = vm::elegirLimiteHistorial,
             alVolver = { destino = Destino.OPCIONES },
         )
+        }
     }
 
     if (cargando) {

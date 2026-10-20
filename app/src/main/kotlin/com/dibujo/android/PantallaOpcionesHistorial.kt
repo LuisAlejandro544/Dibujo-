@@ -32,13 +32,16 @@ fun PantallaOpcionesHistorial(
     ) {
         TextoAyuda(stringResource(R.string.config_historial_desc))
         Spacer(Modifier.height(12.dp))
-        Text(
-            stringResource(R.string.config_historial_valor, estado.limiteHistorial),
-            style = MaterialTheme.typography.titleMedium,
-        )
         var limiteLocal by remember(estado.limiteHistorial) {
             mutableFloatStateOf(estado.limiteHistorial.toFloat())
         }
+        Text(
+            stringResource(
+                R.string.config_historial_valor,
+                (limiteLocal / PASO).roundToInt() * PASO,
+            ),
+            style = MaterialTheme.typography.titleMedium,
+        )
         Slider(
             value = limiteLocal,
             onValueChange = { limiteLocal = it },

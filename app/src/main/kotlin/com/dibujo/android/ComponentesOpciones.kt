@@ -149,13 +149,18 @@ internal fun TarjetaAjuste(
     }
 }
 
-/** Fila con botón de radio para elegir una opción de una lista. */
+/**
+ * Fila con botón de radio para elegir una opción de una lista. [vistaPrevia]
+ * permite mostrar una muestra visual (por ejemplo, la textura real del trazo)
+ * antes de la etiqueta, así el usuario no elige sólo por el nombre.
+ */
 @Composable
 internal fun FilaOpcion(
     etiqueta: String,
     seleccionada: Boolean,
     alElegir: () -> Unit,
     habilitada: Boolean = true,
+    vistaPrevia: (@Composable () -> Unit)? = null,
 ) {
     Row(
         Modifier
@@ -175,6 +180,10 @@ internal fun FilaOpcion(
             enabled = habilitada,
         )
         Spacer(Modifier.width(8.dp))
+        if (vistaPrevia != null) {
+            vistaPrevia()
+            Spacer(Modifier.width(12.dp))
+        }
         Text(
             etiqueta,
             style = MaterialTheme.typography.bodyMedium,

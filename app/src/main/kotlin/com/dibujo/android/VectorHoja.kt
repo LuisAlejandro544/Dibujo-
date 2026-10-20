@@ -12,6 +12,9 @@ import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
+import com.dibujo.core.Textura
+import kotlin.math.ceil
+import kotlin.math.floor
 import kotlin.math.max
 
 /**
@@ -21,12 +24,15 @@ import kotlin.math.max
  *
  * Los puntos van en pares (x, y) dentro de [puntos]. Al escalar el objeto se
  * transforman los puntos y el grosor juntos, así el trazo mantiene su aspecto.
+ * [textura] aplica el mismo grano determinista que el lápiz de píxeles (se
+ * evalúa en coordenadas de hoja, así el patrón no se mueve con el trazo).
  */
 data class TrazoVectorial(
     val id: Long,
     val puntos: List<Float>,
     val color: Int,
     val grosor: Float,
+    val textura: Textura = Textura.LISA,
 ) {
     init {
         require(puntos.size >= 2 && puntos.size % 2 == 0) {
@@ -59,6 +65,18 @@ data class TrazoVectorial(
 }
 
 /**
+ * Trazo vectorial ya rasterizado: un bitmap recortado a su caja (con margen
+ * para el antialiasing) y la esquina superior izquierda en coordenadas de
+ * destino. Se usa tanto para la capa viva (Compose) como para hornear en la
+ * hoja o en una miniatura.
+ */
+class TrazoRasterizado(
+    val x: Int,
+    val y: Int,
+    val bitmap: Bitmap,
+)
+
+/**
  * Geometría y rasterizado de los trazos vectoriales.
  *
  * El suavizado es Catmull-Rom convertido a Bézier cúbicas: el trazo pasa por
@@ -70,6 +88,12 @@ object VectorHoja {
 
     /** Tolerancia de simplificación, en px de hoja. */
     private const val TOLERANCIA_MINIMA = 0.35f
+
+    /**
+     * Tope de píxeles del bitmap temporal de un trazo. Un trazo que ocupe más
+     * se dibuja sin textura para no reservar decenas de MB de golpe.
+     */
+    private const val MAX_RASTER_PIXELES = 4_000_000L
 
     /** Path de Compose con el trazo suavizado; `null` si es un solo punto. */
     fun caminoCompose(puntos: List<Float>, escala: Float = 1f): Path? {
@@ -94,8 +118,90 @@ object VectorHoja {
     }
 
     /**
+     * Rasteriza [trazo] a [escala] en un bitmap recortado a su caja, aplicando
+     * la textura si no es LISA. Devuelve `null` si el recorte sería demasiado
+     * grande (se cae a dibujar la ruta sin textura, para no agotar memoria).
+     */
+    fun rasterizar(trazo: TrazoVectorial, escala: Float = 1f): TrazoRasterizado? {
+        if (escala <= 0f) return null
+        val radio = (trazo.grosor * escala / 2f).coerceAtLeast(0.5f)
+        val caja = limitesDeCurva(trazo.puntos, escala)
+        val x0 = floor(caja[0] - radio - 1f).toInt()
+        val y0 = floor(caja[1] - radio - 1f).toInt()
+        val x1 = ceil(caja[2] + radio + 1f).toInt()
+        val y1 = ceil(caja[3] + radio + 1f).toInt()
+        val ancho = x1 - x0 + 1
+        val alto = y1 - y0 + 1
+        if (ancho <= 0 || alto <= 0) return null
+        if (ancho.toLong() * alto.toLong() > MAX_RASTER_PIXELES) return null
+        val bitmap = Bitmap.createBitmap(ancho, alto, Bitmap.Config.ARGB_8888)
+        val canvas = Canvas(bitmap)
+        canvas.translate(-x0.toFloat(), -y0.toFloat())
+        val pincel = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = trazo.color
+            strokeCap = Paint.Cap.ROUND
+            strokeJoin = Paint.Join.ROUND
+        }
+        val grosor = (trazo.grosor * escala).coerceAtLeast(0.5f)
+        if (trazo.cantidadPuntos == 1) {
+            pincel.style = Paint.Style.FILL
+            canvas.drawCircle(
+                trazo.puntos[0] * escala,
+                trazo.puntos[1] * escala,
+                grosor / 2f,
+                pincel,
+            )
+        } else {
+            val ruta = caminoAndroid(trazo.puntos, escala) ?: return null
+            pincel.style = Paint.Style.STROKE
+            pincel.strokeWidth = grosor
+            canvas.drawPath(ruta, pincel)
+        }
+        if (trazo.textura != Textura.LISA) {
+            aplicarTextura(bitmap, trazo.textura, trazo.color, escala, x0, y0)
+        }
+        return TrazoRasterizado(x0, y0, bitmap)
+    }
+
+    /**
+     * Modula el alfa de cada píxel del bitmap con [Textura.aplicar], usando las
+     * coordenadas de hoja (no las del recorte), así el grano queda anclado al
+     * dibujo y no se corre al mover o recortar el vector.
+     */
+    private fun aplicarTextura(
+        bitmap: Bitmap,
+        textura: Textura,
+        color: Int,
+        escala: Float,
+        origenX: Int,
+        origenY: Int,
+    ) {
+        val ancho = bitmap.width
+        val alto = bitmap.height
+        val pixeles = IntArray(ancho * alto)
+        bitmap.getPixels(pixeles, 0, ancho, 0, 0, ancho, alto)
+        val rgb = color and 0xFFFFFF
+        var i = 0
+        for (y in 0 until alto) {
+            val hy = floor((origenY + y) / escala).toInt()
+            for (x in 0 until ancho) {
+                val alfa = pixeles[i] ushr 24
+                if (alfa > 0) {
+                    val hx = floor((origenX + x) / escala).toInt()
+                    val nuevo = textura.aplicar(alfa, hx, hy)
+                    if (nuevo != alfa) pixeles[i] = (nuevo shl 24) or rgb
+                }
+                i++
+            }
+        }
+        bitmap.setPixels(pixeles, 0, ancho, 0, 0, ancho, alto)
+    }
+
+    /**
      * Hornea [vectores] sobre el buffer ARGB de la hoja. [escala] se usa para
-     * las miniaturas de la biblioteca (reduce puntos y grosor a la vez).
+     * las miniaturas de la biblioteca (reduce puntos y grosor a la vez). Cada
+     * vector se rasteriza con su textura y se compone en orden, así el
+     * resultado coincide con la capa viva.
      */
     fun dibujarEnPixeles(
         pixeles: IntArray,
@@ -109,12 +215,19 @@ object VectorHoja {
         val bitmap = Bitmap.createBitmap(ancho, alto, Bitmap.Config.ARGB_8888)
         bitmap.setPixels(pixeles, 0, ancho, 0, 0, ancho, alto)
         val canvas = Canvas(bitmap)
-        val pincel = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        val pincel = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG).apply {
             style = Paint.Style.STROKE
             strokeCap = Paint.Cap.ROUND
             strokeJoin = Paint.Join.ROUND
         }
         vectores.forEach { trazo ->
+            val raster = rasterizar(trazo, escala)
+            if (raster != null) {
+                canvas.drawBitmap(raster.bitmap, raster.x.toFloat(), raster.y.toFloat(), pincel)
+                raster.bitmap.recycle()
+                return@forEach
+            }
+            // Respaldo sin textura para trazos gigantes (memoria acotada).
             pincel.color = trazo.color
             pincel.strokeWidth = (trazo.grosor * escala).coerceAtLeast(0.5f)
             if (trazo.cantidadPuntos == 1) {
@@ -239,6 +352,35 @@ object VectorHoja {
         val ex = px - (ax + t * dx)
         val ey = py - (ay + t * dy)
         return ex * ex + ey * ey
+    }
+
+    /**
+     * Caja de la curva ya escalada, incluyendo los puntos de control de
+     * Catmull-Rom (la curva puede sobresalir un poco del polígono de vértices).
+     */
+    private fun limitesDeCurva(puntos: List<Float>, escala: Float): FloatArray {
+        var x0 = Float.POSITIVE_INFINITY
+        var y0 = Float.POSITIVE_INFINITY
+        var x1 = Float.NEGATIVE_INFINITY
+        var y1 = Float.NEGATIVE_INFINITY
+        fun incluir(x: Float, y: Float) {
+            if (x < x0) x0 = x
+            if (x > x1) x1 = x
+            if (y < y0) y0 = y
+            if (y > y1) y1 = y
+        }
+        var i = 0
+        while (i + 1 < puntos.size) {
+            incluir(puntos[i] * escala, puntos[i + 1] * escala)
+            i += 2
+        }
+        if (puntos.size >= 4) {
+            recorrerCurvas(puntos, escala) { _, _, c1x, c1y, c2x, c2y, _, _ ->
+                incluir(c1x, c1y)
+                incluir(c2x, c2y)
+            }
+        }
+        return floatArrayOf(x0, y0, x1, y1)
     }
 
     /**

@@ -14,6 +14,7 @@ import com.dibujo.core.Herramienta
 import com.dibujo.core.Lapiz
 import com.dibujo.core.Modo
 import com.dibujo.core.MotorDibujo
+import com.dibujo.core.Textura
 import com.dibujo.engine.Motores
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -120,6 +121,31 @@ data class DibujoEstado(
 )
 
 /**
+ * Un paso del historial unificado de la app.
+ *
+ * El motor ya guarda sus propios snapshots de píxeles; acá sólo se registra
+ * **cuándo** ocurrió cada cambio de píxeles y, para los objetos vivos, sus
+ * listas antes/después. Así deshacer/rehacer respeta el orden real entre
+ * trazos de píxeles y trazos vectoriales sin duplicar los snapshots de la hoja.
+ */
+private sealed interface PasoHistorial {
+    /** Cambio sólo de píxeles: el motor lo revierte con su historial. */
+    data object Pixeles : PasoHistorial
+
+    /** Cambio sólo de objetos vectoriales. */
+    data class Vectores(
+        val antes: List<TrazoVectorial>,
+        val despues: List<TrazoVectorial>,
+    ) : PasoHistorial
+
+    /** Cambio de píxeles y vectores a la vez (limpiar, transformar la hoja). */
+    data class Ambos(
+        val antes: List<TrazoVectorial>,
+        val despues: List<TrazoVectorial>,
+    ) : PasoHistorial
+}
+
+/**
  * ViewModel de la app de dibujo: dueño del [MotorDibujo].
  *
  * El motor vive fuera de la composición, así la hoja sobrevive rotaciones y
@@ -143,6 +169,11 @@ class DibujoViewModel(app: Application) : AndroidViewModel(app) {
     private var camaraBaseAjuste: Camara? = null
     private var siguienteIdTexto = 1L
     private var siguienteIdVector = 1L
+    /** Historial unificado: píxeles del motor + objetos vectoriales. */
+    private val pasos = ArrayList<PasoHistorial>()
+    private var indicePasos = 0
+    /** Vectores al empezar un gesto de mover/escalar (para un solo paso). */
+    private var vectorAntesTransformacion: List<TrazoVectorial>? = null
     private val seleccionInicial = leerBackend()
     private val _estado = MutableStateFlow(
         DibujoEstado(
@@ -183,6 +214,8 @@ class DibujoViewModel(app: Application) : AndroidViewModel(app) {
      */
     private fun publicarContenido(m: MotorDibujo, modificado: Boolean = false) {
         val hayGpu = m.handleNativo != 0L
+        limpiarHistorial()
+        vectorAntesTransformacion = null
         _estado.update {
             it.copy(
                 motorNombre = m.nombre,
@@ -293,6 +326,8 @@ class DibujoViewModel(app: Application) : AndroidViewModel(app) {
     fun nuevoDibujo() {
         motor?.close()
         motor = null
+        limpiarHistorial()
+        vectorAntesTransformacion = null
         _estado.update {
             it.copy(
                 motorNombre = "",
@@ -397,12 +432,12 @@ class DibujoViewModel(app: Application) : AndroidViewModel(app) {
 
     fun soltarTrazo() {
         val m = motor ?: return
-        m.terminarTrazo()
+        if (m.terminarTrazo()) registrarPasoPixeles()
         _estado.update {
             it.copy(
                 trazoEnCurso = null,
-                puedeDeshacer = m.puedeDeshacer(),
-                puedeRehacer = m.puedeRehacer(),
+                puedeDeshacer = hayDeshacer(),
+                puedeRehacer = hayRehacer(),
                 modificado = true,
                 marco = it.marco + 1,
             )
@@ -474,6 +509,7 @@ class DibujoViewModel(app: Application) : AndroidViewModel(app) {
      */
     fun elegirColor(argb: Int) {
         actualizarLapiz { it.copy(color = argb) }
+        aplicarColorVectorSeleccionado(argb)
         registrarReciente(argb)
     }
 
@@ -486,6 +522,7 @@ class DibujoViewModel(app: Application) : AndroidViewModel(app) {
     /** Confirma el color elegido en la rueda HSV y lo guarda en recientes. */
     fun confirmarColorHsv(argb: Int) {
         actualizarLapiz { it.copy(color = argb) }
+        aplicarColorVectorSeleccionado(argb)
         registrarReciente(argb)
     }
 
@@ -530,9 +567,54 @@ class DibujoViewModel(app: Application) : AndroidViewModel(app) {
     fun elegirHerramienta(herramienta: Herramienta) =
         actualizarLapiz { it.copy(herramienta = herramienta) }
 
-    /** Elige la textura del trazo (lisa, grano, rugosa, trama o salpicada). */
-    fun elegirTextura(textura: com.dibujo.core.Textura) =
+    /**
+     * Elige la textura del trazo (lisa, grano, rugosa, trama o salpicada). Si
+     * hay un vector seleccionado, también se la aplica como un paso de
+     * historial (igual que el color).
+     */
+    fun elegirTextura(textura: Textura) {
         actualizarLapiz { it.copy(textura = textura) }
+        val est = _estado.value
+        val id = est.vectorSeleccionado ?: return
+        if (!est.vectorEnEdicion) return
+        val antes = est.vectores
+        if (antes.none { it.id == id && it.textura != textura }) return
+        val despues = antes.map { if (it.id == id) it.copy(textura = textura) else it }
+        registrarPasoVectores(antes, despues)
+        _estado.update {
+            it.copy(
+                vectores = despues,
+                puedeDeshacer = hayDeshacer(),
+                puedeRehacer = hayRehacer(),
+                modificado = true,
+                marco = it.marco + 1,
+            )
+        }
+    }
+
+    /**
+     * Aplica [argb] al vector seleccionado si se está editando. Elegir un color
+     * con un vector seleccionado lo recolorea (además de fijar el color del
+     * lápiz para el próximo trazo). Es un paso de deshacer como cualquier otro.
+     */
+    private fun aplicarColorVectorSeleccionado(argb: Int) {
+        val est = _estado.value
+        val id = est.vectorSeleccionado ?: return
+        if (!est.vectorEnEdicion) return
+        val antes = est.vectores
+        if (antes.none { it.id == id && it.color != argb }) return
+        val despues = antes.map { if (it.id == id) it.copy(color = argb) else it }
+        registrarPasoVectores(antes, despues)
+        _estado.update {
+            it.copy(
+                vectores = despues,
+                puedeDeshacer = hayDeshacer(),
+                puedeRehacer = hayRehacer(),
+                modificado = true,
+                marco = it.marco + 1,
+            )
+        }
+    }
 
     /**
      * Inserta [texto] en el centro de la vista actual con la [tipografia] y el
@@ -706,6 +788,7 @@ class DibujoViewModel(app: Application) : AndroidViewModel(app) {
             puntos = listOf(hx, hy),
             color = _estado.value.lapiz.color,
             grosor = _estado.value.lapiz.grosor.toFloat(),
+            textura = _estado.value.lapiz.textura,
         )
         _estado.update {
             it.copy(
@@ -751,10 +834,15 @@ class DibujoViewModel(app: Application) : AndroidViewModel(app) {
             id = siguienteIdVector++,
             puntos = VectorHoja.simplificar(actual.puntos, tolerancia),
         )
+        val antes = _estado.value.vectores
+        val despues = antes + objeto
+        registrarPasoVectores(antes, despues)
         _estado.update {
             it.copy(
-                vectores = it.vectores + objeto,
+                vectores = despues,
                 trazoVectorialEnCurso = null,
+                puedeDeshacer = hayDeshacer(),
+                puedeRehacer = hayRehacer(),
                 modificado = true,
                 marco = it.marco + 1,
             )
@@ -779,11 +867,17 @@ class DibujoViewModel(app: Application) : AndroidViewModel(app) {
             puntos = listOf(hx, hy),
             color = _estado.value.lapiz.color,
             grosor = _estado.value.lapiz.grosor.toFloat(),
+            textura = _estado.value.lapiz.textura,
         )
+        val antes = _estado.value.vectores
+        val despues = antes + objeto
+        registrarPasoVectores(antes, despues)
         _estado.update {
             it.copy(
-                vectores = it.vectores + objeto,
+                vectores = despues,
                 trazoVectorialEnCurso = null,
+                puedeDeshacer = hayDeshacer(),
+                puedeRehacer = hayRehacer(),
                 modificado = true,
                 marco = it.marco + 1,
             )
@@ -821,14 +915,20 @@ class DibujoViewModel(app: Application) : AndroidViewModel(app) {
 
     /** Borra el vector seleccionado (no toca los píxeles del dibujo). */
     fun quitarVectorSeleccionado() {
-        _estado.update { est ->
-            val id = est.vectorSeleccionado ?: return@update est
-            est.copy(
-                vectores = est.vectores.filterNot { it.id == id },
+        val id = _estado.value.vectorSeleccionado ?: return
+        val antes = _estado.value.vectores
+        val despues = antes.filterNot { it.id == id }
+        if (despues.size == antes.size) return
+        registrarPasoVectores(antes, despues)
+        _estado.update {
+            it.copy(
+                vectores = despues,
                 vectorSeleccionado = null,
                 vectorEnEdicion = false,
+                puedeDeshacer = hayDeshacer(),
+                puedeRehacer = hayRehacer(),
                 modificado = true,
-                marco = est.marco + 1,
+                marco = it.marco + 1,
             )
         }
     }
@@ -893,6 +993,32 @@ class DibujoViewModel(app: Application) : AndroidViewModel(app) {
                 },
                 modificado = true,
                 marco = est.marco + 1,
+            )
+        }
+    }
+
+    /**
+     * Empieza un gesto de mover/escalar un vector: guarda la lista actual para
+     * que todo el gesto (muchos eventos de pan/zoom) sea **un solo** paso de
+     * deshacer. Lo llama la capa de gestos al apoyar el primer dedo.
+     */
+    fun iniciarTransformacionVector() {
+        if (vectorAntesTransformacion != null) return
+        vectorAntesTransformacion = _estado.value.vectores
+    }
+
+    /** Cierra el gesto de mover/escalar y registra el cambio si lo hubo. */
+    fun confirmarTransformacionVector() {
+        val antes = vectorAntesTransformacion ?: return
+        vectorAntesTransformacion = null
+        val despues = _estado.value.vectores
+        if (antes == despues) return
+        registrarPasoVectores(antes, despues)
+        _estado.update {
+            it.copy(
+                puedeDeshacer = hayDeshacer(),
+                puedeRehacer = hayRehacer(),
+                modificado = true,
             )
         }
     }
@@ -982,12 +1108,38 @@ class DibujoViewModel(app: Application) : AndroidViewModel(app) {
 
     fun deshacer() {
         asegurarSinAjuste()
+        confirmarTransformacionVector()
         val m = motor ?: return
-        m.deshacer()
+        if (indicePasos == 0) return
+        when (val paso = pasos[indicePasos - 1]) {
+            PasoHistorial.Pixeles -> m.deshacer()
+            is PasoHistorial.Vectores -> {
+                _estado.update {
+                    it.copy(
+                        vectores = paso.antes,
+                        vectorSeleccionado = null,
+                        vectorEnEdicion = false,
+                        trazoVectorialEnCurso = null,
+                    )
+                }
+            }
+            is PasoHistorial.Ambos -> {
+                m.deshacer()
+                _estado.update {
+                    it.copy(
+                        vectores = paso.antes,
+                        vectorSeleccionado = null,
+                        vectorEnEdicion = false,
+                        trazoVectorialEnCurso = null,
+                    )
+                }
+            }
+        }
+        indicePasos--
         _estado.update {
             it.copy(
-                puedeDeshacer = m.puedeDeshacer(),
-                puedeRehacer = m.puedeRehacer(),
+                puedeDeshacer = hayDeshacer(),
+                puedeRehacer = hayRehacer(),
                 modificado = true,
                 marco = it.marco + 1,
             )
@@ -996,12 +1148,38 @@ class DibujoViewModel(app: Application) : AndroidViewModel(app) {
 
     fun rehacer() {
         asegurarSinAjuste()
+        confirmarTransformacionVector()
         val m = motor ?: return
-        m.rehacer()
+        if (indicePasos >= pasos.size) return
+        when (val paso = pasos[indicePasos]) {
+            PasoHistorial.Pixeles -> m.rehacer()
+            is PasoHistorial.Vectores -> {
+                _estado.update {
+                    it.copy(
+                        vectores = paso.despues,
+                        vectorSeleccionado = null,
+                        vectorEnEdicion = false,
+                        trazoVectorialEnCurso = null,
+                    )
+                }
+            }
+            is PasoHistorial.Ambos -> {
+                m.rehacer()
+                _estado.update {
+                    it.copy(
+                        vectores = paso.despues,
+                        vectorSeleccionado = null,
+                        vectorEnEdicion = false,
+                        trazoVectorialEnCurso = null,
+                    )
+                }
+            }
+        }
+        indicePasos++
         _estado.update {
             it.copy(
-                puedeDeshacer = m.puedeDeshacer(),
-                puedeRehacer = m.puedeRehacer(),
+                puedeDeshacer = hayDeshacer(),
+                puedeRehacer = hayRehacer(),
                 modificado = true,
                 marco = it.marco + 1,
             )
@@ -1011,11 +1189,13 @@ class DibujoViewModel(app: Application) : AndroidViewModel(app) {
     fun limpiar() {
         asegurarSinAjuste()
         val m = motor ?: return
+        val antes = _estado.value.vectores
         m.limpiarHoja()
+        registrarPasoAmbos(antes, emptyList())
         _estado.update {
             it.copy(
-                puedeDeshacer = m.puedeDeshacer(),
-                puedeRehacer = m.puedeRehacer(),
+                puedeDeshacer = hayDeshacer(),
+                puedeRehacer = hayRehacer(),
                 textos = emptyList(),
                 textoSeleccionado = null,
                 textoEnEdicion = false,
@@ -1048,11 +1228,12 @@ class DibujoViewModel(app: Application) : AndroidViewModel(app) {
         _estado.update { it.copy(limpiando = true) }
         viewModelScope.launch {
             val cambio = withContext(Dispatchers.Default) { m.limpiarTrazos() }
+            if (cambio) registrarPasoPixeles()
             _estado.update {
                 it.copy(
                     limpiando = false,
-                    puedeDeshacer = m.puedeDeshacer(),
-                    puedeRehacer = m.puedeRehacer(),
+                    puedeDeshacer = hayDeshacer(),
+                    puedeRehacer = hayRehacer(),
                     modificado = it.modificado || cambio,
                     marco = if (cambio) it.marco + 1 else it.marco,
                 )
@@ -1090,11 +1271,12 @@ class DibujoViewModel(app: Application) : AndroidViewModel(app) {
             } else {
                 withContext(Dispatchers.Default) { m.limpiarTrazos() }
             }
+            if (cambio) registrarPasoPixeles()
             _estado.update {
                 it.copy(
                     limpiando = false,
-                    puedeDeshacer = m.puedeDeshacer(),
-                    puedeRehacer = m.puedeRehacer(),
+                    puedeDeshacer = hayDeshacer(),
+                    puedeRehacer = hayRehacer(),
                     modificado = it.modificado || cambio,
                     marco = if (cambio) it.marco + 1 else it.marco,
                 )
@@ -1128,6 +1310,7 @@ class DibujoViewModel(app: Application) : AndroidViewModel(app) {
     /** Usa un color sugerido del calco y cambia a la herramienta PINTAR. */
     fun usarColorCalco(argb: Int) {
         actualizarLapiz { it.copy(color = argb, herramienta = Herramienta.PINTAR) }
+        aplicarColorVectorSeleccionado(argb)
     }
 
     /** Toma una grilla de muestras del bitmap del calco, sin fondo ni alfa. */
@@ -1173,12 +1356,15 @@ class DibujoViewModel(app: Application) : AndroidViewModel(app) {
         val dAlto = extraAlto.coerceAtLeast(0)
         if (dAncho == 0 && dAlto == 0) return
         m.expandir(0, 0, dAncho, dAlto)
+        // Al cambiar el tamaño el motor limpia su historial (snapshots viejos):
+        // el unificado también arranca de cero.
+        limpiarHistorial()
         _estado.update {
             it.copy(
                 hojaAncho = m.ancho,
                 hojaAlto = m.alto,
-                puedeDeshacer = m.puedeDeshacer(),
-                puedeRehacer = m.puedeRehacer(),
+                puedeDeshacer = false,
+                puedeRehacer = false,
                 modificado = true,
                 // Sólo se muestra la pantalla de carga si el render GPU se va a
                 // recrear (si falló, se sigue por CPU y no hay nada que esperar).
@@ -1213,11 +1399,27 @@ class DibujoViewModel(app: Application) : AndroidViewModel(app) {
             val cambio = withContext(Dispatchers.Default) {
                 m.transformarHoja(voltearHorizontal, voltearVertical, desplazamientoX, desplazamientoY, escala)
             }
+            val antes = _estado.value.vectores
+            val nuevosVectores = if (cambio) {
+                transformarVectores(
+                    antes,
+                    m.ancho,
+                    m.alto,
+                    voltearHorizontal,
+                    voltearVertical,
+                    desplazamientoX,
+                    desplazamientoY,
+                    escala,
+                )
+            } else {
+                antes
+            }
+            if (cambio) registrarPasoAmbos(antes, nuevosVectores)
             _estado.update {
                 it.copy(
                     ajustandoLienzo = false,
-                    puedeDeshacer = m.puedeDeshacer(),
-                    puedeRehacer = m.puedeRehacer(),
+                    puedeDeshacer = hayDeshacer(),
+                    puedeRehacer = hayRehacer(),
                     textos = if (cambio) {
                         transformarTextos(
                             it.textos,
@@ -1232,20 +1434,7 @@ class DibujoViewModel(app: Application) : AndroidViewModel(app) {
                     } else {
                         it.textos
                     },
-                    vectores = if (cambio) {
-                        transformarVectores(
-                            it.vectores,
-                            m.ancho,
-                            m.alto,
-                            voltearHorizontal,
-                            voltearVertical,
-                            desplazamientoX,
-                            desplazamientoY,
-                            escala,
-                        )
-                    } else {
-                        it.vectores
-                    },
+                    vectores = nuevosVectores,
                     modificado = it.modificado || cambio,
                     marco = if (cambio) it.marco + 1 else it.marco,
                 )
@@ -1325,12 +1514,28 @@ class DibujoViewModel(app: Application) : AndroidViewModel(app) {
                 m.transformarHoja(false, false, dx, dy, escala)
             }
             restaurarCamaraAjuste(base)
+            val antes = _estado.value.vectores
+            val nuevosVectores = if (cambio) {
+                transformarVectores(
+                    antes,
+                    m.ancho,
+                    m.alto,
+                    false,
+                    false,
+                    dx,
+                    dy,
+                    escala,
+                )
+            } else {
+                antes
+            }
+            if (cambio) registrarPasoAmbos(antes, nuevosVectores)
             _estado.update {
                 it.copy(
                     ajustandoLienzo = false,
                     ajustandoDibujo = false,
-                    puedeDeshacer = m.puedeDeshacer(),
-                    puedeRehacer = m.puedeRehacer(),
+                    puedeDeshacer = hayDeshacer(),
+                    puedeRehacer = hayRehacer(),
                     textos = if (cambio) {
                         transformarTextos(
                             it.textos,
@@ -1345,20 +1550,7 @@ class DibujoViewModel(app: Application) : AndroidViewModel(app) {
                     } else {
                         it.textos
                     },
-                    vectores = if (cambio) {
-                        transformarVectores(
-                            it.vectores,
-                            m.ancho,
-                            m.alto,
-                            false,
-                            false,
-                            dx,
-                            dy,
-                            escala,
-                        )
-                    } else {
-                        it.vectores
-                    },
+                    vectores = nuevosVectores,
                     modificado = it.modificado || cambio,
                     marco = if (cambio) it.marco + 1 else it.marco,
                 )
@@ -1531,11 +1723,11 @@ class DibujoViewModel(app: Application) : AndroidViewModel(app) {
         }
         val (hx, hy) = aHoja(m, px, py)
         m.iniciarTrazo(hx, hy)
-        m.terminarTrazo()
+        if (m.terminarTrazo()) registrarPasoPixeles()
         _estado.update {
             it.copy(
-                puedeDeshacer = m.puedeDeshacer(),
-                puedeRehacer = m.puedeRehacer(),
+                puedeDeshacer = hayDeshacer(),
+                puedeRehacer = hayRehacer(),
                 modificado = true,
                 marco = it.marco + 1,
             )
@@ -1793,6 +1985,63 @@ class DibujoViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    // --- Historial unificado (píxeles del motor + objetos vectoriales) -------
+
+    private fun hayDeshacer(): Boolean = indicePasos > 0
+    private fun hayRehacer(): Boolean = indicePasos < pasos.size
+
+    private fun limpiarHistorial() {
+        pasos.clear()
+        indicePasos = 0
+    }
+
+    /** Descarta los pasos "rehacibles" al aparecer una acción nueva. */
+    private fun truncarFuturo() {
+        while (pasos.size > indicePasos) pasos.removeAt(pasos.size - 1)
+    }
+
+    /**
+     * Mantiene el historial acotado como el del motor (mismo tope). Al sacar el
+     * paso más viejo se pierde ese deshacer, pero el resto sigue en orden.
+     */
+    private fun limitarHistorial() {
+        while (pasos.size > MAX_PASOS) {
+            pasos.removeAt(0)
+            if (indicePasos > 0) indicePasos--
+        }
+    }
+
+    /** Registra una acción que el motor ya guardó en su historial de píxeles. */
+    private fun registrarPasoPixeles() {
+        truncarFuturo()
+        pasos.add(PasoHistorial.Pixeles)
+        indicePasos++
+        limitarHistorial()
+    }
+
+    /** Registra un cambio de los objetos vectoriales vivos. */
+    private fun registrarPasoVectores(
+        antes: List<TrazoVectorial>,
+        despues: List<TrazoVectorial>,
+    ) {
+        if (antes == despues) return
+        truncarFuturo()
+        pasos.add(PasoHistorial.Vectores(antes, despues))
+        indicePasos++
+        limitarHistorial()
+    }
+
+    /** Acción que guardó píxeles en el motor y además cambió los vectores. */
+    private fun registrarPasoAmbos(
+        antes: List<TrazoVectorial>,
+        despues: List<TrazoVectorial>,
+    ) {
+        truncarFuturo()
+        pasos.add(PasoHistorial.Ambos(antes, despues))
+        indicePasos++
+        limitarHistorial()
+    }
+
     override fun onCleared() {
         motor?.close()
         motor = null
@@ -1853,6 +2102,12 @@ class DibujoViewModel(app: Application) : AndroidViewModel(app) {
     private companion object {
         /** Coincide con el límite de Lienzo. */
         const val MAX_LADO = 4096
+
+        /**
+         * Tope del historial unificado. Coincide con el del motor (30) para
+         * que los pasos de píxeles y los de vectores no se desalineen.
+         */
+        const val MAX_PASOS = 30
         const val PREFERENCIAS = "dibujo_config"
         const val CLAVE_BACKEND = "backend_render"
 

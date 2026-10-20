@@ -21,6 +21,12 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.calculateCentroid
+import androidx.compose.foundation.gestures.calculateCentroidSize
+import androidx.compose.foundation.gestures.calculatePan
+import androidx.compose.foundation.gestures.calculateZoom
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.detectTransformGestures
@@ -125,6 +131,7 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.FilterQuality
+import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.StrokeJoin
@@ -134,6 +141,7 @@ import androidx.compose.ui.graphics.drawscope.clipRect
 import androidx.compose.ui.graphics.drawscope.withTransform
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.input.pointer.positionChanged
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
@@ -157,6 +165,7 @@ import com.dibujo.core.Herramienta
 import com.dibujo.core.Lapiz
 import com.dibujo.core.Modo
 import com.dibujo.core.Punta
+import com.dibujo.core.Textura
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -1162,10 +1171,54 @@ private fun CapaGestos(
                 // Cuentagotas: un toque toma el color del píxel de la hoja.
                 detectTapGestures { punto -> vm.recogerColor(punto.x, punto.y) }
             } else if (editandoVector) {
-                // Un dedo mueve el vector; dos dedos lo escalan (anclado al foco).
-                detectTransformGestures(panZoomLock = true) { foco, pan, zoom, _ ->
-                    if (zoom != 1f) vm.escalarVector(zoom, foco.x, foco.y)
-                    if (pan != Offset.Zero) vm.moverVector(pan.x, pan.y)
+                // Un dedo mueve el vector; dos dedos lo escalan (anclado al
+                // foco). Se replica `detectTransformGestures` con un paréntesis
+                // explícito de inicio/fin: así todo el gesto (muchos eventos de
+                // pan/zoom) queda como UN solo paso de deshacer.
+                awaitEachGesture {
+                    var zoom = 1f
+                    var pan = Offset.Zero
+                    var superoUmbral = false
+                    val umbral = viewConfiguration.touchSlop
+                    awaitFirstDown(requireUnconsumed = false)
+                    vm.iniciarTransformacionVector()
+                    try {
+                        var seguir = true
+                        while (seguir) {
+                            val evento = awaitPointerEvent()
+                            val cancelado = evento.changes.any { it.isConsumed }
+                            if (cancelado) break
+                            val cambioZoom = evento.calculateZoom()
+                            val cambioPan = evento.calculatePan()
+                            if (!superoUmbral) {
+                                zoom *= cambioZoom
+                                pan += cambioPan
+                                val tamanoFoco = evento.calculateCentroidSize(useCurrent = false)
+                                val movimientoZoom =
+                                    kotlin.math.abs(1f - zoom) * tamanoFoco
+                                if (movimientoZoom > umbral ||
+                                    pan.getDistance() > umbral
+                                ) {
+                                    superoUmbral = true
+                                }
+                            }
+                            if (superoUmbral) {
+                                val foco = evento.calculateCentroid()
+                                if (cambioZoom != 1f) {
+                                    vm.escalarVector(cambioZoom, foco.x, foco.y)
+                                }
+                                if (cambioPan != Offset.Zero) {
+                                    vm.moverVector(cambioPan.x, cambioPan.y)
+                                }
+                                evento.changes.forEach {
+                                    if (it.positionChanged()) it.consume()
+                                }
+                            }
+                            seguir = evento.changes.any { it.pressed }
+                        }
+                    } finally {
+                        vm.confirmarTransformacionVector()
+                    }
                 }
             } else if (editandoTexto) {
                 // Un dedo mueve el texto; dos dedos lo escalan (anclado al foco).
@@ -1455,6 +1508,13 @@ private fun CapaTextos(
     }
 }
 
+/** Bitmap texturizado de un vector, cacheado mientras su contenido no cambie. */
+private class RasterVivo(
+    val trazo: TrazoVectorial,
+    val imagen: ImageBitmap,
+    val origen: Offset,
+)
+
 /**
  * Trazos vectoriales vivos de la hoja: capa Compose sobre el raster y debajo
  * de los textos. Sigue la cámara y se recorta a la hoja, igual que el horneado
@@ -1471,6 +1531,41 @@ private fun CapaVectores(
     val enCurso = estado.trazoVectorialEnCurso
     if (vectores.isEmpty() && enCurso == null) return
     val descripcion = stringResource(R.string.cd_vectores)
+    // Los vectores con textura se rasterizan una vez (con el mismo patrón que
+    // el horneado) y se cachean por id. El que se está editando se dibuja como
+    // trazo liso: así moverlo/escalarlo sigue siendo fluido y el grano aparece
+    // al soltarlo, igual que la vista previa del lápiz de píxeles.
+    val cache = remember { HashMap<Long, RasterVivo>() }
+    val texturizados = vectores.map { vector ->
+        val enEdicion = estado.vectorEnEdicion && estado.vectorSeleccionado == vector.id
+        if (enEdicion || vector.textura == Textura.LISA) {
+            cache.remove(vector.id)
+            null
+        } else {
+            val previo = cache[vector.id]
+            if (previo != null && previo.trazo == vector) {
+                previo
+            } else {
+                val raster = VectorHoja.rasterizar(vector)
+                if (raster == null) {
+                    cache.remove(vector.id)
+                    null
+                } else {
+                    val nuevo = RasterVivo(
+                        trazo = vector,
+                        imagen = raster.bitmap.asImageBitmap(),
+                        origen = Offset(raster.x.toFloat(), raster.y.toFloat()),
+                    )
+                    cache[vector.id] = nuevo
+                    nuevo
+                }
+            }
+        }
+    }
+    if (cache.isNotEmpty()) {
+        val vigentes = vectores.mapTo(HashSet(vectores.size)) { it.id }
+        cache.keys.retainAll(vigentes)
+    }
     Canvas(modifier.semantics { contentDescription = descripcion }) {
         val cam = estado.camara
         withTransform({
@@ -1482,13 +1577,19 @@ private fun CapaVectores(
             scale(scaleX = cam.zoom, scaleY = cam.zoom, pivot = Offset.Zero)
         }) {
             clipRect(0f, 0f, estado.hojaAncho.toFloat(), estado.hojaAlto.toFloat()) {
-                vectores.forEach { vector ->
-                    dibujarTrazoVectorial(
-                        trazo = vector,
-                        seleccionado = estado.vectorSeleccionado == vector.id,
-                        zoom = cam.zoom,
-                    )
+                vectores.forEachIndexed { indice, vector ->
+                    val raster = texturizados.getOrNull(indice)
+                    if (raster != null) {
+                        drawImage(image = raster.imagen, topLeft = raster.origen)
+                    } else {
+                        dibujarTrazoVectorial(
+                            trazo = vector,
+                            seleccionado = estado.vectorSeleccionado == vector.id,
+                            zoom = cam.zoom,
+                        )
+                    }
                 }
+                // El trazo en curso se dibuja liso (la textura se ve al soltar).
                 if (enCurso != null) {
                     dibujarTrazoVectorial(
                         trazo = enCurso,

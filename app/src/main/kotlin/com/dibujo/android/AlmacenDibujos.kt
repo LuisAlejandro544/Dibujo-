@@ -271,6 +271,7 @@ object AlmacenDibujos {
                     .put("id", vector.id)
                     .put("color", vector.color)
                     .put("grosor", vector.grosor.toDouble())
+                    .put("textura", vector.textura.name)
                     .put("puntos", puntos),
             )
         }
@@ -370,12 +371,18 @@ object AlmacenDibujos {
                         puntos.add(coordenada)
                     }
                     if (!valido) continue
+                    val textura = runCatching {
+                        com.dibujo.core.Textura.valueOf(
+                            v.optString("textura", com.dibujo.core.Textura.LISA.name),
+                        )
+                    }.getOrDefault(com.dibujo.core.Textura.LISA)
                     add(
                         TrazoVectorial(
                             id = v.optLong("id", i.toLong() + 1),
                             puntos = puntos,
                             color = v.optInt("color", 0xFF000000.toInt()),
                             grosor = grosor,
+                            textura = textura,
                         ),
                     )
                 }

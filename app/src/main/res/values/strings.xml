@@ -42,6 +42,7 @@
     <string name="herramienta_borrador">Borrador</string>
     <string name="herramienta_pintar">Pintar</string>
     <string name="herramienta_doble">Doble</string>
+    <string name="herramienta_pluma">Pluma</string>
 
     <!-- Accesibilidad (contentDescription) -->
     <string name="cd_deshacer">Deshacer</string>
@@ -199,6 +200,12 @@
     <string name="textura_trama">Trama</string>
     <string name="textura_salpicada">Salpicada</string>
     <string name="textura_seleccionada">seleccionada</string>
+
+    <!-- Pluma vectorial -->
+    <string name="cd_vectores">Trazos vectoriales del dibujo</string>
+    <string name="vector_ajuste_hint">Vector: un dedo lo mueve, dos dedos lo escalan.</string>
+    <string name="vector_quitar">Quitar</string>
+    <string name="vector_listo">Listo</string>
 
     <!-- Insertar y editar texto -->
     <string name="cd_texto">Insertar texto</string>

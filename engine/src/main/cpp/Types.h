@@ -13,6 +13,7 @@ enum class Tool : int {
     BORRADOR = 3,     // borra hacia el color de la hoja
     PINTAR = 4,       // balde: rellena la región tocada
     DOBLE = 5,        // doble lápiz: dos trazos paralelos a la vez
+    PLUMA = 6,        // pluma vectorial (la dibuja la app; el motor no la usa)
 };
 
 // Texturas del trazo. El valor entero viaja por JNI y el orden debe coincidir

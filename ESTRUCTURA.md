@@ -55,7 +55,8 @@ se implementa en C++ **y** Kotlin, y pasa `MotorTest` (paridad píxel a píxel).
 - `Lienzo.kt` — rasterizado puro (disco/línea/bloque con antialiasing,
   `pintarMezcla`, relleno balde, cierre de huecos, `transformar`).
 - `Lapiz.kt` — `Herramienta` (LAPIZ, PORTAMINA, CARBONCILLO, BORRADOR, PINTAR,
-  DOBLE) y `grosorEfectivo()`.
+  DOBLE, PLUMA) y `grosorEfectivo()`. PLUMA es sólo para `:app`: el motor la
+  acepta para conservar el ordinal de JNI, pero no la rasteriza.
 - `Color.kt` — `Color` y `Colores` (paleta fija). `Modo.kt` — EDICION/MOVER.
 - `Historial.kt` — undo/redo por snapshots (límite **30**).
 - `Cuantizador.kt` — k-medias determinista para la **paleta del calco**.
@@ -103,15 +104,20 @@ Si tocás rasterizado, cámara, historial o herramientas: editá **los dos lados
 - `MainActivity`/navegación: `Navegacion.kt`, `PantallaMenu.kt`,
   `PantallaCargar.kt`, `PantallaOpciones.kt`.
 - `PantallaDibujo.kt` — pantalla del lienzo: barras superior/inferior, gestos
-  (`CapaGestos`/`CapaCalco`), `DialogoTransformar` (voltear/escalar + ajuste
-  libre por gestos), `DialogoColor`, etc.
+  (`CapaGestos`/`CapaCalco`), capas vivas (`CapaTextos`/`CapaVectores`),
+  `DialogoTransformar` (voltear/escalar + ajuste libre por gestos),
+  `DialogoColor`, etc.
 - `RuedaHsv.kt` — rueda de color HSV (`DialogoColor` + `RuedaHsv` privada).
 - `DibujoViewModel.kt` — **dueño del motor** y del estado (MVI estricto con
   `_estado.update { copy() }`): lápiz, paleta, recientes, cuentagotas,
   asistencia, transformar, historial, cámara, calco.
 - `SuperficieGpu.kt` — `SurfaceView` + hilo de render del backend gráfico.
 - `CapacidadesGraficas.kt` — detección de OpenGL ES / Vulkan.
-- `AlmacenDibujos.kt` — persistencia (PNG en `filesDir/dibujos`, sin permisos).
+- `AlmacenDibujos.kt` — persistencia (PNG en `filesDir/dibujos`, sin permisos;
+  textos y vectores vivos en `<id>.textos.json` / `<id>.vectores.json`).
+- `TextoHoja.kt` — texto vivo (tipografías, escala, horneado).
+- `VectorHoja.kt` — pluma vectorial: `TrazoVectorial`, suavizado Catmull-Rom,
+  simplificación RDP, dibujo Compose y horneado ARGB.
 - `ImagenCalco.kt` — calco (Photo Picker, recorte al contenido).
 - `ExportadorGaleria.kt` — guardar/compartir PNG (`FileProvider`).
 - `LimpiadorTrazosIa.kt` — modelo IA local (Buril) vía LiteRT.

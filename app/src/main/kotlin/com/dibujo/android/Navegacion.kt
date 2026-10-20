@@ -66,7 +66,12 @@ fun AppDibujo(vm: DibujoViewModel = viewModel()) {
             if (contenido == null) {
                 Toast.makeText(contexto, textoCargarError, Toast.LENGTH_SHORT).show()
             } else {
-                vm.abrirDibujo(contenido.ancho, contenido.alto, contenido.pixeles)
+                vm.abrirDibujo(
+                    contenido.ancho,
+                    contenido.alto,
+                    contenido.pixeles,
+                    contenido.textos,
+                )
                 destino = Destino.DIBUJO
             }
         }
@@ -92,7 +97,12 @@ fun AppDibujo(vm: DibujoViewModel = viewModel()) {
                         }
                         cargando = false
                         if (contenido != null) {
-                            vm.abrirDibujo(contenido.ancho, contenido.alto, contenido.pixeles)
+                            vm.abrirDibujo(
+                                contenido.ancho,
+                                contenido.alto,
+                                contenido.pixeles,
+                                contenido.textos,
+                            )
                         }
                         destino = Destino.DIBUJO
                     }

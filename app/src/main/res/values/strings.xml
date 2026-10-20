@@ -198,15 +198,23 @@
     <string name="textura_rugosa">Rugosa</string>
     <string name="textura_trama">Trama</string>
     <string name="textura_salpicada">Salpicada</string>
+    <string name="textura_seleccionada">seleccionada</string>
 
-    <!-- Insertar texto -->
+    <!-- Insertar y editar texto -->
     <string name="cd_texto">Insertar texto</string>
+    <string name="cd_texto_capa">Textos del dibujo</string>
     <string name="texto_titulo">Insertar texto</string>
-    <string name="texto_desc">El texto se coloca en el centro de la vista actual. Podés moverlo después con «Transformar dibujo»; cada inserción se deshace.</string>
+    <string name="texto_editar_titulo">Editar texto</string>
+    <string name="texto_desc">El texto se coloca en el centro de la vista actual. Después podés moverlo y escalarlo con los gestos, y tocarlo para volver a editarlo en cualquier momento.</string>
     <string name="texto_campo">Texto</string>
     <string name="texto_tipografia">Tipografía</string>
     <string name="texto_tamano">Tamaño: %1$d px</string>
     <string name="texto_insertar">Insertar</string>
+    <string name="texto_aplicar">Aplicar</string>
+    <string name="texto_ajuste_hint">Ajustando texto: un dedo lo mueve, dos dedos lo escalan.</string>
+    <string name="texto_editar">Editar</string>
+    <string name="texto_quitar">Quitar</string>
+    <string name="texto_listo">Listo</string>
     <string name="fuente_sans">Sans</string>
     <string name="fuente_serif">Serif</string>
     <string name="fuente_mono">Mono</string>

@@ -16,6 +16,7 @@ import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -128,6 +129,7 @@ import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.drawscope.clipRect
 import androidx.compose.ui.graphics.drawscope.withTransform
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.pointerInput
@@ -272,9 +274,10 @@ fun PantallaDibujo(
     // Acciones secundarias de la hoja (calco, IA, expandir): viven en una hoja
     // inferior para no amontonar la barra de dibujo.
     var mostrarMasHerramientas by remember { mutableStateOf(false) }
-    // Textura del trazo y herramienta de texto (tipografías del sistema).
+    // Textura del trazo (más herramientas) y texto (insertar/editar).
     var mostrarTextura by remember { mutableStateOf(false) }
     var mostrarTexto by remember { mutableStateOf(false) }
+    var mostrarEditarTexto by remember { mutableStateOf(false) }
 
     // Volver al menú principal (botón atrás del sistema o de la barra).
     BackHandler(onBack = alVolver)
@@ -336,7 +339,7 @@ fun PantallaDibujo(
             val bytes = withContext(Dispatchers.Default) {
                 runCatching {
                     val pixeles = IntArray(ancho * alto)
-                    if (!vm.copiarHoja(pixeles)) return@runCatching null
+                    if (!vm.copiarHojaConTextos(pixeles)) return@runCatching null
                     val (bw, bh, bp) = if (recortar) {
                         recortarAlContenido(pixeles, ancho, alto, Colores.BLANCO)
                             ?: Triple(ancho, alto, pixeles)
@@ -431,11 +434,12 @@ fun PantallaDibujo(
         val ancho = estadoState.value.hojaAncho
         val alto = estadoState.value.hojaAlto
         if (ancho <= 0 || alto <= 0) return
+        val textos = estadoState.value.textos
         alcance.launch {
             val pixeles = IntArray(ancho * alto)
             val leida = withContext(Dispatchers.Default) { vm.copiarHoja(pixeles) }
             val guardado = leida && withContext(Dispatchers.IO) {
-                AlmacenDibujos.guardarCopia(contexto, ancho, alto, pixeles) != null
+                AlmacenDibujos.guardarCopia(contexto, ancho, alto, pixeles, textos) != null
             }
             if (guardado) {
                 vm.marcarGuardado()
@@ -493,7 +497,9 @@ fun PantallaDibujo(
                 },
                 alAbrirColor = { mostrarColor = true },
                 alAbrirMasHerramientas = { mostrarMasHerramientas = true },
-                alAbrirTextura = { mostrarTextura = true },
+                alEditarTexto = { mostrarEditarTexto = true },
+                alQuitarTexto = vm::quitarTextoSeleccionado,
+                alTerminarTexto = vm::terminarEdicionTexto,
             )
         },
         // Transparente: deja ver la superficie GPU que va en una capa detrás
@@ -658,6 +664,10 @@ fun PantallaDibujo(
                 mostrarMasHerramientas = false
                 mostrarTexto = true
             },
+            alAbrirTextura = {
+                mostrarMasHerramientas = false
+                mostrarTextura = true
+            },
         )
     }
 
@@ -671,12 +681,32 @@ fun PantallaDibujo(
 
     if (mostrarTexto) {
         DialogoTexto(
-            alInsertar = { texto, tipografia, tamano ->
+            alConfirmar = { texto, tipografia, tamano ->
                 vm.insertarTexto(texto, tipografia, tamano)
                 mostrarTexto = false
             },
             alCerrar = { mostrarTexto = false },
         )
+    }
+
+    if (mostrarEditarTexto) {
+        val seleccionado = estado.textos.firstOrNull { it.id == estado.textoSeleccionado }
+        if (seleccionado != null) {
+            DialogoTexto(
+                alConfirmar = { texto, tipografia, tamano ->
+                    vm.actualizarTextoSeleccionado(texto, tipografia, tamano)
+                    mostrarEditarTexto = false
+                },
+                alCerrar = { mostrarEditarTexto = false },
+                textoInicial = seleccionado.texto,
+                tipografiaInicial = seleccionado.tipografia,
+                tamanoInicial = seleccionado.tamano.coerceIn(16f, 256f),
+                tituloRes = R.string.texto_editar_titulo,
+                confirmarRes = R.string.texto_aplicar,
+            )
+        } else {
+            LaunchedEffect(Unit) { mostrarEditarTexto = false }
+        }
     }
 }
 
@@ -999,7 +1029,11 @@ private fun AreaDibujo(
         // Imagen de calco: capa translúcida sobre la hoja (GPU o CPU) y debajo
         // del trazo en curso, para poder calcar viendo el dibujo al mismo tiempo.
         CapaCalco(estadoState, Modifier.fillMaxSize())
+        // Gestos y vista previa del trazo en curso.
         CapaGestos(estadoState, vm, Modifier.fillMaxSize())
+        // Textos vivos: encima de la hoja, del calco y del trazo en curso, igual
+        // que en la imagen final. No interceptan toques (sin pointerInput).
+        CapaTextos(estadoState, Modifier.fillMaxSize())
 
         // Mientras el motor/renderizador se crea (al abrir la app o al cambiar
         // de backend) tapamos la superficie para no mostrar el cuadro en negro.
@@ -1095,11 +1129,19 @@ private fun CapaGestos(
     val editandoCalco = estadoState.value.calcoEnEdicion &&
         estadoState.value.calcoUri != null &&
         estadoState.value.calcoVisible
+    val editandoTexto = estadoState.value.textoEnEdicion &&
+        estadoState.value.textoSeleccionado != null
     Canvas(
-        modifier.pointerInput(modo, editandoCalco, cuentagotas, ajustandoDibujo) {
+        modifier.pointerInput(modo, editandoCalco, editandoTexto, cuentagotas, ajustandoDibujo) {
             if (cuentagotas) {
                 // Cuentagotas: un toque toma el color del píxel de la hoja.
                 detectTapGestures { punto -> vm.recogerColor(punto.x, punto.y) }
+            } else if (editandoTexto) {
+                // Un dedo mueve el texto; dos dedos lo escalan (anclado al foco).
+                detectTransformGestures(panZoomLock = true) { foco, pan, zoom, _ ->
+                    if (zoom != 1f) vm.escalarTexto(zoom, foco.x, foco.y)
+                    if (pan != Offset.Zero) vm.moverTexto(pan.x, pan.y)
+                }
             } else if (editandoCalco) {
                 // Un dedo mueve el calco; dos dedos lo escalan (anclado al foco).
                 detectTransformGestures(panZoomLock = true) { foco, pan, zoom, _ ->
@@ -1142,10 +1184,20 @@ private fun CapaGestos(
                 )
             }
         }
-            // Toque sin arrastre: punto con el lápiz o relleno con PINTAR.
-            .pointerInput(modo, editandoCalco, cuentagotas, ajustandoDibujo) {
-                if (!cuentagotas && !editandoCalco && !ajustandoDibujo && modo == Modo.EDICION) {
-                    detectTapGestures { punto -> vm.tocarHoja(punto.x, punto.y) }
+            // Toque sin arrastre: elegir un texto (en cualquier modo), salir de
+            // su edición, o punto/relleno con el lápiz en EDICION.
+            .pointerInput(modo, editandoTexto, editandoCalco, cuentagotas, ajustandoDibujo) {
+                if (!cuentagotas && !editandoCalco && !ajustandoDibujo) {
+                    detectTapGestures { punto ->
+                        val id = vm.textoEnPunto(punto.x, punto.y)
+                        if (id != null) {
+                            vm.seleccionarTexto(id)
+                        } else if (editandoTexto) {
+                            vm.terminarEdicionTexto()
+                        } else if (modo == Modo.EDICION) {
+                            vm.tocarHoja(punto.x, punto.y)
+                        }
+                    }
                 }
             },
     ) {
@@ -1268,6 +1320,83 @@ private fun CapaCalco(
 }
 
 /**
+ * Textos vivos de la hoja: capa Compose sobre el lienzo (y el calco) que
+ * dibuja cada [TextoEnHoja] con su tipografía y color. Sigue la cámara igual
+ * que la hoja, así las palabras quedan pegadas al dibujo. No se hornea en los
+ * píxeles: el texto seleccionado muestra un marco y se puede mover/escalar con
+ * los gestos o reabrir para editarlo.
+ */
+@Composable
+private fun CapaTextos(
+    estadoState: State<DibujoEstado>,
+    modifier: Modifier = Modifier,
+) {
+    val estado = estadoState.value
+    val textos = estado.textos
+    if (textos.isEmpty()) return
+    // El bitmap de cada texto se recompone sólo si cambia su contenido o su
+    // tipografía/tamaño/color; mover o escalar no lo regenera.
+    val firmas = textos.map {
+        listOf(it.id, it.texto, it.tipografia, it.tamano, it.color, it.voltearH, it.voltearV)
+    }
+    val imagenes = remember(firmas) {
+        textos.map { texto ->
+            TextoHoja.crearBitmap(
+                texto.texto,
+                texto.tipografia,
+                texto.tamano,
+                texto.color,
+                texto.voltearH,
+                texto.voltearV,
+            )?.asImageBitmap()
+        }
+    }
+    val descripcion = stringResource(R.string.cd_texto_capa)
+    Canvas(modifier.semantics { contentDescription = descripcion }) {
+        val cam = estado.camara
+        withTransform({
+            translate(-cam.panX, -cam.panY)
+            rotate(
+                degrees = Math.toDegrees(cam.rotacion.toDouble()).toFloat(),
+                pivot = Offset.Zero,
+            )
+            scale(scaleX = cam.zoom, scaleY = cam.zoom, pivot = Offset.Zero)
+        }) {
+            // El texto se recorta a la hoja, igual que el rasterizado final.
+            clipRect(0f, 0f, estado.hojaAncho.toFloat(), estado.hojaAlto.toFloat()) {
+                textos.forEachIndexed { indice, texto ->
+                    val imagen = imagenes.getOrNull(indice) ?: return@forEachIndexed
+                    if (imagen.width <= 0 || imagen.height <= 0) return@forEachIndexed
+                    val ancho = imagen.width * texto.escala
+                    val alto = imagen.height * texto.escala
+                    val x = texto.centroX - ancho / 2f
+                    val y = texto.centroY - alto / 2f
+                    drawImage(
+                        image = imagen,
+                        srcOffset = IntOffset.Zero,
+                        srcSize = IntSize(imagen.width, imagen.height),
+                        dstOffset = IntOffset(x.roundToInt(), y.roundToInt()),
+                        dstSize = IntSize(
+                            ancho.roundToInt().coerceAtLeast(1),
+                            alto.roundToInt().coerceAtLeast(1),
+                        ),
+                        filterQuality = FilterQuality.High,
+                    )
+                    if (estado.textoSeleccionado == texto.id) {
+                        drawRect(
+                            color = Color(0xFF1E88E5),
+                            topLeft = Offset(x, y),
+                            size = Size(ancho, alto),
+                            style = Stroke(width = 2f / cam.zoom),
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+/**
  * Barra inferior agrupada en tres franjas: herramientas, color y ajustes del
  * pincel. Las acciones secundarias (calco, IA, expandir) se movieron a una hoja
  * inferior para dejar respirar la barra: el lienzo manda y cada grupo tiene un
@@ -1287,7 +1416,9 @@ private fun BarraHerramientas(
     alAbrirIa: () -> Unit,
     alAbrirColor: () -> Unit,
     alAbrirMasHerramientas: () -> Unit,
-    alAbrirTextura: () -> Unit,
+    alEditarTexto: () -> Unit,
+    alQuitarTexto: () -> Unit,
+    alTerminarTexto: () -> Unit,
 ) {
     Surface(
         modifier = Modifier.absorberToque(),
@@ -1362,6 +1493,38 @@ private fun BarraHerramientas(
                     }
                 }
             }
+            // Aviso mientras se ajusta un texto: mover/escalar, editarlo o
+            // quitarlo. El texto sigue vivo hasta exportar.
+            if (estado.textoEnEdicion && estado.textoSeleccionado != null) {
+                Row(
+                    Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 12.dp, vertical = 2.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Icon(
+                        Icons.Rounded.OpenWith,
+                        contentDescription = null,
+                        modifier = Modifier.size(18.dp),
+                        tint = MaterialTheme.colorScheme.primary,
+                    )
+                    Spacer(Modifier.width(8.dp))
+                    Text(
+                        stringResource(R.string.texto_ajuste_hint),
+                        style = MaterialTheme.typography.bodySmall,
+                        modifier = Modifier.weight(1f),
+                    )
+                    TextButton(onClick = alEditarTexto) {
+                        Text(stringResource(R.string.texto_editar))
+                    }
+                    TextButton(onClick = alQuitarTexto) {
+                        Text(stringResource(R.string.texto_quitar))
+                    }
+                    TextButton(onClick = alTerminarTexto) {
+                        Text(stringResource(R.string.texto_listo))
+                    }
+                }
+            }
             // Franja 1: herramientas, en una tarjeta que agrupa la selección.
             Surface(
                 modifier = Modifier
@@ -1381,8 +1544,8 @@ private fun BarraHerramientas(
             }
             // Franja 2: color actual, paleta y cuentagotas.
             FilaColor(estado, vm, alAbrirColor)
-            // Franja 3: modo de gesto, grosor, textura y más herramientas.
-            FilaPincel(estado, vm, alAbrirMasHerramientas, alAbrirTextura)
+            // Franja 3: modo de gesto, grosor y más herramientas.
+            FilaPincel(estado, vm, alAbrirMasHerramientas)
         }
     }
 }
@@ -1461,7 +1624,6 @@ private fun FilaPincel(
     estado: DibujoEstado,
     vm: DibujoViewModel,
     alAbrirMasHerramientas: () -> Unit,
-    alAbrirTextura: () -> Unit,
 ) {
     Row(
         Modifier
@@ -1508,13 +1670,6 @@ private fun FilaPincel(
             }
         }
         IconoToggle(
-            icono = Icons.Rounded.Texture,
-            descripcion = stringResource(R.string.cd_textura),
-            seleccionado = estado.lapiz.textura != com.dibujo.core.Textura.LISA,
-            alPulsar = alAbrirTextura,
-            tamano = 36.dp,
-        )
-        IconoToggle(
             icono = Icons.Rounded.MoreHoriz,
             descripcion = stringResource(R.string.cd_mas_herramientas),
             seleccionado = false,
@@ -1523,7 +1678,11 @@ private fun FilaPincel(
     }
 }
 
-/** Texturas del trazo: lisa, grano, rugosa, trama o salpicada. */
+/**
+ * Texturas del trazo: cada opción muestra un **trazo de muestra** compuesto
+ * con el mismo patrón determinista que usa el motor, para que se vea de
+ * antemano cómo queda el grano (en vez de sólo un nombre).
+ */
 @Composable
 private fun DialogoTextura(
     actual: com.dibujo.core.Textura,
@@ -1541,26 +1700,22 @@ private fun DialogoTextura(
         onDismissRequest = alCerrar,
         title = { Text(stringResource(R.string.textura_titulo)) },
         text = {
-            Column {
+            Column(Modifier.verticalScroll(rememberScrollState())) {
                 Text(
                     stringResource(R.string.textura_desc),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
                 Spacer(Modifier.height(12.dp))
-                Row(
-                    Modifier
-                        .fillMaxWidth()
-                        .horizontalScroll(rememberScrollState()),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                ) {
-                    opciones.forEach { (textura, etiquetaRes) ->
-                        FilterChip(
-                            selected = actual == textura,
-                            onClick = { alElegir(textura) },
-                            label = { Text(stringResource(etiquetaRes)) },
-                        )
-                    }
+                opciones.forEach { (textura, etiquetaRes) ->
+                    OpcionTextura(
+                        textura = textura,
+                        etiqueta = stringResource(etiquetaRes),
+                        seleccionada = actual == textura,
+                        etiquetaSeleccion = stringResource(R.string.textura_seleccionada),
+                        alElegir = { alElegir(textura) },
+                    )
+                    Spacer(Modifier.height(6.dp))
                 }
             }
         },
@@ -1572,15 +1727,123 @@ private fun DialogoTextura(
     )
 }
 
-/** Inserta texto en la vista actual con una de las cinco tipografías del sistema. */
+/** Fila de una textura: trazo de muestra + nombre, resaltada si está activa. */
+@Composable
+private fun OpcionTextura(
+    textura: com.dibujo.core.Textura,
+    etiqueta: String,
+    seleccionada: Boolean,
+    etiquetaSeleccion: String,
+    alElegir: () -> Unit,
+) {
+    Surface(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(MaterialTheme.shapes.medium)
+            .clickable(onClick = alElegir)
+            .semantics {
+                contentDescription = if (seleccionada) "$etiqueta, $etiquetaSeleccion" else etiqueta
+            },
+        shape = MaterialTheme.shapes.medium,
+        color = if (seleccionada) {
+            MaterialTheme.colorScheme.primaryContainer
+        } else {
+            MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
+        },
+        border = if (seleccionada) {
+            BorderStroke(2.dp, MaterialTheme.colorScheme.primary)
+        } else {
+            null
+        },
+    ) {
+        Row(
+            Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            VistaPreviaTextura(
+                textura = textura,
+                modifier = Modifier
+                    .width(132.dp)
+                    .height(34.dp),
+            )
+            Spacer(Modifier.width(12.dp))
+            Text(etiqueta, style = MaterialTheme.typography.labelLarge)
+            if (seleccionada) {
+                Spacer(Modifier.weight(1f))
+                Icon(
+                    Icons.Rounded.Check,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.primary,
+                )
+            }
+        }
+    }
+}
+
+/**
+ * Trazo de muestra de una textura: una línea horizontal suave (con una leve
+ * ondulación) rasterizada con [com.dibujo.core.Textura.aplicar], la misma
+ * modulación de cobertura que usa el motor. Así grano, rugosa, trama y
+ * salpicada se distinguen de un vistazo.
+ */
+@Composable
+private fun VistaPreviaTextura(
+    textura: com.dibujo.core.Textura,
+    modifier: Modifier = Modifier,
+) {
+    val imagen = remember(textura) {
+        val ancho = 264
+        val alto = 68
+        val pixeles = IntArray(ancho * alto)
+        val fondo = 0xFFFFFFFF.toInt()
+        val tinta = 0xFF1D1B20.toInt()
+        val radio = 14.0
+        for (y in 0 until alto) {
+            for (x in 0 until ancho) {
+                val ondulacion = sin((x / ancho.toFloat()) * Math.PI * 2.0) * 5.0
+                val distancia = kotlin.math.abs((y + 0.5) - (alto / 2.0 + ondulacion))
+                val cobertura = (0.5 + radio - distancia).coerceIn(0.0, 1.0)
+                val alfa = textura.aplicar((cobertura * 255.0).roundToInt(), x, y)
+                pixeles[y * ancho + x] = mezclarArgb(tinta, fondo, alfa)
+            }
+        }
+        Bitmap.createBitmap(pixeles, ancho, alto, Bitmap.Config.ARGB_8888).asImageBitmap()
+    }
+    Canvas(modifier) {
+        drawImage(
+            image = imagen,
+            dstSize = IntSize(
+                size.width.roundToInt().coerceAtLeast(1),
+                size.height.roundToInt().coerceAtLeast(1),
+            ),
+            filterQuality = FilterQuality.None,
+        )
+    }
+}
+
+/** Mezcla [origen] sobre [destino] con cobertura [alfa] (0..255). */
+private fun mezclarArgb(origen: Int, destino: Int, alfa: Int): Int {
+    val inv = 255 - alfa
+    val r = (((origen ushr 16) and 0xFF) * alfa + ((destino ushr 16) and 0xFF) * inv + 127) / 255
+    val g = (((origen ushr 8) and 0xFF) * alfa + ((destino ushr 8) and 0xFF) * inv + 127) / 255
+    val b = ((origen and 0xFF) * alfa + (destino and 0xFF) * inv + 127) / 255
+    return (0xFF shl 24) or (r shl 16) or (g shl 8) or b
+}
+
+/** Inserta o edita un texto con una de las cinco tipografías del sistema. */
 @Composable
 private fun DialogoTexto(
-    alInsertar: (String, Tipografia, Float) -> Unit,
+    alConfirmar: (String, Tipografia, Float) -> Unit,
     alCerrar: () -> Unit,
+    textoInicial: String = "",
+    tipografiaInicial: Tipografia = Tipografia.SANS,
+    tamanoInicial: Float = 64f,
+    tituloRes: Int = R.string.texto_titulo,
+    confirmarRes: Int = R.string.texto_insertar,
 ) {
-    var texto by remember { mutableStateOf("") }
-    var tipografia by remember { mutableStateOf(Tipografia.SANS) }
-    var tamano by remember { mutableStateOf(64f) }
+    var texto by remember(textoInicial) { mutableStateOf(textoInicial) }
+    var tipografia by remember(tipografiaInicial) { mutableStateOf(tipografiaInicial) }
+    var tamano by remember(tamanoInicial) { mutableStateOf(tamanoInicial) }
     val fuentes = listOf(
         Tipografia.SANS to R.string.fuente_sans,
         Tipografia.SERIF to R.string.fuente_serif,
@@ -1590,7 +1853,7 @@ private fun DialogoTexto(
     )
     AlertDialog(
         onDismissRequest = alCerrar,
-        title = { Text(stringResource(R.string.texto_titulo)) },
+        title = { Text(stringResource(tituloRes)) },
         text = {
             Column(Modifier.verticalScroll(rememberScrollState())) {
                 Text(
@@ -1640,10 +1903,10 @@ private fun DialogoTexto(
         },
         confirmButton = {
             TextButton(
-                onClick = { alInsertar(texto, tipografia, tamano) },
+                onClick = { alConfirmar(texto, tipografia, tamano) },
                 enabled = texto.isNotBlank(),
             ) {
-                Text(stringResource(R.string.texto_insertar))
+                Text(stringResource(confirmarRes))
             }
         },
         dismissButton = {
@@ -1655,8 +1918,8 @@ private fun DialogoTexto(
 }
 
 /**
- * Hoja inferior con las acciones secundarias sobre la hoja: elegir/ver/ajustar
- * la imagen de calco, las herramientas con IA local y expandir el lienzo.
+ * Hoja inferior con las acciones secundarias sobre la hoja: calco, texto,
+ * textura del trazo, herramientas con IA local y expandir el lienzo.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -1669,6 +1932,7 @@ private fun HojaHerramientasHoja(
     alAbrirIa: () -> Unit,
     alAbrirExpandir: () -> Unit,
     alAbrirTexto: () -> Unit,
+    alAbrirTextura: () -> Unit,
 ) {
     ModalBottomSheet(onDismissRequest = alCerrar) {
         Column(
@@ -1710,6 +1974,20 @@ private fun HojaHerramientasHoja(
                 alPulsar = alAbrirTexto,
             )
             AccionHoja(
+                icono = Icons.Rounded.Texture,
+                etiqueta = stringResource(R.string.cd_textura),
+                alPulsar = alAbrirTextura,
+                vistaPrevia = {
+                    VistaPreviaTextura(
+                        textura = estado.lapiz.textura,
+                        modifier = Modifier
+                            .width(64.dp)
+                            .height(22.dp)
+                            .clip(RoundedCornerShape(4.dp)),
+                    )
+                },
+            )
+            AccionHoja(
                 icono = Icons.Rounded.AutoFixHigh,
                 etiqueta = stringResource(R.string.cd_ia_local),
                 alPulsar = alAbrirIa,
@@ -1730,6 +2008,7 @@ private fun AccionHoja(
     etiqueta: String,
     alPulsar: () -> Unit,
     habilitado: Boolean = true,
+    vistaPrevia: (@Composable () -> Unit)? = null,
 ) {
     Row(
         Modifier
@@ -1740,15 +2019,19 @@ private fun AccionHoja(
             .semantics { contentDescription = etiqueta },
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Icon(
-            imageVector = icono,
-            contentDescription = null,
-            tint = if (habilitado) {
-                MaterialTheme.colorScheme.primary
-            } else {
-                MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.38f)
-            },
-        )
+        if (vistaPrevia != null) {
+            vistaPrevia()
+        } else {
+            Icon(
+                imageVector = icono,
+                contentDescription = null,
+                tint = if (habilitado) {
+                    MaterialTheme.colorScheme.primary
+                } else {
+                    MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.38f)
+                },
+            )
+        }
         Spacer(Modifier.width(16.dp))
         Text(
             etiqueta,

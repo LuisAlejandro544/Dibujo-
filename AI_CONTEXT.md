@@ -153,6 +153,16 @@ el C++ y el Kotlin deben cambiarse juntos (`MotorTest.rellenoParidadConBarreras`
 verifica la paridad con barreras aleatorias). Como la región se marca antes de
 pintar, el aborto por borde tampoco modifica la hoja.
 
+Con **trazos vectoriales vivos** (`TrazoVectorial`) el motor nativo no puede
+verlos: viven en `:app` y no en la hoja. Por eso `DibujoViewModel.tocarHoja` y
+`soltarTrazo` desvían el balde a `calcularRellenoConVectores`: copia la hoja,
+`VectorHoja.hornearBarrera` dibuja los vectores en una máscara `ALPHA_8` (1
+byte por píxel) y pinta su cobertura con un color centinela, `Lienzo.rellenar`
+corre con esa barrera y al final los píxeles centinela se restauran desde la
+copia. El relleno entra así en el historial de píxeles y los vectores siguen
+vivos; el cálculo va en `Dispatchers.Default`. Si la máscara no se puede
+reservar, se rellena como antes (sin barrera vectorial) para no fallar.
+
 ### Limpiar trazos (visión por computadora local)
 `MotorDibujo.limpiarTrazos()` adelgaza **toda** la tinta de la hoja a un
 esqueleto de 1 px con el método de Zhang-Suen y la vuelve a dibujar con ancho
@@ -594,6 +604,8 @@ Particularidades:
     (ver "Historial"). Un gesto de mover/escalar es un solo paso: la capa de
     gestos llama `iniciarTransformacionVector` al apoyar y
     `confirmarTransformacionVector` al terminar.
+  - **Balde**: el relleno con PINTAR toma los vectores como contorno (se
+    hornean como barrera centinela en una copia, ver "Herramienta PINTAR").
   - **Persistencia/horneado**: se hornea sólo al exportar/miniatura o al rehacer
     la hoja (recortar/redimensionar), viaja en `<id>.vectores.json` (con
     `textura`, por defecto LISA) y `transformarDibujo`/terminar el ajuste libre

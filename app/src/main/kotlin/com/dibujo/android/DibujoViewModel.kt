@@ -12,6 +12,7 @@ import com.dibujo.core.Colores
 import com.dibujo.core.Cuantizador
 import com.dibujo.core.Herramienta
 import com.dibujo.core.Lapiz
+import com.dibujo.core.Lienzo
 import com.dibujo.core.Modo
 import com.dibujo.core.MotorDibujo
 import com.dibujo.core.Textura
@@ -165,6 +166,8 @@ class DibujoViewModel(app: Application) : AndroidViewModel(app) {
     private var vistaAncho = 0
     private var vistaAlto = 0
     private var guardandoActual = false
+    /** Evita dos rellenos vectoriales superpuestos mientras se calcula uno. */
+    private var rellenandoConVectores = false
     /** Cámara al entrar al ajuste libre: es la referencia a hornear en "Listo". */
     private var camaraBaseAjuste: Camara? = null
     private var siguienteIdTexto = 1L
@@ -432,6 +435,19 @@ class DibujoViewModel(app: Application) : AndroidViewModel(app) {
 
     fun soltarTrazo() {
         val m = motor ?: return
+        val est = _estado.value
+        val trazo = est.trazoEnCurso
+        // Balde con vectores: el motor pintaría sin ver los objetos vivos, así
+        // que el relleno se calcula aparte con los vectores como contorno.
+        if (est.lapiz.herramienta == Herramienta.PINTAR &&
+            est.vectores.isNotEmpty() &&
+            trazo != null && trazo.size >= 2
+        ) {
+            m.cancelarTrazo()
+            _estado.update { it.copy(trazoEnCurso = null, marco = it.marco + 1) }
+            rellenarConVectores(m, trazo[0], trazo[1])
+            return
+        }
         if (m.terminarTrazo()) registrarPasoPixeles()
         _estado.update {
             it.copy(
@@ -1722,6 +1738,15 @@ class DibujoViewModel(app: Application) : AndroidViewModel(app) {
             return
         }
         val (hx, hy) = aHoja(m, px, py)
+        // Balde con vectores: el relleno debe ver los trazos vivos como
+        // contorno. Se calcula en una copia y recién después se reemplaza la
+        // hoja (queda en el historial para deshacer).
+        if (_estado.value.lapiz.herramienta == Herramienta.PINTAR &&
+            _estado.value.vectores.isNotEmpty()
+        ) {
+            rellenarConVectores(m, hx, hy)
+            return
+        }
         m.iniciarTrazo(hx, hy)
         if (m.terminarTrazo()) registrarPasoPixeles()
         _estado.update {
@@ -1732,6 +1757,95 @@ class DibujoViewModel(app: Application) : AndroidViewModel(app) {
                 marco = it.marco + 1,
             )
         }
+    }
+
+    /**
+     * Balde que respeta los trazos vectoriales vivos. Copia la hoja, hornea los
+     * vectores como barrera (con un color centinela que después se restaura),
+     * rellena con el mismo algoritmo que el motor y reemplaza la hoja. Los
+     * vectores no se tocan: siguen vivos y editables. El cálculo va fuera del
+     * hilo principal y el reemplazo se hace en el hilo del ViewModel, igual que
+     * el limpiador de trazos.
+     */
+    private fun rellenarConVectores(m: MotorDibujo, hx: Float, hy: Float) {
+        if (rellenandoConVectores) return
+        val ancho = m.ancho
+        val alto = m.alto
+        val x = Math.round(hx)
+        val y = Math.round(hy)
+        if (x !in 0 until ancho || y !in 0 until alto) return
+        val estado = _estado.value
+        val color = estado.lapiz.color
+        val vectores = estado.vectores
+        rellenandoConVectores = true
+        viewModelScope.launch {
+            try {
+                val resultado = withContext(Dispatchers.Default) {
+                    calcularRellenoConVectores(m, ancho, alto, x, y, color, vectores)
+                }
+                // Si mientras se calculaba se abrió otro dibujo o cambió la
+                // lista de vectores, el resultado ya no corresponde.
+                val vigente = motor === m && _estado.value.vectores == vectores
+                if (resultado != null && vigente && m.reemplazarHoja(resultado)) {
+                    registrarPasoPixeles()
+                    _estado.update {
+                        it.copy(
+                            puedeDeshacer = hayDeshacer(),
+                            puedeRehacer = hayRehacer(),
+                            modificado = true,
+                            marco = it.marco + 1,
+                        )
+                    }
+                }
+            } finally {
+                rellenandoConVectores = false
+            }
+        }
+    }
+
+    /**
+     * Devuelve la hoja rellenada con los vectores como contorno, o `null` si no
+     * hay nada que pintar. Los píxeles de barrera se restauran desde [original]
+     * al final, así el resultado sólo contiene el relleno de píxeles.
+     */
+    private fun calcularRellenoConVectores(
+        m: MotorDibujo,
+        ancho: Int,
+        alto: Int,
+        x: Int,
+        y: Int,
+        color: Int,
+        vectores: List<TrazoVectorial>,
+    ): IntArray? {
+        val original = IntArray(ancho * alto)
+        if (!m.copiarHoja(original)) return null
+        val origen = original[y * ancho + x]
+        if (origen == color) return null
+        val centinela = colorCentinela(origen, color)
+        val lienzo = Lienzo(ancho, alto)
+        lienzo.reemplazar(original)
+        // Sin máscara (hoja gigante sin memoria) se rellena igual que antes,
+        // sin ver los vectores, en vez de fallar.
+        VectorHoja.hornearBarrera(lienzo.pixeles, ancho, alto, vectores, centinela)
+        // Tocar justo encima de un trazo no debe convertirse en un relleno.
+        if (lienzo.pixeles[y * ancho + x] == centinela) return null
+        if (!lienzo.rellenar(x, y, color)) return null
+        val relleno = lienzo.pixeles
+        for (i in relleno.indices) {
+            if (relleno[i] == centinela) relleno[i] = original[i]
+        }
+        return relleno
+    }
+
+    /**
+     * Color de barrera distinto del origen y del color de relleno: el balde
+     * sólo compara igualdad, así el centinela garantiza que el vector bloquee
+     * aunque tenga el mismo color que la región.
+     */
+    private fun colorCentinela(origen: Int, color: Int): Int {
+        var centinela = origen xor 0x00000001
+        if (centinela == color) centinela = origen xor 0x00000002
+        return centinela
     }
 
     /** Fija (o quita con null) la imagen de calco y la muestra al elegirla. */

@@ -13,6 +13,7 @@ import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
 import com.dibujo.core.Textura
+import java.nio.ByteBuffer
 import kotlin.math.ceil
 import kotlin.math.floor
 import kotlin.math.max
@@ -161,6 +162,75 @@ object VectorHoja {
             aplicarTextura(bitmap, trazo.textura, trazo.color, escala, x0, y0)
         }
         return TrazoRasterizado(x0, y0, bitmap)
+    }
+
+    /**
+     * Hornea los [vectores] como **barrera** en el buffer ARGB de la hoja para
+     * que el balde los vea como contorno. Los píxeles cubiertos se pintan con
+     * [colorBarrera] (un color distinto del fondo de la región y del color del
+     * relleno) y después el llamador los restaura desde la hoja original: los
+     * vectores siguen vivos y editables.
+     *
+     * La cobertura se calcula en una máscara `ALPHA_8` del tamaño de la hoja:
+     * así no hace falta un bitmap ARGB completo (1 byte por píxel) y el
+     * antialiasing del trazo también cuenta como barrera. Devuelve `false` si
+     * no hay vectores o si no se pudo crear la máscara (se sigue con el relleno
+     * normal, sin barrera).
+     */
+    fun hornearBarrera(
+        pixeles: IntArray,
+        ancho: Int,
+        alto: Int,
+        vectores: List<TrazoVectorial>,
+        colorBarrera: Int,
+    ): Boolean {
+        if (vectores.isEmpty() || ancho <= 0 || alto <= 0) return false
+        if (pixeles.size < ancho * alto) return false
+        val mascara = try {
+            Bitmap.createBitmap(ancho, alto, Bitmap.Config.ALPHA_8)
+        } catch (_: OutOfMemoryError) {
+            return false
+        } catch (_: IllegalArgumentException) {
+            return false
+        }
+        val canvas = Canvas(mascara)
+        val pincel = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = 0xFFFFFFFF.toInt()
+            strokeCap = Paint.Cap.ROUND
+            strokeJoin = Paint.Join.ROUND
+        }
+        vectores.forEach { trazo ->
+            val grosor = trazo.grosor.coerceAtLeast(0.5f)
+            if (trazo.cantidadPuntos == 1) {
+                pincel.style = Paint.Style.FILL
+                canvas.drawCircle(
+                    trazo.puntos[0],
+                    trazo.puntos[1],
+                    grosor / 2f,
+                    pincel,
+                )
+            } else {
+                val ruta = caminoAndroid(trazo.puntos, 1f) ?: return@forEach
+                pincel.style = Paint.Style.STROKE
+                pincel.strokeWidth = grosor
+                canvas.drawPath(ruta, pincel)
+            }
+        }
+        val filaBytes = mascara.rowBytes
+        val bytes = ByteBuffer.allocate(filaBytes * alto)
+        mascara.copyPixelsToBuffer(bytes)
+        mascara.recycle()
+        val datos = bytes.array()
+        for (y in 0 until alto) {
+            val filaMascara = y * filaBytes
+            val base = y * ancho
+            for (x in 0 until ancho) {
+                if (datos[filaMascara + x].toInt() != 0) {
+                    pixeles[base + x] = colorBarrera
+                }
+            }
+        }
+        return true
     }
 
     /**

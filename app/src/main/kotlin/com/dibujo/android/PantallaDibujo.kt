@@ -58,6 +58,7 @@ import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.Colorize
 import androidx.compose.material.icons.rounded.Delete
 import androidx.compose.material.icons.rounded.Draw
+import androidx.compose.material.icons.rounded.Edit
 import androidx.compose.material.icons.rounded.FormatColorFill
 import androidx.compose.material.icons.rounded.Gesture
 import androidx.compose.material.icons.rounded.Layers
@@ -339,7 +340,7 @@ fun PantallaDibujo(
             val bytes = withContext(Dispatchers.Default) {
                 runCatching {
                     val pixeles = IntArray(ancho * alto)
-                    if (!vm.copiarHojaConTextos(pixeles)) return@runCatching null
+                    if (!vm.copiarHojaConObjetosVivos(pixeles)) return@runCatching null
                     val (bw, bh, bp) = if (recortar) {
                         recortarAlContenido(pixeles, ancho, alto, Colores.BLANCO)
                             ?: Triple(ancho, alto, pixeles)
@@ -435,11 +436,19 @@ fun PantallaDibujo(
         val alto = estadoState.value.hojaAlto
         if (ancho <= 0 || alto <= 0) return
         val textos = estadoState.value.textos
+        val vectores = estadoState.value.vectores
         alcance.launch {
             val pixeles = IntArray(ancho * alto)
             val leida = withContext(Dispatchers.Default) { vm.copiarHoja(pixeles) }
             val guardado = leida && withContext(Dispatchers.IO) {
-                AlmacenDibujos.guardarCopia(contexto, ancho, alto, pixeles, textos) != null
+                AlmacenDibujos.guardarCopia(
+                    contexto,
+                    ancho,
+                    alto,
+                    pixeles,
+                    textos,
+                    vectores,
+                ) != null
             }
             if (guardado) {
                 vm.marcarGuardado()
@@ -500,6 +509,8 @@ fun PantallaDibujo(
                 alEditarTexto = { mostrarEditarTexto = true },
                 alQuitarTexto = vm::quitarTextoSeleccionado,
                 alTerminarTexto = vm::terminarEdicionTexto,
+                alQuitarVector = vm::quitarVectorSeleccionado,
+                alTerminarVector = vm::terminarEdicionVector,
             )
         },
         // Transparente: deja ver la superficie GPU que va en una capa detrás
@@ -1031,6 +1042,9 @@ private fun AreaDibujo(
         CapaCalco(estadoState, Modifier.fillMaxSize())
         // Gestos y vista previa del trazo en curso.
         CapaGestos(estadoState, vm, Modifier.fillMaxSize())
+        // Vectores vivos: encima de la hoja y del calco, debajo de los textos
+        // (el mismo orden que al hornear). No interceptan toques.
+        CapaVectores(estadoState, Modifier.fillMaxSize())
         // Textos vivos: encima de la hoja, del calco y del trazo en curso, igual
         // que en la imagen final. No interceptan toques (sin pointerInput).
         CapaTextos(estadoState, Modifier.fillMaxSize())
@@ -1131,11 +1145,28 @@ private fun CapaGestos(
         estadoState.value.calcoVisible
     val editandoTexto = estadoState.value.textoEnEdicion &&
         estadoState.value.textoSeleccionado != null
+    val editandoVector = estadoState.value.vectorEnEdicion &&
+        estadoState.value.vectorSeleccionado != null
+    val pluma = estadoState.value.lapiz.herramienta == Herramienta.PLUMA
     Canvas(
-        modifier.pointerInput(modo, editandoCalco, editandoTexto, cuentagotas, ajustandoDibujo) {
+        modifier.pointerInput(
+            modo,
+            editandoCalco,
+            editandoTexto,
+            editandoVector,
+            pluma,
+            cuentagotas,
+            ajustandoDibujo,
+        ) {
             if (cuentagotas) {
                 // Cuentagotas: un toque toma el color del píxel de la hoja.
                 detectTapGestures { punto -> vm.recogerColor(punto.x, punto.y) }
+            } else if (editandoVector) {
+                // Un dedo mueve el vector; dos dedos lo escalan (anclado al foco).
+                detectTransformGestures(panZoomLock = true) { foco, pan, zoom, _ ->
+                    if (zoom != 1f) vm.escalarVector(zoom, foco.x, foco.y)
+                    if (pan != Offset.Zero) vm.moverVector(pan.x, pan.y)
+                }
             } else if (editandoTexto) {
                 // Un dedo mueve el texto; dos dedos lo escalan (anclado al foco).
                 detectTransformGestures(panZoomLock = true) { foco, pan, zoom, _ ->
@@ -1172,6 +1203,18 @@ private fun CapaGestos(
                     }
                     if (pan != Offset.Zero) vm.panear(pan.x, pan.y)
                 }
+            } else if (pluma) {
+                // Pluma vectorial: el arrastre crea un objeto vivo en vez de
+                // píxeles; el motor no se toca.
+                detectDragGestures(
+                    onDragStart = { vm.iniciarVector(it.x, it.y) },
+                    onDragEnd = { vm.soltarVector() },
+                    onDragCancel = { vm.cancelarVector() },
+                    onDrag = { cambio, _ ->
+                        vm.continuarVector(cambio.position.x, cambio.position.y)
+                        cambio.consume()
+                    },
+                )
             } else {
                 detectDragGestures(
                     onDragStart = { vm.iniciarTrazo(it.x, it.y) },
@@ -1184,16 +1227,32 @@ private fun CapaGestos(
                 )
             }
         }
-            // Toque sin arrastre: elegir un texto (en cualquier modo), salir de
-            // su edición, o punto/relleno con el lápiz en EDICION.
-            .pointerInput(modo, editandoTexto, editandoCalco, cuentagotas, ajustandoDibujo) {
+            // Toque sin arrastre: elegir un texto o vector, salir de su edición,
+            // o punto/relleno con el lápiz en EDICION.
+            .pointerInput(
+                modo,
+                editandoTexto,
+                editandoVector,
+                editandoCalco,
+                cuentagotas,
+                ajustandoDibujo,
+            ) {
                 if (!cuentagotas && !editandoCalco && !ajustandoDibujo) {
                     detectTapGestures { punto ->
-                        val id = vm.textoEnPunto(punto.x, punto.y)
-                        if (id != null) {
-                            vm.seleccionarTexto(id)
-                        } else if (editandoTexto) {
+                        val texto = vm.textoEnPunto(punto.x, punto.y)
+                        if (texto != null) {
+                            vm.seleccionarTexto(texto)
+                            return@detectTapGestures
+                        }
+                        val vector = vm.vectorEnPunto(punto.x, punto.y)
+                        if (vector != null) {
+                            vm.seleccionarVector(vector)
+                            return@detectTapGestures
+                        }
+                        if (editandoTexto) {
                             vm.terminarEdicionTexto()
+                        } else if (editandoVector) {
+                            vm.terminarEdicionVector()
                         } else if (modo == Modo.EDICION) {
                             vm.tocarHoja(punto.x, punto.y)
                         }
@@ -1397,6 +1456,52 @@ private fun CapaTextos(
 }
 
 /**
+ * Trazos vectoriales vivos de la hoja: capa Compose sobre el raster y debajo
+ * de los textos. Sigue la cámara y se recorta a la hoja, igual que el horneado
+ * final. El trazo en curso se dibuja al instante y el seleccionado muestra su
+ * caja.
+ */
+@Composable
+private fun CapaVectores(
+    estadoState: State<DibujoEstado>,
+    modifier: Modifier = Modifier,
+) {
+    val estado = estadoState.value
+    val vectores = estado.vectores
+    val enCurso = estado.trazoVectorialEnCurso
+    if (vectores.isEmpty() && enCurso == null) return
+    val descripcion = stringResource(R.string.cd_vectores)
+    Canvas(modifier.semantics { contentDescription = descripcion }) {
+        val cam = estado.camara
+        withTransform({
+            translate(-cam.panX, -cam.panY)
+            rotate(
+                degrees = Math.toDegrees(cam.rotacion.toDouble()).toFloat(),
+                pivot = Offset.Zero,
+            )
+            scale(scaleX = cam.zoom, scaleY = cam.zoom, pivot = Offset.Zero)
+        }) {
+            clipRect(0f, 0f, estado.hojaAncho.toFloat(), estado.hojaAlto.toFloat()) {
+                vectores.forEach { vector ->
+                    dibujarTrazoVectorial(
+                        trazo = vector,
+                        seleccionado = estado.vectorSeleccionado == vector.id,
+                        zoom = cam.zoom,
+                    )
+                }
+                if (enCurso != null) {
+                    dibujarTrazoVectorial(
+                        trazo = enCurso,
+                        seleccionado = false,
+                        zoom = cam.zoom,
+                    )
+                }
+            }
+        }
+    }
+}
+
+/**
  * Barra inferior agrupada en tres franjas: herramientas, color y ajustes del
  * pincel. Las acciones secundarias (calco, IA, expandir) se movieron a una hoja
  * inferior para dejar respirar la barra: el lienzo manda y cada grupo tiene un
@@ -1419,6 +1524,8 @@ private fun BarraHerramientas(
     alEditarTexto: () -> Unit,
     alQuitarTexto: () -> Unit,
     alTerminarTexto: () -> Unit,
+    alQuitarVector: () -> Unit,
+    alTerminarVector: () -> Unit,
 ) {
     Surface(
         modifier = Modifier.absorberToque(),
@@ -1522,6 +1629,35 @@ private fun BarraHerramientas(
                     }
                     TextButton(onClick = alTerminarTexto) {
                         Text(stringResource(R.string.texto_listo))
+                    }
+                }
+            }
+            // Aviso mientras se ajusta un vector: mover/escalar, quitarlo o
+            // soltarlo. El vector sigue vivo hasta exportar.
+            if (estado.vectorEnEdicion && estado.vectorSeleccionado != null) {
+                Row(
+                    Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 12.dp, vertical = 2.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Icon(
+                        Icons.Rounded.Edit,
+                        contentDescription = null,
+                        modifier = Modifier.size(18.dp),
+                        tint = MaterialTheme.colorScheme.primary,
+                    )
+                    Spacer(Modifier.width(8.dp))
+                    Text(
+                        stringResource(R.string.vector_ajuste_hint),
+                        style = MaterialTheme.typography.bodySmall,
+                        modifier = Modifier.weight(1f),
+                    )
+                    TextButton(onClick = alQuitarVector) {
+                        Text(stringResource(R.string.vector_quitar))
+                    }
+                    TextButton(onClick = alTerminarVector) {
+                        Text(stringResource(R.string.vector_listo))
                     }
                 }
             }
@@ -2607,6 +2743,7 @@ private fun Herramientas(
         Triple(Herramienta.BORRADOR, R.string.herramienta_borrador, IconoBorrador),
         Triple(Herramienta.PINTAR, R.string.herramienta_pintar, Icons.Rounded.FormatColorFill),
         Triple(Herramienta.DOBLE, R.string.herramienta_doble, IconoTrazoDoble),
+        Triple(Herramienta.PLUMA, R.string.herramienta_pluma, Icons.Rounded.Edit),
     )
     Row(
         Modifier.fillMaxWidth(),

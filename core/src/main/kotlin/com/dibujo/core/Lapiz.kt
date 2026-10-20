@@ -6,7 +6,7 @@ package com.dibujo.core
  * El ordinal viaja por JNI hasta el enum `Tool` del C++ (mismo orden): al
  * agregar una herramienta nueva hay que añadirla al final en los dos lados.
  */
-enum class Herramienta { LAPIZ, PORTAMINA, CARBONCILLO, BORRADOR, PINTAR, DOBLE }
+enum class Herramienta { LAPIZ, PORTAMINA, CARBONCILLO, BORRADOR, PINTAR, DOBLE, PLUMA }
 
 /** Punta del lápiz. */
 enum class Punta { REDONDA, CUADRADA }

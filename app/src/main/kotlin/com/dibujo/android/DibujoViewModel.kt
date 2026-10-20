@@ -100,6 +100,17 @@ data class DibujoEstado(
     /** Texto seleccionado (id) y si los gestos lo mueven/escalan. */
     val textoSeleccionado: Long? = null,
     val textoEnEdicion: Boolean = false,
+    /**
+     * Trazos de la pluma vectorial (vivos, no horneados). Se pueden mover,
+     * escalar y borrar como objetos y se hornean recién al exportar o al
+     * rehacer la hoja.
+     */
+    val vectores: List<TrazoVectorial> = emptyList(),
+    /** Vector seleccionado (id) y si los gestos lo mueven/escalan. */
+    val vectorSeleccionado: Long? = null,
+    val vectorEnEdicion: Boolean = false,
+    /** Trazo vectorial que se está dibujando ahora mismo (vista previa). */
+    val trazoVectorialEnCurso: TrazoVectorial? = null,
     /** Últimos colores elegidos (paleta, cuentagotas o rueda HSV), más nuevos primero. */
     val coloresRecientes: List<Int> = emptyList(),
     /** El cuentagotas está activo: el próximo toque de la hoja toma su color. */
@@ -131,6 +142,7 @@ class DibujoViewModel(app: Application) : AndroidViewModel(app) {
     /** Cámara al entrar al ajuste libre: es la referencia a hornear en "Listo". */
     private var camaraBaseAjuste: Camara? = null
     private var siguienteIdTexto = 1L
+    private var siguienteIdVector = 1L
     private val seleccionInicial = leerBackend()
     private val _estado = MutableStateFlow(
         DibujoEstado(
@@ -184,6 +196,7 @@ class DibujoViewModel(app: Application) : AndroidViewModel(app) {
                 gpuDisponible = hayGpu,
                 gpuCargando = hayGpu && !it.gpuFallo,
                 trazoEnCurso = null,
+                trazoVectorialEnCurso = null,
                 puedeDeshacer = false,
                 puedeRehacer = false,
                 modificado = modificado,
@@ -208,6 +221,7 @@ class DibujoViewModel(app: Application) : AndroidViewModel(app) {
         alto: Int,
         pixeles: IntArray,
         textos: List<TextoEnHoja> = emptyList(),
+        vectores: List<TrazoVectorial> = emptyList(),
     ) {
         if (ancho <= 0 || alto <= 0 || pixeles.size < ancho * alto) return
         motor?.close()
@@ -217,11 +231,16 @@ class DibujoViewModel(app: Application) : AndroidViewModel(app) {
         nuevo.reemplazarHoja(pixeles)
         motor = nuevo
         siguienteIdTexto = (textos.maxOfOrNull { it.id } ?: 0L) + 1L
+        siguienteIdVector = (vectores.maxOfOrNull { it.id } ?: 0L) + 1L
         _estado.update {
             it.copy(
                 textos = textos,
                 textoSeleccionado = null,
                 textoEnEdicion = false,
+                vectores = vectores,
+                vectorSeleccionado = null,
+                vectorEnEdicion = false,
+                trazoVectorialEnCurso = null,
             )
         }
         publicarContenido(nuevo, modificado = true)
@@ -243,13 +262,14 @@ class DibujoViewModel(app: Application) : AndroidViewModel(app) {
         val pixeles = IntArray(ancho * alto)
         if (!m.copiarHoja(pixeles)) return
         val textos = estado.textos
+        val vectores = estado.vectores
         guardandoActual = true
         // Se marca como guardado ya: si el usuario dibuja mientras se escribe,
         // esas marcas lo vuelven a poner en "modificado" y no se pierden.
         _estado.update { it.copy(modificado = false) }
         viewModelScope.launch {
             val guardado = withContext(Dispatchers.IO) {
-                AlmacenDibujos.guardarActual(aplicacion, ancho, alto, pixeles, textos)
+                AlmacenDibujos.guardarActual(aplicacion, ancho, alto, pixeles, textos, vectores)
             }
             guardandoActual = false
             if (!guardado) _estado.update { it.copy(modificado = true) }
@@ -284,6 +304,10 @@ class DibujoViewModel(app: Application) : AndroidViewModel(app) {
                 textos = emptyList(),
                 textoSeleccionado = null,
                 textoEnEdicion = false,
+                vectores = emptyList(),
+                vectorSeleccionado = null,
+                vectorEnEdicion = false,
+                trazoVectorialEnCurso = null,
                 marco = it.marco + 1,
             )
         }
@@ -543,6 +567,8 @@ class DibujoViewModel(app: Application) : AndroidViewModel(app) {
                 textoEnEdicion = true,
                 calcoEnEdicion = false,
                 ajustandoDibujo = false,
+                vectorSeleccionado = null,
+                vectorEnEdicion = false,
                 modificado = true,
                 marco = it.marco + 1,
             )
@@ -574,6 +600,8 @@ class DibujoViewModel(app: Application) : AndroidViewModel(app) {
                 textoSeleccionado = id,
                 textoEnEdicion = true,
                 calcoEnEdicion = false,
+                vectorSeleccionado = null,
+                vectorEnEdicion = false,
                 marco = it.marco + 1,
             )
         }
@@ -663,6 +691,238 @@ class DibujoViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     /**
+     * Empieza un trazo de la pluma vectorial en ([px], [py]) de pantalla. El
+     * trazo se ve al instante como objeto vivo; al soltar se simplifica y queda
+     * editable (mover/escalar/borrar).
+     */
+    fun iniciarVector(px: Float, py: Float) {
+        val m = motor ?: return
+        if (_estado.value.modo != Modo.EDICION) return
+        asegurarSinAjuste()
+        m.cancelarTrazo()
+        val (hx, hy) = aHoja(m, px, py)
+        val objeto = TrazoVectorial(
+            id = 0L,
+            puntos = listOf(hx, hy),
+            color = _estado.value.lapiz.color,
+            grosor = _estado.value.lapiz.grosor.toFloat(),
+        )
+        _estado.update {
+            it.copy(
+                trazoVectorialEnCurso = objeto,
+                trazoEnCurso = null,
+                textoEnEdicion = false,
+                textoSeleccionado = null,
+                vectorEnEdicion = false,
+                vectorSeleccionado = null,
+                calcoEnEdicion = false,
+                marco = it.marco + 1,
+            )
+        }
+    }
+
+    /** Agrega un vértice al trazo vectorial en curso si el dedo se movió. */
+    fun continuarVector(px: Float, py: Float) {
+        val m = motor ?: return
+        val actual = _estado.value.trazoVectorialEnCurso ?: return
+        val (hx, hy) = aHoja(m, px, py)
+        val ultimo = actual.puntos.size - 2
+        val dx = hx - actual.puntos[ultimo]
+        val dy = hy - actual.puntos[ultimo + 1]
+        val minimo = VECTOR_DISTANCIA_MIN / m.camara().zoom.coerceAtLeast(0.01f)
+        if (dx * dx + dy * dy < minimo * minimo) return
+        _estado.update {
+            it.copy(
+                trazoVectorialEnCurso = actual.copy(puntos = actual.puntos + hx + hy),
+                marco = it.marco + 1,
+            )
+        }
+    }
+
+    /**
+     * Termina el trazo vectorial: simplifica los puntos con la tolerancia
+     * equivalente a pantalla y lo agrega a los objetos vivos de la hoja.
+     */
+    fun soltarVector() {
+        val actual = _estado.value.trazoVectorialEnCurso ?: return
+        val m = motor ?: return
+        val tolerancia = VECTOR_TOLERANCIA / m.camara().zoom.coerceAtLeast(0.01f)
+        val objeto = actual.copy(
+            id = siguienteIdVector++,
+            puntos = VectorHoja.simplificar(actual.puntos, tolerancia),
+        )
+        _estado.update {
+            it.copy(
+                vectores = it.vectores + objeto,
+                trazoVectorialEnCurso = null,
+                modificado = true,
+                marco = it.marco + 1,
+            )
+        }
+    }
+
+    /** Descarta el trazo vectorial en curso sin agregarlo a la hoja. */
+    fun cancelarVector() {
+        if (_estado.value.trazoVectorialEnCurso == null) return
+        _estado.update { it.copy(trazoVectorialEnCurso = null, marco = it.marco + 1) }
+    }
+
+    /** Un toque con la pluma crea un punto (un trazo de un solo vértice). */
+    fun insertarPuntoVector(px: Float, py: Float) {
+        val m = motor ?: return
+        if (_estado.value.modo != Modo.EDICION) return
+        asegurarSinAjuste()
+        m.cancelarTrazo()
+        val (hx, hy) = aHoja(m, px, py)
+        val objeto = TrazoVectorial(
+            id = siguienteIdVector++,
+            puntos = listOf(hx, hy),
+            color = _estado.value.lapiz.color,
+            grosor = _estado.value.lapiz.grosor.toFloat(),
+        )
+        _estado.update {
+            it.copy(
+                vectores = it.vectores + objeto,
+                trazoVectorialEnCurso = null,
+                modificado = true,
+                marco = it.marco + 1,
+            )
+        }
+    }
+
+    /** Selecciona un vector para moverlo/escalarlo con los gestos. */
+    fun seleccionarVector(id: Long) {
+        if (_estado.value.vectores.none { it.id == id }) return
+        asegurarSinAjuste()
+        _estado.update {
+            it.copy(
+                vectorSeleccionado = id,
+                vectorEnEdicion = true,
+                textoSeleccionado = null,
+                textoEnEdicion = false,
+                calcoEnEdicion = false,
+                trazoVectorialEnCurso = null,
+                marco = it.marco + 1,
+            )
+        }
+    }
+
+    /** Sale del ajuste del vector: queda dibujado pero ya no sigue a los gestos. */
+    fun terminarEdicionVector() {
+        if (!_estado.value.vectorEnEdicion) return
+        _estado.update {
+            it.copy(
+                vectorEnEdicion = false,
+                vectorSeleccionado = null,
+                marco = it.marco + 1,
+            )
+        }
+    }
+
+    /** Borra el vector seleccionado (no toca los píxeles del dibujo). */
+    fun quitarVectorSeleccionado() {
+        _estado.update { est ->
+            val id = est.vectorSeleccionado ?: return@update est
+            est.copy(
+                vectores = est.vectores.filterNot { it.id == id },
+                vectorSeleccionado = null,
+                vectorEnEdicion = false,
+                modificado = true,
+                marco = est.marco + 1,
+            )
+        }
+    }
+
+    /**
+     * Mueve el vector seleccionado [dxPantalla]/[dyPantalla] píxeles de
+     * pantalla, pasando el delta a coordenadas de hoja (rotación incluida).
+     */
+    fun moverVector(dxPantalla: Float, dyPantalla: Float) {
+        val m = motor ?: return
+        if (!_estado.value.vectorEnEdicion) return
+        val cam = m.camara()
+        val c = kotlin.math.cos(cam.rotacion.toDouble()).toFloat()
+        val s = kotlin.math.sin(cam.rotacion.toDouble()).toFloat()
+        val hx = (c * dxPantalla + s * dyPantalla) / cam.zoom
+        val hy = (-s * dxPantalla + c * dyPantalla) / cam.zoom
+        _estado.update { est ->
+            val id = est.vectorSeleccionado ?: return@update est
+            est.copy(
+                vectores = est.vectores.map { actual ->
+                    if (actual.id != id) return@map actual
+                    val puntos = ArrayList<Float>(actual.puntos.size)
+                    var i = 0
+                    while (i + 1 < actual.puntos.size) {
+                        puntos.add(actual.puntos[i] + hx)
+                        puntos.add(actual.puntos[i + 1] + hy)
+                        i += 2
+                    }
+                    actual.copy(puntos = puntos)
+                },
+                modificado = true,
+                marco = est.marco + 1,
+            )
+        }
+    }
+
+    /**
+     * Escala el vector seleccionado [factor] anclado al foco de pantalla. Los
+     * puntos y el grosor se escalan juntos, así el trazo mantiene su aspecto.
+     */
+    fun escalarVector(factor: Float, focoX: Float, focoY: Float) {
+        val m = motor ?: return
+        if (!_estado.value.vectorEnEdicion || factor <= 0f || !factor.isFinite()) return
+        val foco = aHoja(m, focoX, focoY)
+        _estado.update { est ->
+            val id = est.vectorSeleccionado ?: return@update est
+            est.copy(
+                vectores = est.vectores.map { actual ->
+                    if (actual.id != id) return@map actual
+                    val puntos = ArrayList<Float>(actual.puntos.size)
+                    var i = 0
+                    while (i + 1 < actual.puntos.size) {
+                        puntos.add(foco.first + factor * (actual.puntos[i] - foco.first))
+                        puntos.add(foco.second + factor * (actual.puntos[i + 1] - foco.second))
+                        i += 2
+                    }
+                    actual.copy(
+                        puntos = puntos,
+                        grosor = (actual.grosor * factor)
+                            .coerceIn(VECTOR_GROSOR_MIN, VECTOR_GROSOR_MAX),
+                    )
+                },
+                modificado = true,
+                marco = est.marco + 1,
+            )
+        }
+    }
+
+    /**
+     * Id del vector tocado en ([px], [py]) de pantalla, buscando de arriba hacia
+     * abajo. La tolerancia suma el grosor del trazo y unos px de pantalla.
+     */
+    fun vectorEnPunto(px: Float, py: Float): Long? {
+        val m = motor ?: return null
+        val vectores = _estado.value.vectores
+        if (vectores.isEmpty()) return null
+        val (hx, hy) = aHoja(m, px, py)
+        val zoom = m.camara().zoom.coerceAtLeast(0.01f)
+        for (vector in vectores.asReversed()) {
+            val caja = vector.limites()
+            val margen = vector.grosor / 2f + VECTOR_TOLERANCIA_PUNTERO / zoom
+            if (hx < caja[0] - margen || hx > caja[2] + margen ||
+                hy < caja[1] - margen || hy > caja[3] + margen
+            ) {
+                continue
+            }
+            if (VectorHoja.distanciaCuadradaAlTrazo(vector, hx, hy) <= margen * margen) {
+                return vector.id
+            }
+        }
+        return null
+    }
+
+    /**
      * Índice del texto tocado en ([px], [py]) de pantalla, buscando de arriba
      * hacia abajo (el último insertado queda encima). `null` si no toca ninguno.
      */
@@ -712,6 +972,9 @@ class DibujoViewModel(app: Application) : AndroidViewModel(app) {
                 calcoEnEdicion = false,
                 textoEnEdicion = false,
                 textoSeleccionado = null,
+                vectorEnEdicion = false,
+                vectorSeleccionado = null,
+                trazoVectorialEnCurso = null,
                 marco = it.marco + 1,
             )
         }
@@ -756,6 +1019,10 @@ class DibujoViewModel(app: Application) : AndroidViewModel(app) {
                 textos = emptyList(),
                 textoSeleccionado = null,
                 textoEnEdicion = false,
+                vectores = emptyList(),
+                vectorSeleccionado = null,
+                vectorEnEdicion = false,
+                trazoVectorialEnCurso = null,
                 modificado = true,
                 marco = it.marco + 1,
             )
@@ -965,6 +1232,20 @@ class DibujoViewModel(app: Application) : AndroidViewModel(app) {
                     } else {
                         it.textos
                     },
+                    vectores = if (cambio) {
+                        transformarVectores(
+                            it.vectores,
+                            m.ancho,
+                            m.alto,
+                            voltearHorizontal,
+                            voltearVertical,
+                            desplazamientoX,
+                            desplazamientoY,
+                            escala,
+                        )
+                    } else {
+                        it.vectores
+                    },
                     modificado = it.modificado || cambio,
                     marco = if (cambio) it.marco + 1 else it.marco,
                 )
@@ -990,7 +1271,10 @@ class DibujoViewModel(app: Application) : AndroidViewModel(app) {
                 calcoEnEdicion = false,
                 textoEnEdicion = false,
                 textoSeleccionado = null,
+                vectorEnEdicion = false,
+                vectorSeleccionado = null,
                 trazoEnCurso = null,
+                trazoVectorialEnCurso = null,
                 marco = it.marco + 1,
             )
         }
@@ -1061,6 +1345,20 @@ class DibujoViewModel(app: Application) : AndroidViewModel(app) {
                     } else {
                         it.textos
                     },
+                    vectores = if (cambio) {
+                        transformarVectores(
+                            it.vectores,
+                            m.ancho,
+                            m.alto,
+                            false,
+                            false,
+                            dx,
+                            dy,
+                            escala,
+                        )
+                    } else {
+                        it.vectores
+                    },
                     modificado = it.modificado || cambio,
                     marco = if (cambio) it.marco + 1 else it.marco,
                 )
@@ -1125,15 +1423,22 @@ class DibujoViewModel(app: Application) : AndroidViewModel(app) {
         val ancho = m.ancho
         val alto = m.alto
         val textos = _estado.value.textos
+        val vectores = _estado.value.vectores
         _estado.update { it.copy(ajustandoLienzo = true) }
         viewModelScope.launch {
-            // Recortar/redimensionar rehace la hoja: los textos vivos se
-            // hornean en la copia para que entren en el recorte y se muevan con
-            // el dibujo (después de esto dejan de ser editables). No se toca el
-            // motor hasta tener el resultado.
+            // Recortar/redimensionar rehace la hoja: los objetos vivos (textos
+            // y vectores) se hornean en la copia para que entren en el recorte
+            // y se muevan con el dibujo (después de esto dejan de ser
+            // editables). No se toca el motor hasta tener el resultado.
             val resultado = withContext(Dispatchers.Default) {
                 val pixeles = IntArray(ancho * alto)
                 if (!m.copiarHoja(pixeles)) return@withContext null
+                if (vectores.isNotEmpty()) VectorHoja.dibujarEnPixeles(
+                    pixeles,
+                    ancho,
+                    alto,
+                    vectores,
+                )
                 if (textos.isNotEmpty()) dibujarTextosEn(pixeles, ancho, alto, textos)
                 if (recortar) {
                     val recorte = recortarAlContenido(pixeles, ancho, alto, Colores.BLANCO)
@@ -1155,6 +1460,9 @@ class DibujoViewModel(app: Application) : AndroidViewModel(app) {
                     textos = if (resultado != null) emptyList() else it.textos,
                     textoSeleccionado = if (resultado != null) null else it.textoSeleccionado,
                     textoEnEdicion = if (resultado != null) false else it.textoEnEdicion,
+                    vectores = if (resultado != null) emptyList() else it.vectores,
+                    vectorSeleccionado = if (resultado != null) null else it.vectorSeleccionado,
+                    vectorEnEdicion = if (resultado != null) false else it.vectorEnEdicion,
                 )
             }
             // Recrea/reemplaza la hoja con el nuevo tamaño (reutiliza la ruta de
@@ -1202,6 +1510,11 @@ class DibujoViewModel(app: Application) : AndroidViewModel(app) {
     fun tocarHoja(px: Float, py: Float) {
         val m = motor ?: return
         if (_estado.value.modo != Modo.EDICION) return
+        // La pluma vectorial no pinta píxeles: un toque suelto deja un punto.
+        if (_estado.value.lapiz.herramienta == Herramienta.PLUMA) {
+            insertarPuntoVector(px, py)
+            return
+        }
         // Tocar un texto lo selecciona para moverlo/escalarlo o editarlo, en
         // vez de pintar un punto encima. En cualquier momento se puede volver
         // a tocar para retomarlo.
@@ -1273,6 +1586,8 @@ class DibujoViewModel(app: Application) : AndroidViewModel(app) {
                 calcoEnEdicion = !it.calcoEnEdicion,
                 textoEnEdicion = false,
                 textoSeleccionado = null,
+                vectorEnEdicion = false,
+                vectorSeleccionado = null,
                 // Al entrar en ajuste se asegura de que la imagen se vea.
                 calcoVisible = if (!it.calcoEnEdicion) true else it.calcoVisible,
             )
@@ -1366,14 +1681,16 @@ class DibujoViewModel(app: Application) : AndroidViewModel(app) {
     fun copiarHoja(destino: IntArray): Boolean = motor?.copiarHoja(destino) ?: false
 
     /**
-     * Copia la hoja con los textos vivos ya compuestos encima (texto horneado
-     * sólo en la copia). Es lo que se exporta a la galería o se comparte, para
-     * que la imagen final incluya las palabras tal como se ven.
+     * Copia la hoja con los objetos vivos (vectores y textos) ya compuestos
+     * encima, horneados sólo en la copia. Es lo que se exporta a la galería o
+     * se comparte, para que la imagen final coincida con lo que se ve.
      */
-    fun copiarHojaConTextos(destino: IntArray): Boolean {
+    fun copiarHojaConObjetosVivos(destino: IntArray): Boolean {
         val m = motor ?: return false
         if (!m.copiarHoja(destino)) return false
-        dibujarTextosEn(destino, m.ancho, m.alto, _estado.value.textos)
+        val estado = _estado.value
+        VectorHoja.dibujarEnPixeles(destino, m.ancho, m.alto, estado.vectores)
+        dibujarTextosEn(destino, m.ancho, m.alto, estado.textos)
         return true
     }
 
@@ -1435,6 +1752,43 @@ class DibujoViewModel(app: Application) : AndroidViewModel(app) {
                 escala = texto.escala * escala,
                 voltearH = texto.voltearH xor voltearH,
                 voltearV = texto.voltearV xor voltearV,
+            )
+        }
+    }
+
+    /**
+     * Aplica a los vectores la misma transformación que
+     * `MotorDibujo.transformarHoja`: espejo, desplazamiento y escala alrededor
+     * del centro de la hoja. El grosor acompaña a la escala para que el trazo
+     * mantenga su aspecto.
+     */
+    private fun transformarVectores(
+        vectores: List<TrazoVectorial>,
+        ancho: Int,
+        alto: Int,
+        voltearH: Boolean,
+        voltearV: Boolean,
+        desplazamientoX: Float,
+        desplazamientoY: Float,
+        escala: Float,
+    ): List<TrazoVectorial> {
+        if (vectores.isEmpty()) return vectores
+        val cx = (ancho - 1) / 2f
+        val cy = (alto - 1) / 2f
+        val fx = if (voltearH) -1f else 1f
+        val fy = if (voltearV) -1f else 1f
+        return vectores.map { vector ->
+            val puntos = ArrayList<Float>(vector.puntos.size)
+            var i = 0
+            while (i + 1 < vector.puntos.size) {
+                puntos.add(cx + desplazamientoX + fx * escala * (vector.puntos[i] - cx))
+                puntos.add(cy + desplazamientoY + fy * escala * (vector.puntos[i + 1] - cy))
+                i += 2
+            }
+            vector.copy(
+                puntos = puntos,
+                grosor = (vector.grosor * escala)
+                    .coerceIn(VECTOR_GROSOR_MIN, VECTOR_GROSOR_MAX),
             )
         }
     }
@@ -1518,5 +1872,18 @@ class DibujoViewModel(app: Application) : AndroidViewModel(app) {
 
         /** Cuántos colores recientes se recuerdan en la barra. */
         const val MAX_RECIENTES = 12
+
+        /** Distancia mínima (px de pantalla) entre vértices de la pluma. */
+        const val VECTOR_DISTANCIA_MIN = 1.5f
+
+        /** Tolerancia de simplificación del trazo vectorial (px de pantalla). */
+        const val VECTOR_TOLERANCIA = 1.2f
+
+        /** Margen extra para tocar un vector, además de su grosor (px de pantalla). */
+        const val VECTOR_TOLERANCIA_PUNTERO = 10f
+
+        /** Límites del grosor de un vector al escalarlo. */
+        const val VECTOR_GROSOR_MIN = 0.25f
+        const val VECTOR_GROSOR_MAX = 512f
     }
 }

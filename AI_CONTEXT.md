@@ -561,6 +561,20 @@ Particularidades:
   app viajan en `<id>.textos.json` (`AlmacenDibujos`) para reabrir el dibujo con
   los textos todavía editables. Recortar/redimensionar los hornea porque la
   hoja se rehace. Vive sólo en `:app`, así que no altera la paridad del motor.
+- **Pluma vectorial** (issue 72, fase 1): `TrazoVectorial` (`VectorHoja.kt`)
+  es un objeto vivo más de `:app`; la herramienta `Herramienta.PLUMA` (última
+  del enum, con `Tool::PLUMA` en C++ sólo para conservar el ordinal de JNI)
+  captura un arrastre como polilínea en px de hoja. Al soltar se simplifica
+  con Ramer-Douglas-Peucker y se dibuja suavizada con Catmull-Rom → Bézier
+  cúbicas, en una capa Compose (`CapaVectores`) encima del raster y debajo de
+  los textos. Un toque selecciona el vector (caja guía), un dedo lo mueve y dos
+  lo escalan; la barra inferior permite **Quitar** o **Listo**. Se hornea sólo
+  al exportar/miniatura o al rehacer la hoja (recortar/redimensionar), viaja
+  en `<id>.vectores.json` y `transformarDibujo`/terminar el ajuste libre le
+  aplican el mismo mapeo que a los textos. No toca el rasterizado ni la
+  paridad. Límite conocido: deshacer/rehacer sigue siendo el historial de
+  píxeles del motor y no revierte los objetos vivos (igual que los textos);
+  fase 2: edición de nodos, relleno, figuras y export SVG.
 - **Importar imagen** (issue 35): entrada explícita en el menú "más opciones"
   que abre el Photo Picker y fija la imagen de calco (sin permisos).
 - **Recortar / redimensionar lienzo** (issue 35): diálogo "Recortar o

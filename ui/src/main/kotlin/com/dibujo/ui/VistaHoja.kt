@@ -92,6 +92,7 @@ class VistaHoja(
         com.dibujo.core.Herramienta.BORRADOR -> "borrador"
         com.dibujo.core.Herramienta.PINTAR -> "pintar"
         com.dibujo.core.Herramienta.DOBLE -> "doble"
+        com.dibujo.core.Herramienta.PLUMA -> "pluma vectorial"
     }
 }
 

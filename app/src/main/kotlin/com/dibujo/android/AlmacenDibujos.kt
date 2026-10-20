@@ -13,10 +13,10 @@ import java.io.FileOutputStream
  *
  * Cada dibujo es un PNG (ARGB, sin pérdida) dentro de `filesDir/dibujos`, así
  * que la hoja se puede reabrir tal cual quedó, no sólo exportarse a la galería.
- * Los textos vivos (ver [TextoEnHoja]) NO se hornean en el PNG: viajan en un
- * archivo aparte `<id>.textos.json`, así al reabrir el dibujo siguen siendo
- * movibles, escalables y editables. El JSON también guarda el tamaño de la hoja
- * para poder dibujar los textos en la miniatura.
+ * Los objetos vivos (textos y trazos vectoriales) NO se hornean en el PNG:
+ * viajan en archivos aparte `<id>.textos.json` y `<id>.vectores.json`, así al
+ * reabrir el dibujo siguen siendo movibles, escalables y editables. Los JSON
+ * también guardan el tamaño de la hoja para poder dibujarlos en la miniatura.
  *
  * Hay dos clases de archivos:
  *
@@ -37,6 +37,10 @@ object AlmacenDibujos {
     private const val CARPETA = "dibujos"
     private const val SUFIJO = ".png"
     private const val SUFIJO_TEXTOS = ".textos.json"
+    private const val SUFIJO_VECTORES = ".vectores.json"
+
+    /** Tope de coordenadas por vector al leer el JSON (evita archivos absurdos). */
+    private const val MAX_PUNTOS_VECTOR = 400_000
 
     /** Metadatos de un dibujo guardado (sin los píxeles). */
     data class DibujoGuardado(
@@ -46,12 +50,13 @@ object AlmacenDibujos {
         val fecha: Long,
     )
 
-    /** Contenido completo de un dibujo: dimensiones, píxeles ARGB y textos vivos. */
+    /** Contenido completo: dimensiones, píxeles ARGB y objetos vivos. */
     class DibujoContenido(
         val ancho: Int,
         val alto: Int,
         val pixeles: IntArray,
         val textos: List<TextoEnHoja> = emptyList(),
+        val vectores: List<TrazoVectorial> = emptyList(),
     )
 
     /** Lista las copias de la biblioteca, de la más reciente a la más vieja. */
@@ -75,7 +80,8 @@ object AlmacenDibujos {
         alto: Int,
         pixeles: IntArray,
         textos: List<TextoEnHoja> = emptyList(),
-    ): Boolean = escribir(contexto, SLOT_ACTUAL, ancho, alto, pixeles, textos)
+        vectores: List<TrazoVectorial> = emptyList(),
+    ): Boolean = escribir(contexto, SLOT_ACTUAL, ancho, alto, pixeles, textos, vectores)
 
     /** Crea una copia nueva en la biblioteca y devuelve sus metadatos. */
     fun guardarCopia(
@@ -84,9 +90,10 @@ object AlmacenDibujos {
         alto: Int,
         pixeles: IntArray,
         textos: List<TextoEnHoja> = emptyList(),
+        vectores: List<TrazoVectorial> = emptyList(),
     ): DibujoGuardado? {
         val id = "dibujo_${System.currentTimeMillis()}"
-        if (!escribir(contexto, id, ancho, alto, pixeles, textos)) return null
+        if (!escribir(contexto, id, ancho, alto, pixeles, textos, vectores)) return null
         val archivo = archivo(contexto, id) ?: return null
         return describir(archivo)
     }
@@ -112,7 +119,13 @@ object AlmacenDibujos {
             val pixeles = IntArray(ancho * alto)
             bitmap.getPixels(pixeles, 0, ancho, 0, 0, ancho, alto)
             bitmap.recycle()
-            DibujoContenido(ancho, alto, pixeles, leerTextos(contexto, id, ancho, alto))
+            DibujoContenido(
+                ancho,
+                alto,
+                pixeles,
+                leerTextos(contexto, id, ancho, alto),
+                leerVectores(contexto, id, ancho, alto),
+            )
         }.getOrNull()
     }
 
@@ -138,7 +151,8 @@ object AlmacenDibujos {
             val opciones = BitmapFactory.Options().apply { inSampleSize = escala }
             val bitmap = BitmapFactory.decodeFile(archivo.absolutePath, opciones) ?: return null
             val textos = leerTextos(contexto, id, limites.outWidth, limites.outHeight)
-            if (textos.isEmpty()) return bitmap
+            val vectores = leerVectores(contexto, id, limites.outWidth, limites.outHeight)
+            if (textos.isEmpty() && vectores.isEmpty()) return bitmap
             val reducida = bitmap.copy(Bitmap.Config.ARGB_8888, true) ?: return bitmap
             bitmap.recycle()
             val ancho = reducida.width
@@ -146,6 +160,7 @@ object AlmacenDibujos {
             val factor = if (limites.outWidth > 0) ancho.toFloat() / limites.outWidth else 1f
             val pixeles = IntArray(ancho * alto)
             reducida.getPixels(pixeles, 0, ancho, 0, 0, ancho, alto)
+            VectorHoja.dibujarEnPixeles(pixeles, ancho, alto, vectores, factor)
             textos.forEach { texto ->
                 TextoHoja.dibujarEscalado(
                     pixeles, ancho, alto, texto.texto, texto.tipografia,
@@ -178,6 +193,7 @@ object AlmacenDibujos {
         alto: Int,
         pixeles: IntArray,
         textos: List<TextoEnHoja>,
+        vectores: List<TrazoVectorial>,
     ): Boolean {
         val archivo = archivo(contexto, id) ?: return false
         if (ancho <= 0 || alto <= 0 || pixeles.size < ancho * alto) return false
@@ -191,6 +207,7 @@ object AlmacenDibujos {
                 bitmap.recycle()
             }
             escribirTextos(contexto, id, ancho, alto, textos)
+            escribirVectores(contexto, id, ancho, alto, vectores)
             true
         }.getOrDefault(false)
     }
@@ -227,6 +244,37 @@ object AlmacenDibujos {
             )
         }
         raiz.put("textos", lista)
+        archivo.writeText(raiz.toString())
+    }
+
+    private fun escribirVectores(
+        contexto: Context,
+        id: String,
+        ancho: Int,
+        alto: Int,
+        vectores: List<TrazoVectorial>,
+    ) {
+        val archivo = archivoVectores(contexto, id) ?: return
+        if (vectores.isEmpty()) {
+            archivo.delete()
+            return
+        }
+        val raiz = JSONObject()
+        raiz.put("ancho", ancho)
+        raiz.put("alto", alto)
+        val lista = JSONArray()
+        vectores.forEach { vector ->
+            val puntos = JSONArray()
+            vector.puntos.forEach { puntos.put(it.toDouble()) }
+            lista.put(
+                JSONObject()
+                    .put("id", vector.id)
+                    .put("color", vector.color)
+                    .put("grosor", vector.grosor.toDouble())
+                    .put("puntos", puntos),
+            )
+        }
+        raiz.put("vectores", lista)
         archivo.writeText(raiz.toString())
     }
 
@@ -284,9 +332,61 @@ object AlmacenDibujos {
         }.getOrDefault(emptyList())
     }
 
+    private fun leerVectores(
+        contexto: Context,
+        id: String,
+        anchoHoja: Int,
+        altoHoja: Int,
+    ): List<TrazoVectorial> {
+        val archivo = archivoVectores(contexto, id) ?: return emptyList()
+        if (!archivo.isFile) return emptyList()
+        return runCatching {
+            val raiz = JSONObject(archivo.readText())
+            // Si la hoja cambió de tamaño se descartan: las coordenadas viejas
+            // ya no representan el dibujo guardado.
+            if (raiz.optInt("ancho", anchoHoja) != anchoHoja ||
+                raiz.optInt("alto", altoHoja) != altoHoja
+            ) {
+                return emptyList()
+            }
+            val lista = raiz.optJSONArray("vectores") ?: return emptyList()
+            buildList {
+                for (i in 0 until lista.length()) {
+                    val v = lista.optJSONObject(i) ?: continue
+                    val grosor = v.optDouble("grosor", 2.0).toFloat()
+                        .takeIf { it.isFinite() && it > 0f }
+                        ?.coerceIn(0.25f, 512f) ?: continue
+                    val puntosJson = v.optJSONArray("puntos") ?: continue
+                    if (puntosJson.length() < 2 || puntosJson.length() % 2 != 0) continue
+                    if (puntosJson.length() > MAX_PUNTOS_VECTOR) continue
+                    val puntos = ArrayList<Float>(puntosJson.length())
+                    var valido = true
+                    for (j in 0 until puntosJson.length()) {
+                        val coordenada = puntosJson.optDouble(j, Double.NaN).toFloat()
+                        if (!coordenada.isFinite()) {
+                            valido = false
+                            break
+                        }
+                        puntos.add(coordenada)
+                    }
+                    if (!valido) continue
+                    add(
+                        TrazoVectorial(
+                            id = v.optLong("id", i.toLong() + 1),
+                            puntos = puntos,
+                            color = v.optInt("color", 0xFF000000.toInt()),
+                            grosor = grosor,
+                        ),
+                    )
+                }
+            }
+        }.getOrDefault(emptyList())
+    }
+
     private fun borrarArchivos(contexto: Context, id: String): Boolean {
         val png = archivo(contexto, id)?.delete() == true
         archivoTextos(contexto, id)?.delete()
+        archivoVectores(contexto, id)?.delete()
         return png
     }
 
@@ -298,6 +398,11 @@ object AlmacenDibujos {
     private fun archivoTextos(contexto: Context, id: String): File? {
         val carpeta = carpeta(contexto) ?: return null
         return File(carpeta, "${limpio(id)}$SUFIJO_TEXTOS")
+    }
+
+    private fun archivoVectores(contexto: Context, id: String): File? {
+        val carpeta = carpeta(contexto) ?: return null
+        return File(carpeta, "${limpio(id)}$SUFIJO_VECTORES")
     }
 
     private fun limpio(id: String): String = id.replace(Regex("[^A-Za-z0-9_.-]"), "_")

@@ -71,6 +71,7 @@ fun AppDibujo(vm: DibujoViewModel = viewModel()) {
                     contenido.alto,
                     contenido.pixeles,
                     contenido.textos,
+                    contenido.vectores,
                 )
                 destino = Destino.DIBUJO
             }
@@ -102,6 +103,7 @@ fun AppDibujo(vm: DibujoViewModel = viewModel()) {
                                 contenido.alto,
                                 contenido.pixeles,
                                 contenido.textos,
+                                contenido.vectores,
                             )
                         }
                         destino = Destino.DIBUJO

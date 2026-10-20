@@ -71,6 +71,12 @@ implementaciones y pasar `MotorTest` (paridad píxel a píxel). Las diferencias:
   `LINEAR`. Al acercar ya no se ven bloques duros.
 - BORRADOR pinta con el color de fondo de la hoja; la vista previa de Compose
   lo imita (fondo + grosor efectivo) para que el borrado se vea al instante.
+- **Textura del trazo**: `Textura` (`LISA`, `GRANO`, `RUGOSA`, `TRAMA`,
+  `SALPICADA`) modula el alpha final de cada píxel con `factor(x, y)` (255 fijo
+  para LISA). El ruido es entero determinista (mezcla de 32 bits + máscaras),
+  idéntico en `Textura.kt` y `DibujoEngine.cpp`; el ordinal viaja por JNI y
+  debe conservar el orden. Nunca se aplica a BORRADOR ni PINTAR. La paridad la
+  cubre `MotorTest.texturaParidadNativoKotlin`.
 - FUERA de hoja en render = gris `0xFFECECEC`.
 
 ### Cámara
@@ -535,6 +541,26 @@ Particularidades:
   mientras se ajusta. No toca el motor (vive en Compose), por eso **no aplica la
   paridad**; el flag es de UI (`calcoEnEdicion`), no un valor nuevo de `Modo`
   (que es de `:core` y usa la consola).
+- **Texturas del trazo** (issue 70): el acceso vive en la hoja de **más
+  herramientas** (los tres puntos horizontales); `DialogoTextura` muestra cada
+  opción con un **trazo de muestra** rasterizado con el mismo `Textura.aplicar`
+  del motor y `DibujoViewModel.elegirTextura` actualiza el `Lapiz`; el valor se
+  propaga a `MotorKotlin`/`MotorNativo` y al C++.
+- **Texto vivo** (issue 70): `TextoEnHoja` es un objeto del estado
+  (`DibujoViewModel.insertarTexto`), no píxeles horneados. `CapaTextos` lo dibuja
+  encima de la hoja siguiendo la cámara; un toque lo selecciona y los gestos lo
+  mueven (un dedo) y escalan (dos, anclado al foco) igual que el calco, con
+  barra de edición ("Editar"/"Quitar"/"Listo"). Se puede volver a editar en
+  cualquier momento con `actualizarTextoSeleccionado` (texto, tipografía y
+  tamaño). `TextoHoja` compone con `Canvas`/`Paint` las 5 tipografías del
+  sistema; `transformarTextos` acompaña al voltear/mover/escalar el dibujo.
+  Los cambios de texto viven fuera del historial del motor (deshacer/rehacer
+  sólo cubre trazos), así que las operaciones que rehacen la hoja los hornean o
+  los descartan.
+  Al exportar se hornean en la copia (`copiarHojaConTextos`); al guardar en la
+  app viajan en `<id>.textos.json` (`AlmacenDibujos`) para reabrir el dibujo con
+  los textos todavía editables. Recortar/redimensionar los hornea porque la
+  hoja se rehace. Vive sólo en `:app`, así que no altera la paridad del motor.
 - **Importar imagen** (issue 35): entrada explícita en el menú "más opciones"
   que abre el Photo Picker y fija la imagen de calco (sin permisos).
 - **Recortar / redimensionar lienzo** (issue 35): diálogo "Recortar o

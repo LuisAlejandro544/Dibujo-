@@ -304,6 +304,37 @@ class HistorialTest {
     }
 }
 
+class TexturaTest {
+    @Test
+    fun lisaNoAlteraLaCobertura() {
+        assertEquals(200, Textura.LISA.aplicar(200, 3, 7))
+    }
+
+    @Test
+    fun cadaTexturaGeneraUnPatronDistinto() {
+        val coordenadas = (0 until 12).flatMap { x -> (0 until 12).map { y -> x to y } }
+        val patrones = Textura.entries.map { textura ->
+            coordenadas.map { (x, y) -> textura.factor(x, y) }
+        }
+        // Todos los patrones son deterministas y distintos entre sí (salvo LISA).
+        assertEquals(patrones.size, patrones.distinct().size)
+    }
+
+    @Test
+    fun elTrazoConTexturaNoEsUniforme() {
+        val liso = Lienzo(16, 16)
+        val grano = Lienzo(16, 16)
+        liso.lineaGruesa(2f, 8f, 13f, 8f, 8, redonda = true, color = Colores.NEGRO)
+        grano.lineaGruesa(
+            2f, 8f, 13f, 8f, 8, redonda = true, color = Colores.NEGRO,
+            textura = Textura.GRANO,
+        )
+        var distintos = 0
+        for (i in liso.pixeles.indices) if (liso.pixeles[i] != grano.pixeles[i]) distintos++
+        assertTrue(distintos > 20, "la textura debe modular el trazo (distintos=$distintos)")
+    }
+}
+
 class LapizTest {
     @Test
     fun grosorEfectivoPorHerramienta() {

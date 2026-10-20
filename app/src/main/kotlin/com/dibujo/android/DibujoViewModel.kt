@@ -91,6 +91,15 @@ data class DibujoEstado(
      * deshacible).
      */
     val ajustandoDibujo: Boolean = false,
+    /**
+     * Textos vivos de la hoja (no horneados): se mueven y escalan como el
+     * calco y se pueden volver a editar en cualquier momento. Al exportar se
+     * hornean en la imagen; al guardar en la app viajan en un JSON aparte.
+     */
+    val textos: List<TextoEnHoja> = emptyList(),
+    /** Texto seleccionado (id) y si los gestos lo mueven/escalan. */
+    val textoSeleccionado: Long? = null,
+    val textoEnEdicion: Boolean = false,
     /** Últimos colores elegidos (paleta, cuentagotas o rueda HSV), más nuevos primero. */
     val coloresRecientes: List<Int> = emptyList(),
     /** El cuentagotas está activo: el próximo toque de la hoja toma su color. */
@@ -121,6 +130,7 @@ class DibujoViewModel(app: Application) : AndroidViewModel(app) {
     private var guardandoActual = false
     /** Cámara al entrar al ajuste libre: es la referencia a hornear en "Listo". */
     private var camaraBaseAjuste: Camara? = null
+    private var siguienteIdTexto = 1L
     private val seleccionInicial = leerBackend()
     private val _estado = MutableStateFlow(
         DibujoEstado(
@@ -193,7 +203,12 @@ class DibujoViewModel(app: Application) : AndroidViewModel(app) {
      * nuevo punto de partida y deshacer/rehacer no deben volver al dibujo
      * anterior.
      */
-    fun abrirDibujo(ancho: Int, alto: Int, pixeles: IntArray) {
+    fun abrirDibujo(
+        ancho: Int,
+        alto: Int,
+        pixeles: IntArray,
+        textos: List<TextoEnHoja> = emptyList(),
+    ) {
         if (ancho <= 0 || alto <= 0 || pixeles.size < ancho * alto) return
         motor?.close()
         val nuevo = Motores.crear(ancho.coerceIn(1, MAX_LADO), alto.coerceIn(1, MAX_LADO))
@@ -201,6 +216,14 @@ class DibujoViewModel(app: Application) : AndroidViewModel(app) {
         nuevo.asistenciaRecta(_estado.value.asistenciaRecta)
         nuevo.reemplazarHoja(pixeles)
         motor = nuevo
+        siguienteIdTexto = (textos.maxOfOrNull { it.id } ?: 0L) + 1L
+        _estado.update {
+            it.copy(
+                textos = textos,
+                textoSeleccionado = null,
+                textoEnEdicion = false,
+            )
+        }
         publicarContenido(nuevo, modificado = true)
     }
 
@@ -219,13 +242,14 @@ class DibujoViewModel(app: Application) : AndroidViewModel(app) {
         val alto = m.alto
         val pixeles = IntArray(ancho * alto)
         if (!m.copiarHoja(pixeles)) return
+        val textos = estado.textos
         guardandoActual = true
         // Se marca como guardado ya: si el usuario dibuja mientras se escribe,
         // esas marcas lo vuelven a poner en "modificado" y no se pierden.
         _estado.update { it.copy(modificado = false) }
         viewModelScope.launch {
             val guardado = withContext(Dispatchers.IO) {
-                AlmacenDibujos.guardarActual(aplicacion, ancho, alto, pixeles)
+                AlmacenDibujos.guardarActual(aplicacion, ancho, alto, pixeles, textos)
             }
             guardandoActual = false
             if (!guardado) _estado.update { it.copy(modificado = true) }
@@ -257,6 +281,9 @@ class DibujoViewModel(app: Application) : AndroidViewModel(app) {
                 puedeRehacer = false,
                 modificado = false,
                 camara = Camara(0f, 0f, 1f),
+                textos = emptyList(),
+                textoSeleccionado = null,
+                textoEnEdicion = false,
                 marco = it.marco + 1,
             )
         }
@@ -479,6 +506,189 @@ class DibujoViewModel(app: Application) : AndroidViewModel(app) {
     fun elegirHerramienta(herramienta: Herramienta) =
         actualizarLapiz { it.copy(herramienta = herramienta) }
 
+    /** Elige la textura del trazo (lisa, grano, rugosa, trama o salpicada). */
+    fun elegirTextura(textura: com.dibujo.core.Textura) =
+        actualizarLapiz { it.copy(textura = textura) }
+
+    /**
+     * Inserta [texto] en el centro de la vista actual con la [tipografia] y el
+     * tamaño [tamano] px. El texto queda como objeto vivo (no se hornea): se
+     * puede mover y escalar con los gestos, y editar en cualquier momento. Al
+     * elegir el texto se entra en modo edición, como con el calco.
+     */
+    fun insertarTexto(texto: String, tipografia: Tipografia, tamano: Float) {
+        if (texto.isBlank()) return
+        asegurarSinAjuste()
+        val m = motor ?: return
+        if (_estado.value.ajustandoLienzo) return
+        // Centro de la vista en coordenadas de hoja (donde el usuario está
+        // mirando). Si la vista todavía no se midió, se usa el centro de la hoja.
+        val focoX = if (vistaAncho > 0) vistaAncho / 2f else m.ancho / 2f
+        val focoY = if (vistaAlto > 0) vistaAlto / 2f else m.alto / 2f
+        val (cx, cy) = pantallaAUnrotado(m.camara(), focoX, focoY)
+        val id = siguienteIdTexto++
+        val objeto = TextoEnHoja(
+            id = id,
+            texto = texto,
+            tipografia = tipografia,
+            tamano = tamano,
+            color = _estado.value.lapiz.color,
+            centroX = cx,
+            centroY = cy,
+        )
+        _estado.update {
+            it.copy(
+                textos = it.textos + objeto,
+                textoSeleccionado = id,
+                textoEnEdicion = true,
+                calcoEnEdicion = false,
+                ajustandoDibujo = false,
+                modificado = true,
+                marco = it.marco + 1,
+            )
+        }
+    }
+
+    /** Vuelve a editar el texto seleccionado sin moverlo ni cambiar su escala. */
+    fun actualizarTextoSeleccionado(texto: String, tipografia: Tipografia, tamano: Float) {
+        if (texto.isBlank()) return
+        _estado.update { est ->
+            val id = est.textoSeleccionado ?: return@update est
+            val nuevos = est.textos.map { actual ->
+                if (actual.id == id) {
+                    actual.copy(texto = texto, tipografia = tipografia, tamano = tamano)
+                } else {
+                    actual
+                }
+            }
+            est.copy(textos = nuevos, modificado = true, marco = est.marco + 1)
+        }
+    }
+
+    /** Selecciona un texto existente y lo pone en edición (mover/escalar). */
+    fun seleccionarTexto(id: Long) {
+        if (_estado.value.textos.none { it.id == id }) return
+        asegurarSinAjuste()
+        _estado.update {
+            it.copy(
+                textoSeleccionado = id,
+                textoEnEdicion = true,
+                calcoEnEdicion = false,
+                marco = it.marco + 1,
+            )
+        }
+    }
+
+    /** Borra el texto seleccionado (no toca los trazos de la hoja). */
+    fun quitarTextoSeleccionado() {
+        _estado.update { est ->
+            val id = est.textoSeleccionado ?: return@update est
+            est.copy(
+                textos = est.textos.filterNot { it.id == id },
+                textoSeleccionado = null,
+                textoEnEdicion = false,
+                modificado = true,
+                marco = est.marco + 1,
+            )
+        }
+    }
+
+    /** Sale del ajuste del texto: queda dibujado pero ya no sigue a los gestos. */
+    fun terminarEdicionTexto() {
+        if (!_estado.value.textoEnEdicion) return
+        _estado.update {
+            it.copy(
+                textoEnEdicion = false,
+                textoSeleccionado = null,
+                marco = it.marco + 1,
+            )
+        }
+    }
+
+    /**
+     * Mueve el texto seleccionado [dxPantalla]/[dyPantalla] píxeles de pantalla,
+     * pasando el delta a coordenadas de hoja (rotación incluida), igual que el
+     * calco: queda anclado a la hoja y no a la pantalla.
+     */
+    fun moverTexto(dxPantalla: Float, dyPantalla: Float) {
+        val m = motor ?: return
+        if (!_estado.value.textoEnEdicion) return
+        val cam = m.camara()
+        val c = kotlin.math.cos(cam.rotacion.toDouble()).toFloat()
+        val s = kotlin.math.sin(cam.rotacion.toDouble()).toFloat()
+        val hx = (c * dxPantalla + s * dyPantalla) / cam.zoom
+        val hy = (-s * dxPantalla + c * dyPantalla) / cam.zoom
+        _estado.update { est ->
+            val id = est.textoSeleccionado ?: return@update est
+            est.copy(
+                textos = est.textos.map {
+                    if (it.id == id) {
+                        it.copy(centroX = it.centroX + hx, centroY = it.centroY + hy)
+                    } else {
+                        it
+                    }
+                },
+                modificado = true,
+                marco = est.marco + 1,
+            )
+        }
+    }
+
+    /**
+     * Escala el texto seleccionado [factor] anclado al foco de pantalla: el
+     * punto de la hoja bajo los dedos queda quieto, como en el calco.
+     */
+    fun escalarTexto(factor: Float, focoX: Float, focoY: Float) {
+        val m = motor ?: return
+        if (!_estado.value.textoEnEdicion || factor <= 0f) return
+        val foco = aHoja(m, focoX, focoY)
+        _estado.update { est ->
+            val id = est.textoSeleccionado ?: return@update est
+            est.copy(
+                textos = est.textos.map { actual ->
+                    if (actual.id != id) return@map actual
+                    val vieja = actual.escala
+                    val nueva = (vieja * factor).coerceIn(TEXTO_ESCALA_MIN, TEXTO_ESCALA_MAX)
+                    val ratio = if (vieja > 0f) nueva / vieja else 1f
+                    actual.copy(
+                        escala = nueva,
+                        centroX = foco.first + ratio * (actual.centroX - foco.first),
+                        centroY = foco.second + ratio * (actual.centroY - foco.second),
+                    )
+                },
+                modificado = true,
+                marco = est.marco + 1,
+            )
+        }
+    }
+
+    /**
+     * Índice del texto tocado en ([px], [py]) de pantalla, buscando de arriba
+     * hacia abajo (el último insertado queda encima). `null` si no toca ninguno.
+     */
+    fun textoEnPunto(px: Float, py: Float): Long? {
+        val m = motor ?: return null
+        val textos = _estado.value.textos
+        if (textos.isEmpty()) return null
+        val (hx, hy) = aHoja(m, px, py)
+        for (texto in textos.asReversed()) {
+            val (anchoBase, altoBase) = TextoHoja.medidas(
+                texto.texto,
+                texto.tipografia,
+                texto.tamano,
+            )
+            val ancho = anchoBase * texto.escala
+            val alto = altoBase * texto.escala
+            if (ancho <= 0 || alto <= 0) continue
+            val x0 = texto.centroX - ancho / 2f
+            val y0 = texto.centroY - alto / 2f
+            if (hx >= x0 && hx <= x0 + ancho && hy >= y0 && hy <= y0 + alto) {
+                return texto.id
+            }
+        }
+        return null
+    }
+
     fun cambiarGrosor(delta: Int) {
         val actual = _estado.value.lapiz.grosor
         val nuevo = (actual + delta).coerceIn(1, 64)
@@ -500,6 +710,8 @@ class DibujoViewModel(app: Application) : AndroidViewModel(app) {
                 // Cambiar de modo sale del ajuste del calco: no tiene sentido
                 // editar el calco y mover la hoja a la vez.
                 calcoEnEdicion = false,
+                textoEnEdicion = false,
+                textoSeleccionado = null,
                 marco = it.marco + 1,
             )
         }
@@ -541,6 +753,9 @@ class DibujoViewModel(app: Application) : AndroidViewModel(app) {
             it.copy(
                 puedeDeshacer = m.puedeDeshacer(),
                 puedeRehacer = m.puedeRehacer(),
+                textos = emptyList(),
+                textoSeleccionado = null,
+                textoEnEdicion = false,
                 modificado = true,
                 marco = it.marco + 1,
             )
@@ -736,6 +951,20 @@ class DibujoViewModel(app: Application) : AndroidViewModel(app) {
                     ajustandoLienzo = false,
                     puedeDeshacer = m.puedeDeshacer(),
                     puedeRehacer = m.puedeRehacer(),
+                    textos = if (cambio) {
+                        transformarTextos(
+                            it.textos,
+                            m.ancho,
+                            m.alto,
+                            voltearHorizontal,
+                            voltearVertical,
+                            desplazamientoX,
+                            desplazamientoY,
+                            escala,
+                        )
+                    } else {
+                        it.textos
+                    },
                     modificado = it.modificado || cambio,
                     marco = if (cambio) it.marco + 1 else it.marco,
                 )
@@ -759,6 +988,8 @@ class DibujoViewModel(app: Application) : AndroidViewModel(app) {
             it.copy(
                 ajustandoDibujo = true,
                 calcoEnEdicion = false,
+                textoEnEdicion = false,
+                textoSeleccionado = null,
                 trazoEnCurso = null,
                 marco = it.marco + 1,
             )
@@ -816,6 +1047,20 @@ class DibujoViewModel(app: Application) : AndroidViewModel(app) {
                     ajustandoDibujo = false,
                     puedeDeshacer = m.puedeDeshacer(),
                     puedeRehacer = m.puedeRehacer(),
+                    textos = if (cambio) {
+                        transformarTextos(
+                            it.textos,
+                            m.ancho,
+                            m.alto,
+                            false,
+                            false,
+                            dx,
+                            dy,
+                            escala,
+                        )
+                    } else {
+                        it.textos
+                    },
                     modificado = it.modificado || cambio,
                     marco = if (cambio) it.marco + 1 else it.marco,
                 )
@@ -879,11 +1124,17 @@ class DibujoViewModel(app: Application) : AndroidViewModel(app) {
         if (_estado.value.ajustandoLienzo) return
         val ancho = m.ancho
         val alto = m.alto
+        val textos = _estado.value.textos
         _estado.update { it.copy(ajustandoLienzo = true) }
         viewModelScope.launch {
+            // Recortar/redimensionar rehace la hoja: los textos vivos se
+            // hornean en la copia para que entren en el recorte y se muevan con
+            // el dibujo (después de esto dejan de ser editables). No se toca el
+            // motor hasta tener el resultado.
             val resultado = withContext(Dispatchers.Default) {
                 val pixeles = IntArray(ancho * alto)
                 if (!m.copiarHoja(pixeles)) return@withContext null
+                if (textos.isNotEmpty()) dibujarTextosEn(pixeles, ancho, alto, textos)
                 if (recortar) {
                     val recorte = recortarAlContenido(pixeles, ancho, alto, Colores.BLANCO)
                         ?: return@withContext null
@@ -898,7 +1149,14 @@ class DibujoViewModel(app: Application) : AndroidViewModel(app) {
                     Triple(na, nb, lienzoCentrado(pixeles, ancho, alto, na, nb))
                 }
             }
-            _estado.update { it.copy(ajustandoLienzo = false) }
+            _estado.update {
+                it.copy(
+                    ajustandoLienzo = false,
+                    textos = if (resultado != null) emptyList() else it.textos,
+                    textoSeleccionado = if (resultado != null) null else it.textoSeleccionado,
+                    textoEnEdicion = if (resultado != null) false else it.textoEnEdicion,
+                )
+            }
             // Recrea/reemplaza la hoja con el nuevo tamaño (reutiliza la ruta de
             // apertura de un dibujo: asigna la textura GPU al tamaño nuevo).
             if (resultado != null) {
@@ -944,6 +1202,20 @@ class DibujoViewModel(app: Application) : AndroidViewModel(app) {
     fun tocarHoja(px: Float, py: Float) {
         val m = motor ?: return
         if (_estado.value.modo != Modo.EDICION) return
+        // Tocar un texto lo selecciona para moverlo/escalarlo o editarlo, en
+        // vez de pintar un punto encima. En cualquier momento se puede volver
+        // a tocar para retomarlo.
+        val texto = textoEnPunto(px, py)
+        if (texto != null) {
+            seleccionarTexto(texto)
+            return
+        }
+        // Tocar fuera del texto sólo sale de la edición: no pinta un punto por
+        // accidente al querer soltar la palabra.
+        if (_estado.value.textoEnEdicion) {
+            terminarEdicionTexto()
+            return
+        }
         val (hx, hy) = aHoja(m, px, py)
         m.iniciarTrazo(hx, hy)
         m.terminarTrazo()
@@ -999,6 +1271,8 @@ class DibujoViewModel(app: Application) : AndroidViewModel(app) {
         _estado.update {
             it.copy(
                 calcoEnEdicion = !it.calcoEnEdicion,
+                textoEnEdicion = false,
+                textoSeleccionado = null,
                 // Al entrar en ajuste se asegura de que la imagen se vea.
                 calcoVisible = if (!it.calcoEnEdicion) true else it.calcoVisible,
             )
@@ -1091,6 +1365,80 @@ class DibujoViewModel(app: Application) : AndroidViewModel(app) {
      */
     fun copiarHoja(destino: IntArray): Boolean = motor?.copiarHoja(destino) ?: false
 
+    /**
+     * Copia la hoja con los textos vivos ya compuestos encima (texto horneado
+     * sólo en la copia). Es lo que se exporta a la galería o se comparte, para
+     * que la imagen final incluya las palabras tal como se ven.
+     */
+    fun copiarHojaConTextos(destino: IntArray): Boolean {
+        val m = motor ?: return false
+        if (!m.copiarHoja(destino)) return false
+        dibujarTextosEn(destino, m.ancho, m.alto, _estado.value.textos)
+        return true
+    }
+
+    /**
+     * Dibuja [textos] sobre el buffer ARGB de una hoja (ancho × alto). Cada
+     * texto se compone a su tamaño base y se escala igual que en la capa viva
+     * ([CapaTextos]), así lo exportado coincide con lo que se ve incluso con
+     * textos muy grandes.
+     */
+    private fun dibujarTextosEn(
+        pixeles: IntArray,
+        ancho: Int,
+        alto: Int,
+        textos: List<TextoEnHoja>,
+    ) {
+        textos.forEach { texto ->
+            TextoHoja.dibujarEscalado(
+                pixeles,
+                ancho,
+                alto,
+                texto.texto,
+                texto.tipografia,
+                texto.tamano,
+                texto.escala,
+                texto.centroX,
+                texto.centroY,
+                texto.color,
+                texto.voltearH,
+                texto.voltearV,
+            )
+        }
+    }
+
+    /**
+     * Aplica a los textos vivos la misma transformación que
+     * `MotorDibujo.transformarHoja`: espejo, desplazamiento y escala alrededor
+     * del centro de la hoja. Así el texto acompaña al dibujo sin hornearse y
+     * sigue siendo editable.
+     */
+    private fun transformarTextos(
+        textos: List<TextoEnHoja>,
+        ancho: Int,
+        alto: Int,
+        voltearH: Boolean,
+        voltearV: Boolean,
+        desplazamientoX: Float,
+        desplazamientoY: Float,
+        escala: Float,
+    ): List<TextoEnHoja> {
+        if (textos.isEmpty()) return textos
+        val cx = (ancho - 1) / 2f
+        val cy = (alto - 1) / 2f
+        val fx = if (voltearH) -1f else 1f
+        val fy = if (voltearV) -1f else 1f
+        return textos.map { texto ->
+            texto.copy(
+                centroX = cx + desplazamientoX + fx * escala * (texto.centroX - cx),
+                centroY = cy + desplazamientoY + fy * escala * (texto.centroY - cy),
+                escala = texto.escala * escala,
+                voltearH = texto.voltearH xor voltearH,
+                voltearV = texto.voltearV xor voltearV,
+            )
+        }
+    }
+
     override fun onCleared() {
         motor?.close()
         motor = null
@@ -1163,6 +1511,10 @@ class DibujoViewModel(app: Application) : AndroidViewModel(app) {
         /** Límites de escala del calco sobre su ajuste automático. */
         const val CALCO_ESCALA_MIN = 0.1f
         const val CALCO_ESCALA_MAX = 20f
+
+        /** Límites de escala de un texto vivo (gesto de dos dedos). */
+        const val TEXTO_ESCALA_MIN = 0.1f
+        const val TEXTO_ESCALA_MAX = 30f
 
         /** Cuántos colores recientes se recuerdan en la barra. */
         const val MAX_RECIENTES = 12

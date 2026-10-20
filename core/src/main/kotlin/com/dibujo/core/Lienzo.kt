@@ -166,7 +166,13 @@ class Lienzo(
      * en lugar de escalonados. La distancia usa `Double` y el C++ idéntico
      * para que la paridad no dependa del redondeo de `sqrt` en `Float`.
      */
-    fun disco(cx: Float, cy: Float, radio: Float, color: Int) {
+    fun disco(
+        cx: Float,
+        cy: Float,
+        radio: Float,
+        color: Int,
+        textura: Textura = Textura.LISA,
+    ) {
         val margen = radio + 1.0f
         val x0 = kotlin.math.floor(cx - margen).toInt()
         val x1 = kotlin.math.ceil(cx + margen).toInt()
@@ -184,17 +190,33 @@ class Lienzo(
                 val cobertura = (0.5 + r - dist).coerceIn(0.0, 1.0)
                 if (cobertura <= 0.0) continue
                 val alpha = kotlin.math.round(cobertura * 255.0).toInt()
-                pintarMezcla(x, y, color, alpha)
+                pintarMezcla(x, y, color, textura.aplicar(alpha, x, y))
             }
         }
     }
 
     /** Bloque cuadrado (punta cuadrada del lápiz). */
-    fun bloque(cx: Float, cy: Float, radio: Float, color: Int) {
+    fun bloque(
+        cx: Float,
+        cy: Float,
+        radio: Float,
+        color: Int,
+        textura: Textura = Textura.LISA,
+    ) {
         val px = kotlin.math.round(cx).toInt()
         val py = kotlin.math.round(cy).toInt()
         val r = kotlin.math.round(radio).toInt()
-        for (oy in -r..r) for (ox in -r..r) pintar(px + ox, py + oy, color)
+        for (oy in -r..r) {
+            for (ox in -r..r) {
+                val x = px + ox
+                val y = py + oy
+                if (textura == Textura.LISA) {
+                    pintar(x, y, color)
+                } else {
+                    pintarMezcla(x, y, color, textura.aplicar(255, x, y))
+                }
+            }
+        }
     }
 
     /**
@@ -209,6 +231,7 @@ class Lienzo(
     fun lineaGruesa(
         x0: Float, y0: Float, x1: Float, y1: Float,
         grosor: Int, redonda: Boolean, color: Int,
+        textura: Textura = Textura.LISA,
     ) {
         if (!redonda) {
             val radio = grosor / 2.0f
@@ -218,12 +241,12 @@ class Lienzo(
             )
             for (i in 0..pasos) {
                 val t = i.toFloat() / pasos
-                bloque(x0 + (x1 - x0) * t, y0 + (y1 - y0) * t, radio, color)
+                bloque(x0 + (x1 - x0) * t, y0 + (y1 - y0) * t, radio, color, textura)
             }
             return
         }
         val puntos = floatArrayOf(x0, y0, x1, y1)
-        polilineaGruesa(puntos, 4, grosor, redonda = true, color)
+        polilineaGruesa(puntos, 4, grosor, redonda = true, color, textura)
     }
 
     /**
@@ -239,6 +262,7 @@ class Lienzo(
         grosor: Int,
         redonda: Boolean,
         color: Int,
+        textura: Textura = Textura.LISA,
     ) {
         if (cantidad < 2) return
         if (!redonda) {
@@ -246,16 +270,16 @@ class Lienzo(
             while (i + 3 < cantidad) {
                 lineaGruesa(
                     puntos[i], puntos[i + 1], puntos[i + 2], puntos[i + 3],
-                    grosor, redonda = false, color,
+                    grosor, redonda = false, color, textura,
                 )
                 i += 2
             }
-            if (cantidad == 2) bloque(puntos[0], puntos[1], grosor / 2.0f, color)
+            if (cantidad == 2) bloque(puntos[0], puntos[1], grosor / 2.0f, color, textura)
             return
         }
         val radio = grosor / 2.0f
         if (cantidad == 2) {
-            disco(puntos[0], puntos[1], radio, color)
+            disco(puntos[0], puntos[1], radio, color, textura)
             return
         }
         val margen = radio + 1.0f
@@ -293,7 +317,7 @@ class Lienzo(
             val fila = (y - by0) * anchoCaja
             for (x in bx0..bx1) {
                 val alpha = cobertura[fila + (x - bx0)].toInt() and 0xFF
-                if (alpha > 0) pintarMezcla(x, y, color, alpha)
+                if (alpha > 0) pintarMezcla(x, y, color, textura.aplicar(alpha, x, y))
             }
         }
     }
@@ -369,6 +393,7 @@ class Lienzo(
     fun lineaDoble(
         x0: Float, y0: Float, x1: Float, y1: Float,
         grosor: Int, redonda: Boolean, color: Int, separacion: Float,
+        textura: Textura = Textura.LISA,
     ) {
         val dx = x1 - x0
         val dy = y1 - y0
@@ -378,8 +403,8 @@ class Lienzo(
         val ny = (dx / largo).toFloat()
         val ox = nx * separacion
         val oy = ny * separacion
-        lineaGruesa(x0 + ox, y0 + oy, x1 + ox, y1 + oy, grosor, redonda, color)
-        lineaGruesa(x0 - ox, y0 - oy, x1 - ox, y1 - oy, grosor, redonda, color)
+        lineaGruesa(x0 + ox, y0 + oy, x1 + ox, y1 + oy, grosor, redonda, color, textura)
+        lineaGruesa(x0 - ox, y0 - oy, x1 - ox, y1 - oy, grosor, redonda, color, textura)
     }
 
     /**
@@ -396,11 +421,12 @@ class Lienzo(
         redonda: Boolean,
         color: Int,
         separacion: Float,
+        textura: Textura = Textura.LISA,
     ) {
         if (cantidad < 2) return
         if (cantidad == 2) {
-            if (redonda) disco(puntos[0], puntos[1], grosor / 2.0f, color)
-            else bloque(puntos[0], puntos[1], grosor / 2.0f, color)
+            if (redonda) disco(puntos[0], puntos[1], grosor / 2.0f, color, textura)
+            else bloque(puntos[0], puntos[1], grosor / 2.0f, color, textura)
             return
         }
         val n = cantidad / 2
@@ -441,8 +467,8 @@ class Lienzo(
             ladoB[base] = puntos[base] - ox
             ladoB[base + 1] = puntos[base + 1] - oy
         }
-        polilineaGruesa(ladoA, cantidad, grosor, redonda, color)
-        polilineaGruesa(ladoB, cantidad, grosor, redonda, color)
+        polilineaGruesa(ladoA, cantidad, grosor, redonda, color, textura)
+        polilineaGruesa(ladoB, cantidad, grosor, redonda, color, textura)
     }
 
     /**

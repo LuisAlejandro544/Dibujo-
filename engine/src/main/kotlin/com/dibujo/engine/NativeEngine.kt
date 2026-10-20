@@ -15,7 +15,14 @@ object NativeEngine {
 
     external fun nativoCrear(ancho: Int, alto: Int): Long
     external fun nativoDestruir(handle: Long)
-    external fun nativoConfigurarLapiz(handle: Long, color: Int, grosor: Int, puntaRedonda: Boolean, herramienta: Int)
+    external fun nativoConfigurarLapiz(
+        handle: Long,
+        color: Int,
+        grosor: Int,
+        puntaRedonda: Boolean,
+        herramienta: Int,
+        textura: Int,
+    )
     external fun nativoAsistenciaRecta(handle: Long, activa: Boolean)
     external fun nativoIniciarTrazo(handle: Long, x: Float, y: Float)
     external fun nativoContinuarTrazo(handle: Long, x: Float, y: Float)

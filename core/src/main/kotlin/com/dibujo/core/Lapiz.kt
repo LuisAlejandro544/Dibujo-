@@ -12,13 +12,14 @@ enum class Herramienta { LAPIZ, PORTAMINA, CARBONCILLO, BORRADOR, PINTAR, DOBLE 
 enum class Punta { REDONDA, CUADRADA }
 
 /**
- * Lápiz seleccionado: color, grosor, punta y herramienta.
+ * Lápiz seleccionado: color, grosor, punta, herramienta y textura.
  */
 data class Lapiz(
     val color: Int = Colores.NEGRO,
     val grosor: Int = 2,
     val punta: Punta = Punta.REDONDA,
     val herramienta: Herramienta = Herramienta.LAPIZ,
+    val textura: Textura = Textura.LISA,
 ) {
     init {
         require(grosor in 1..64) { "grosor fuera de rango: $grosor" }

@@ -101,6 +101,14 @@ Java_com_dibujo_engine_NativeEngine_nativoLimpiarHoja(JNIEnv*, jobject, jlong ha
     peer(handle)->limpiarHoja();
 }
 
+JNIEXPORT void JNICALL
+Java_com_dibujo_engine_NativeEngine_nativoLimiteHistorial(
+        JNIEnv*, jobject, jlong handle, jint pasos) {
+    auto* e = peer(handle);
+    if (e == nullptr) return;
+    e->fijarLimiteHistorial(pasos < 1 ? 1 : static_cast<std::size_t>(pasos));
+}
+
 JNIEXPORT jboolean JNICALL
 Java_com_dibujo_engine_NativeEngine_nativoLimpiarTrazos(JNIEnv*, jobject, jlong handle) {
     auto* e = peer(handle);

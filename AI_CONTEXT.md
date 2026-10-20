@@ -378,16 +378,19 @@ tocar uno se elige y la herramienta pasa a PINTAR. Es aprendizaje no supervisado
 local: **0 MB** y ninguna dependencia nueva.
 
 ### Historial
-Undo/redo por snapshots completos de la hoja. Límite de pasos: **30**
-(`Historial` en Kotlin y `kMaxHistorial` en C++ tienen que coincidir). El
-estado Compose expone `puedeDeshacer`/`puedeRehacer` y habilita/deshabilita
-los botones. Importante: el `Canvas` lee el `State` dentro del `draw`
-(`estadoState.value`), no sólo durante la composición; si no, undo/redo
-cambian el motor pero no repintan (era el bug "se unde y no hace nada").
+Undo/redo por snapshots completos de la hoja. El tope es **configurable**
+(5..100, por defecto **30**) desde *Opciones → Historial*; `MotorDibujo.limiteHistorial`
+lo aplica en caliente al motor (`Historial.fijarMaximo` en Kotlin y
+`DibujoEngine::fijarLimiteHistorial` en C++, con el mismo recorte de pasos
+viejos). Ambos lados tienen que coincidir. El estado Compose expone
+`puedeDeshacer`/`puedeRehacer` y habilita/deshabilita los botones. Importante:
+el `Canvas` lee el `State` dentro del `draw` (`estadoState.value`), no sólo
+durante la composición; si no, undo/redo cambian el motor pero no repintan
+(era el bug "se unde y no hace nada").
 
 `DibujoViewModel` mantiene además un **historial unificado** en la app
 (`PasoHistorial`: `Pixeles`, `Vectores(antes, despues)` o
-`Ambos(antes, despues)`, tope `MAX_PASOS = 30`) que intercala los snapshots
+`Ambos(antes, despues)`, mismo tope configurable) que intercala los snapshots
 del motor con los cambios de los objetos vectoriales vivos, sin duplicar la
 hoja. `registrarPasoPixeles` se llama cuando el motor guarda un snapshot
 (`terminarTrazo`, `limpiarTrazos`), `registrarPasoVectores` en cada edición
@@ -460,7 +463,7 @@ y `abrirDibujo`).
 | Gradle | 9.8.1 (wrapper, `gradlew`) |
 | Kotlin | 2.4.21 (root `build.gradle.kts`; alias en `gradle/libs.versions.toml`) |
 | AGP | 9.4.1 (con *built-in Kotlin*: NO aplicar `org.jetbrains.kotlin.android` en `:app`) |
-| Compose | BOM 2026.09.00 + `kotlin.plugin.compose` 2.4.21 |
+| Compose | BOM 2026.09.00 + `kotlin.plugin.compose` 2.4.21; `androidx.compose.animation` (transiciones de pantalla) |
 | LeakCanary | 2.14 (solo `debugImplementation` en `:app`) |
 | LiteRT | `com.google.ai.edge.litert:litert` 2.3.0 (Google Maven; runtime del modelo IA de `:app`; delegado GPU con caída a CPU; trae `&lt;abi&gt;/libLiteRt.so` + `liblitert_jni.so`) |
 | SDK | compileSdk 37, minSdk 26, targetSdk 37, ABIs arm64-v8a + x86_64 |
@@ -665,10 +668,14 @@ Al abrir la app ya no se entra directo al lienzo: se muestra un **menú
 principal** con cuatro accesos, cada uno en su propio archivo/pantalla.
 
 - **Navegación** (`Navegacion.kt`, `AppDibujo`): un estado simple
-  (`enum Destino { MENU, DIBUJO, CARGAR, OPCIONES }` con `rememberSaveable`) y un
-  `when`; sin dependencias nuevas (no se agregó Navigation Compose). `MainActivity`
-  compone `AppDibujo()`. El `DibujoViewModel` es el de la Activity, así que la
-  hoja **sobrevive** al ir y volver del menú (no se recrea el motor).
+  (`enum Destino { MENU, DIBUJO, CARGAR, OPCIONES, OPCIONES_MOTOR,
+  OPCIONES_DIBUJO, OPCIONES_RETROALIMENTACION, OPCIONES_HISTORIAL }` con
+  `rememberSaveable`) y un `when` dentro de `AnimatedContent` (Compose
+  `animation`): al entrar a un apartado el contenido entra deslizando desde la
+  derecha y el anterior se desvanece, y al volver el sentido se invierte según
+  `profundidad(Destino)`; sin Navigation Compose. `MainActivity` compone
+  `AppDibujo()`. El `DibujoViewModel` es el de la Activity, así que la hoja
+  **sobrevive** al ir y volver del menú (no se recrea el motor).
 - **`PantallaMenu.kt`** (`PantallaMenu`): cuatro tarjetas grandes.
   - *Nuevo dibujo*: empieza una hoja en blanco desde cero. Llama
     `DibujoViewModel.nuevoDibujo()`, que **descarta el motor** (`close()` y
@@ -686,11 +693,25 @@ principal** con cuatro accesos, cada uno en su propio archivo/pantalla.
   miniatura (`AlmacenDibujos.miniatura`, potencias de dos), fecha y tamaño;
   permite abrir (carga los píxeles y llama `DibujoViewModel.abrirDibujo`) o
   borrar (con confirmación).
-- **`PantallaOpciones.kt`** (`PantallaOpciones`): la configuración dejó de ser un
-  diálogo dentro del lienzo y tiene **pantalla dedicada**. Reúne la elección de
-  backend (reusa `OpcionBackend` y `BackendRender.recursoNombre()`, ahora
-  `internal` en este archivo) y los **créditos de IA** (atribución de Quick,
-  Draw! que exige la licencia CC BY 4.0 del dataset de entrenamiento).
+- **Configuración por apartados** (cada uno en su archivo/pantalla, unificados
+  por `ComponentesOpciones.kt` con `MarcoOpcion`, `TarjetaAjuste` y `FilaOpcion`):
+  - **`PantallaOpciones.kt`**: índice con tarjetas (motor, valores de dibujo,
+    retroalimentación e historial) y los **créditos de IA** (atribución de
+    Quick, Draw! que exige la licencia CC BY 4.0 del dataset de entrenamiento).
+  - **`PantallaOpcionesMotor.kt`**: backend OpenGL ES / Vulkan / automático,
+    versión de OpenGL ES, Vulkan soportado y render GPU en uso.
+  - **`PantallaOpcionesDibujo.kt`**: herramienta, grosor y textura con los que
+    arranca un dibujo nuevo (`DibujoEstado.herramientaInicial`, `grosorInicial`,
+    `texturaInicial`; se aplican en `nuevoDibujo()`). El número del grosor se
+    actualiza **mientras se arrastra** el slider (el valor se persiste al
+    soltar) y cada textura muestra su trazo real con `VistaPreviaTextura`
+    (`VistaPreviaTextura.kt`, compartido con el diálogo del lienzo).
+  - **`PantallaOpcionesRetroalimentacion.kt`**: vibración háptica y sonidos al
+    dibujar/deshacer/rehacer (`Retroalimentacion.kt`, `Vibrador` +
+    `ToneGenerator`; vibración activada y sonidos apagados por defecto).
+  - **`PantallaOpcionesHistorial.kt`**: tope del historial (5..100, por defecto
+    30) aplicado en caliente con `MotorDibujo.limiteHistorial`; el número
+    también se refresca en vivo mientras se arrastra el slider.
 - **`AlmacenDibujos.kt`**: persistencia en `filesDir/dibujos` como PNG (ARGB sin
   pérdida), sin permisos.
   - **Borrador en curso** (`actual.png`, [AlmacenDibujos.SLOT_ACTUAL]): el dibujo
@@ -838,8 +859,8 @@ Es clave para trabajar desde el móvil, sin adb ni PC.
   cámara: al reabrir sólo se recupera la hoja. Release sin firmar y sin más
   metadatos por dibujo (nombre propio).
 - Release de `:app` no está firmado para distribución (solo debug).
-- El historial es por snapshots: 30 pasos (compartidos C++/Kotlin) para
-  acotar la RAM del dispositivo (ver "Historial").
+- El historial es por snapshots: tope configurable 5..100 (30 por defecto,
+  compartido C++/Kotlin) para acotar la RAM del dispositivo (ver "Historial").
 
 ## 7. Datos útiles para agentes
 

@@ -654,7 +654,7 @@ bool DibujoEngine::terminarTrazo() {
     std::lock_guard<std::mutex> bloqueo(mutex_);
     // Snapshot para undo antes de aplicar el trazo.
     pasado_.push_back(hoja_);
-    if (pasado_.size() > kMaxHistorial) pasado_.erase(pasado_.begin());
+    if (pasado_.size() > maxHistorial_) pasado_.erase(pasado_.begin());
     futuro_.clear();
 
     // Trazo asistido: se descarta el recorrido tembloroso y se dibuja una recta
@@ -707,6 +707,12 @@ void DibujoEngine::cancelarTrazo() {
     trazoActivo_ = false;
 }
 
+void DibujoEngine::fijarLimiteHistorial(std::size_t maximo) {
+    std::lock_guard<std::mutex> bloqueo(mutex_);
+    maxHistorial_ = maximo < 1 ? 1 : maximo;
+    while (pasado_.size() > maxHistorial_) pasado_.erase(pasado_.begin());
+}
+
 bool DibujoEngine::deshacer() {
     std::lock_guard<std::mutex> bloqueo(mutex_);
     if (pasado_.empty()) return false;
@@ -730,7 +736,7 @@ bool DibujoEngine::rehacer() {
 void DibujoEngine::limpiarHoja() {
     std::lock_guard<std::mutex> bloqueo(mutex_);
     pasado_.push_back(hoja_);
-    if (pasado_.size() > kMaxHistorial) pasado_.erase(pasado_.begin());
+    if (pasado_.size() > maxHistorial_) pasado_.erase(pasado_.begin());
     futuro_.clear();
     std::fill(hoja_.begin(), hoja_.end(), fondo_);
     ++revision_;
@@ -753,7 +759,7 @@ bool DibujoEngine::limpiarTrazos(float radio) {
     // la tinta, así que cada píxel conserva el color que tenía (`origen`).
     std::vector<uint32_t> origen = hoja_;
     pasado_.push_back(hoja_);
-    if (pasado_.size() > kMaxHistorial) pasado_.erase(pasado_.begin());
+    if (pasado_.size() > maxHistorial_) pasado_.erase(pasado_.begin());
     futuro_.clear();
 
     adelgazar(tinta, ancho_, alto_);
@@ -776,7 +782,7 @@ bool DibujoEngine::reemplazarHoja(const uint32_t* datos, std::size_t n) {
     std::lock_guard<std::mutex> bloqueo(mutex_);
     if (datos == nullptr || n != hoja_.size()) return false;
     pasado_.push_back(hoja_);
-    if (pasado_.size() > kMaxHistorial) pasado_.erase(pasado_.begin());
+    if (pasado_.size() > maxHistorial_) pasado_.erase(pasado_.begin());
     futuro_.clear();
     std::copy(datos, datos + n, hoja_.begin());
     ++revision_;
@@ -815,7 +821,7 @@ bool DibujoEngine::transformar(bool voltearHorizontal, bool voltearVertical,
         }
     }
     pasado_.push_back(std::move(fuente));
-    if (pasado_.size() > kMaxHistorial) pasado_.erase(pasado_.begin());
+    if (pasado_.size() > maxHistorial_) pasado_.erase(pasado_.begin());
     futuro_.clear();
     ++revision_;
     return true;

@@ -33,6 +33,7 @@ object NativeEngine {
     external fun nativoPuedeDeshacer(handle: Long): Boolean
     external fun nativoPuedeRehacer(handle: Long): Boolean
     external fun nativoLimpiarHoja(handle: Long)
+    external fun nativoLimiteHistorial(handle: Long, pasos: Int)
     external fun nativoLimpiarTrazos(handle: Long): Boolean
     external fun nativoExpandir(handle: Long, izquierda: Int, arriba: Int, derecha: Int, abajo: Int)
     external fun nativoAncho(handle: Long): Int

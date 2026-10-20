@@ -196,6 +196,25 @@ class MotorNativoTest {
     }
 
     @Test
+    fun limiteHistorialParidadNativoKotlin() {
+        if (!NativeEngine.disponible()) return
+        for (m in listOf(MotorNativo(20, 10), MotorKotlin(20, 10))) {
+            m.limiteHistorial(2)
+            m.configurarLapiz(Lapiz(color = Colores.ROJO, grosor = 1))
+            for (y in 1..3) {
+                m.iniciarTrazo(2f, y.toFloat())
+                m.continuarTrazo(18f, y.toFloat())
+                assertTrue(m.terminarTrazo(), "${m.nombre}: trazo $y")
+            }
+            // Con tope 2, el primer snapshot ya se descartó: quedan dos.
+            assertTrue(m.deshacer(), "${m.nombre}: deshacer 1")
+            assertTrue(m.deshacer(), "${m.nombre}: deshacer 2")
+            assertTrue(!m.deshacer(), "${m.nombre}: el tope 2 no guarda más")
+            m.close()
+        }
+    }
+
+    @Test
     fun texturaParidadNativoKotlin() {
         if (!NativeEngine.disponible()) return
         for (textura in Textura.entries) {

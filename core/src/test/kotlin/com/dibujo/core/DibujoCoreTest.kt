@@ -302,6 +302,30 @@ class HistorialTest {
         l.pintar(1, 1, Colores.AZUL)
         assertTrue(!h.puedeRehacer())
     }
+
+    @Test
+    fun topeConfigurableDescartaLosPasosViejos() {
+        val l = Lienzo(5, 5)
+        val h = Historial(2)
+        h.guardar(l)
+        l.pintar(0, 0, Colores.ROJO)
+        h.guardar(l)
+        l.pintar(1, 1, Colores.AZUL)
+        h.guardar(l)
+        l.pintar(2, 2, Colores.NEGRO)
+        assertTrue(h.deshacer(l))
+        assertTrue(h.deshacer(l))
+        assertTrue(!h.deshacer(l), "con tope 2 sólo quedan dos deshacer")
+        assertEquals(Colores.ROJO, l.pixel(0, 0))
+
+        // Bajar el tope en caliente también descarta los más viejos.
+        h.fijarMaximo(1)
+        l.pintar(3, 3, Colores.AZUL)
+        h.guardar(l)
+        l.pintar(4, 4, Colores.NEGRO)
+        assertTrue(h.deshacer(l))
+        assertTrue(!h.deshacer(l))
+    }
 }
 
 class TexturaTest {

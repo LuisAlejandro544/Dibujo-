@@ -101,6 +101,25 @@
 
     <!-- Configuración -->
     <string name="config_titulo">Configuración</string>
+    <string name="config_motor_titulo">Motor de renderizado del lienzo</string>
+    <string name="config_motor_desc">Elegí OpenGL ES, Vulkan o automático y mirá el diagnóstico del equipo</string>
+    <string name="config_dibujo_titulo">Valores de dibujo</string>
+    <string name="config_dibujo_desc">Herramienta, grosor y textura con los que empieza un dibujo nuevo</string>
+    <string name="config_dibujo_ayuda">Estos valores se aplican al empezar un dibujo nuevo; no cambian la herramienta del lienzo actual.</string>
+    <string name="config_herramienta_inicial">Herramienta inicial</string>
+    <string name="config_grosor_inicial">Grosor inicial</string>
+    <string name="config_grosor_valor">Grosor %1$d</string>
+    <string name="config_textura_inicial">Textura inicial</string>
+    <string name="config_feedback_titulo">Retroalimentación</string>
+    <string name="config_feedback_desc">Vibración y sonidos al dibujar, deshacer y rehacer</string>
+    <string name="config_vibracion">Vibración háptica</string>
+    <string name="config_vibracion_desc">Vibra al terminar un trazo y al deshacer o rehacer.</string>
+    <string name="config_sonidos">Sonidos</string>
+    <string name="config_sonidos_desc">Un tono breve al dibujar, deshacer y rehacer.</string>
+    <string name="config_historial_titulo">Historial</string>
+    <string name="config_historial_desc">Cantidad de pasos que se pueden deshacer. Más pasos usan más memoria.</string>
+    <string name="config_historial_valor">%1$d pasos</string>
+    <string name="config_historial_memoria">Cada paso guarda una copia completa de la hoja en memoria.</string>
     <string name="config_backend">Motor gráfico</string>
     <string name="config_backend_efectivo">En uso: %1$s</string>
     <string name="config_vulkan_no_soportado">Este equipo no soporta Vulkan 1.1; la opción queda bloqueada.</string>

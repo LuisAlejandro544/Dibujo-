@@ -5,9 +5,19 @@ package com.dibujo.core
  * Límite de pasos configurable (por defecto 30: con hoja del tamaño de
  * pantalla cada snapshot son ~6-10 MB, y el C++ replica el mismo límite).
  */
-class Historial(private val maximo: Int = 30) {
+class Historial(maximo: Int = 30) {
     private val pasado = ArrayDeque<IntArray>()
     private val futuro = ArrayDeque<IntArray>()
+    private var maximo = maximo.coerceAtLeast(1)
+
+    /**
+     * Cambia el tope de pasos y descarta los más viejos si el nuevo es menor.
+     * La configuración vive en la app; el C++ replica el mismo tope.
+     */
+    fun fijarMaximo(nuevo: Int) {
+        maximo = nuevo.coerceAtLeast(1)
+        while (pasado.size > maximo) pasado.removeFirst()
+    }
 
     fun guardar(l: Lienzo) {
         pasado.addLast(l.pixeles.copyOf())

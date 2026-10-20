@@ -22,7 +22,12 @@ data class Lapiz(
     val textura: Textura = Textura.LISA,
 ) {
     init {
-        require(grosor in 1..64) { "grosor fuera de rango: $grosor" }
+        require(grosor in GROSOR_MIN..GROSOR_MAX) { "grosor fuera de rango: $grosor" }
+    }
+
+    companion object {
+        const val GROSOR_MIN = 1
+        const val GROSOR_MAX = 64
     }
 
     /**

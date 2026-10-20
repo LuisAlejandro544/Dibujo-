@@ -3,48 +3,43 @@ package com.dibujo.android
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.selection.selectable
-import androidx.compose.foundation.selection.selectableGroup
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
+import androidx.compose.material.icons.automirrored.rounded.VolumeUp
+import androidx.compose.material.icons.rounded.Brush
+import androidx.compose.material.icons.rounded.History
+import androidx.compose.material.icons.rounded.Memory
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.unit.dp
-import com.dibujo.core.BackendRender
 
 /**
- * Pantalla "Opciones": antes la configuración era un diálogo dentro de la
- * pantalla de dibujo; ahora tiene su propia pantalla, accesible desde el menú
- * principal y desde la barra superior del lienzo. Reúne la elección del motor
- * gráfico (OpenGL ES / Vulkan / automático) y los créditos de IA (atribución
- * del dataset de entrenamiento, exigida por su licencia CC BY 4.0).
+ * Índice de configuración: cada apartado tiene su propia pantalla y archivo.
+ * Antes todo (motor, diagnóstico y créditos) vivía en este archivo; ahora acá
+ * sólo se elige el apartado y se agregan los créditos de IA.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun PantallaOpciones(
-    estado: DibujoEstado,
-    alElegirBackend: (BackendRender) -> Unit,
+    alAbrirMotor: () -> Unit,
+    alAbrirDibujo: () -> Unit,
+    alAbrirRetroalimentacion: () -> Unit,
+    alAbrirHistorial: () -> Unit,
     alVolver: () -> Unit,
 ) {
     BackHandler(onBack = alVolver)
@@ -72,56 +67,34 @@ fun PantallaOpciones(
                 .padding(margenes)
                 .verticalScroll(rememberScrollState())
                 .padding(horizontal = 20.dp, vertical = 16.dp),
-            verticalArrangement = Arrangement.spacedBy(4.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
-            Text(
-                stringResource(R.string.config_backend),
-                style = MaterialTheme.typography.titleSmall,
+            TarjetaAjuste(
+                icono = Icons.Rounded.Memory,
+                titulo = stringResource(R.string.config_motor_titulo),
+                descripcion = stringResource(R.string.config_motor_desc),
+                alPulsar = alAbrirMotor,
             )
-            Column(Modifier.selectableGroup()) {
-                BackendRender.entries.forEach { backend ->
-                    OpcionBackend(
-                        backend = backend,
-                        seleccionado = estado.backendSeleccionado == backend,
-                        habilitado = backend.disponible(estado.vulkanSoportado),
-                        alElegir = { alElegirBackend(backend) },
-                    )
-                }
-            }
-            Spacer(Modifier.height(8.dp))
-            Text(
-                stringResource(
-                    R.string.config_backend_efectivo,
-                    stringResource(estado.backendEfectivo.recursoNombre()),
-                ),
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            TarjetaAjuste(
+                icono = Icons.Rounded.Brush,
+                titulo = stringResource(R.string.config_dibujo_titulo),
+                descripcion = stringResource(R.string.config_dibujo_desc),
+                alPulsar = alAbrirDibujo,
             )
-            Text(
-                stringResource(R.string.config_opengl_version, estado.openglEsVersion),
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            TarjetaAjuste(
+                icono = Icons.AutoMirrored.Rounded.VolumeUp,
+                titulo = stringResource(R.string.config_feedback_titulo),
+                descripcion = stringResource(R.string.config_feedback_desc),
+                alPulsar = alAbrirRetroalimentacion,
             )
-            Text(
-                stringResource(
-                    when {
-                        estado.gpuActivo -> R.string.config_render_gpu
-                        estado.gpuFallo -> R.string.config_render_cpu_fallo
-                        else -> R.string.config_render_cpu
-                    },
-                    estado.gpuDescripcion,
-                ),
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            TarjetaAjuste(
+                icono = Icons.Rounded.History,
+                titulo = stringResource(R.string.config_historial_titulo),
+                descripcion = stringResource(R.string.config_historial_desc),
+                alPulsar = alAbrirHistorial,
             )
-            if (!estado.vulkanSoportado) {
-                Text(
-                    stringResource(R.string.config_vulkan_no_soportado),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
-            Spacer(Modifier.height(16.dp))
+
+            Spacer(Modifier.height(12.dp))
             Text(
                 stringResource(R.string.config_atribucion_titulo),
                 style = MaterialTheme.typography.titleSmall,
@@ -133,49 +106,4 @@ fun PantallaOpciones(
             )
         }
     }
-}
-
-@Composable
-private fun OpcionBackend(
-    backend: BackendRender,
-    seleccionado: Boolean,
-    habilitado: Boolean,
-    alElegir: () -> Unit,
-) {
-    val etiqueta = stringResource(backend.recursoNombre())
-    Row(
-        Modifier
-            .fillMaxWidth()
-            .selectable(
-                selected = seleccionado,
-                enabled = habilitado,
-                role = Role.RadioButton,
-                onClick = alElegir,
-            )
-            .padding(vertical = 4.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        RadioButton(
-            selected = seleccionado,
-            onClick = null,
-            enabled = habilitado,
-        )
-        Spacer(Modifier.width(8.dp))
-        Text(
-            etiqueta,
-            style = MaterialTheme.typography.bodyMedium,
-            color = if (habilitado) {
-                MaterialTheme.colorScheme.onSurface
-            } else {
-                MaterialTheme.colorScheme.onSurfaceVariant
-            },
-        )
-    }
-}
-
-/** Nombre legible de cada backend, desde los strings (sin texto duro). */
-internal fun BackendRender.recursoNombre(): Int = when (this) {
-    BackendRender.AUTOMATICO -> R.string.backend_automatico
-    BackendRender.OPENGL -> R.string.backend_opengl
-    BackendRender.VULKAN -> R.string.backend_vulkan
 }

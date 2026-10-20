@@ -12,7 +12,29 @@ enum class Herramienta { LAPIZ, PORTAMINA, CARBONCILLO, BORRADOR, PINTAR, DOBLE,
 enum class Punta { REDONDA, CUADRADA }
 
 /**
+ * Estilo de la segunda línea de la herramienta DOBLE. Se elige aparte del
+ * estilo principal para poder combinar, por ejemplo, lápiz + pincel vector.
+ * El ordinal viaja por JNI (mismo orden que `EstiloDoble` en C++).
+ */
+enum class EstiloDoble { LAPIZ, PORTAMINA, CARBONCILLO, PINCEL }
+
+/**
+ * Cómo se coloca la segunda línea de la herramienta DOBLE:
+ *  - [CENTRADO]: una línea a cada lado del recorrido (comportamiento clásico).
+ *  - [LADO_A]: el trazo principal sigue el dedo y la copia va a un lado.
+ *  - [LADO_B]: igual que [LADO_A], pero hacia el otro lado de la normal.
+ *  - [ESPEJO]: la copia se refleja al otro lado del primer punto tocado;
+ *    dibujás hacia la derecha y la copia aparece cerca, hacia la izquierda.
+ * El ordinal viaja por JNI (mismo orden que `ModoDoble` en C++).
+ */
+enum class ModoDoble { CENTRADO, LADO_A, LADO_B, ESPEJO }
+
+/**
  * Lápiz seleccionado: color, grosor, punta, herramienta y textura.
+ *
+ * [colorSombra] es el color de la copia de la herramienta DOBLE; si es `null`
+ * la copia usa el color principal. [estiloDoble] y [modoDoble] configuran esa
+ * copia sin cambiar la herramienta principal.
  */
 data class Lapiz(
     val color: Int = Colores.NEGRO,
@@ -20,6 +42,9 @@ data class Lapiz(
     val punta: Punta = Punta.REDONDA,
     val herramienta: Herramienta = Herramienta.LAPIZ,
     val textura: Textura = Textura.LISA,
+    val estiloDoble: EstiloDoble = EstiloDoble.LAPIZ,
+    val modoDoble: ModoDoble = ModoDoble.CENTRADO,
+    val colorSombra: Int? = null,
 ) {
     init {
         require(grosor in GROSOR_MIN..GROSOR_MAX) { "grosor fuera de rango: $grosor" }
@@ -44,4 +69,23 @@ data class Lapiz(
         Herramienta.DOBLE -> grosor
         else -> grosor
     }
+
+    /**
+     * Grosor de la segunda línea de DOBLE según [estiloDoble]: porta fina,
+     * carbón grueso y pincel vector algo más ancho y siempre redondo. La misma
+     * fórmula vive en C++ (`grosorEstiloDoble`) para mantener la paridad.
+     */
+    fun grosorCopiaDoble(): Int = when (estiloDoble) {
+        EstiloDoble.LAPIZ -> grosor
+        EstiloDoble.PORTAMINA -> maxOf(1, grosor / 2)
+        EstiloDoble.CARBONCILLO -> grosor + 2
+        EstiloDoble.PINCEL -> maxOf(1, (grosor * 3) / 2)
+    }
+
+    /** Punta de la copia: el pincel vector siempre es redondo. */
+    fun puntaCopiaDoble(): Punta =
+        if (estiloDoble == EstiloDoble.PINCEL) Punta.REDONDA else punta
+
+    /** Color de la copia (sombra elegida o color principal si no hay). */
+    fun colorCopiaDoble(): Int = colorSombra ?: color
 }

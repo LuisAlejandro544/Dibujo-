@@ -2,8 +2,10 @@ package com.dibujo.engine
 
 import com.dibujo.core.Camara
 import com.dibujo.core.Colores
+import com.dibujo.core.EstiloDoble
 import com.dibujo.core.Herramienta
 import com.dibujo.core.Lapiz
+import com.dibujo.core.ModoDoble
 import com.dibujo.core.Textura
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -561,6 +563,45 @@ class MotorNativoTest {
         }
         nativo.close()
         kotlin.close()
+    }
+
+    @Test
+    fun dobleConfigurableParidadNativoKotlin() {
+        if (!NativeEngine.disponible()) return
+        val casos = listOf(
+            Triple(ModoDoble.CENTRADO, EstiloDoble.PINCEL, Colores.ROJO),
+            Triple(ModoDoble.LADO_A, EstiloDoble.PORTAMINA, Colores.VERDE),
+            Triple(ModoDoble.LADO_B, EstiloDoble.CARBONCILLO, Colores.AMARILLO),
+            Triple(ModoDoble.ESPEJO, EstiloDoble.LAPIZ, Colores.ROJO_OSCURO),
+        )
+        for ((modo, estilo, sombra) in casos) {
+            val nativo = MotorNativo(28, 24)
+            val kotlin = MotorKotlin(28, 24)
+            val lapiz = Lapiz(
+                color = Colores.AZUL,
+                grosor = 5,
+                herramienta = Herramienta.DOBLE,
+                estiloDoble = estilo,
+                modoDoble = modo,
+                colorSombra = sombra,
+            )
+            for (m in listOf(nativo, kotlin)) {
+                m.configurarLapiz(lapiz)
+                m.iniciarTrazo(6f, 8f)
+                m.continuarTrazo(14f, 5f)
+                m.continuarTrazo(22f, 18f)
+                assertTrue(m.terminarTrazo(), "${m.nombre}: doble $modo/$estilo")
+            }
+            val a = IntArray(28 * 24)
+            val b = IntArray(28 * 24)
+            assertTrue(nativo.copiarHoja(a), "nativo: copiarHoja")
+            assertTrue(kotlin.copiarHoja(b), "kotlin: copiarHoja")
+            for (i in a.indices) {
+                assertEquals(b[i], a[i], "doble $modo/$estilo: discrepancia en píxel $i")
+            }
+            nativo.close()
+            kotlin.close()
+        }
     }
 
     @Test

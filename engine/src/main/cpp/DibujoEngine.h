@@ -25,11 +25,19 @@ public:
     void fijarPuntaRedonda(bool redonda) { puntaRedonda_ = redonda; }
     void fijarHerramienta(Tool tool) { herramienta_ = tool; }
     void fijarTextura(Textura textura) { textura_ = textura; }
+    // Configuración de la segunda línea de DOBLE (0 en colorSombra = usar el
+    // color principal). Replica los campos nuevos de `Lapiz` en Kotlin.
+    void fijarEstiloDoble(EstiloDoble estilo) { estiloDoble_ = estilo; }
+    void fijarModoDoble(ModoDoble modo) { modoDoble_ = modo; }
+    void fijarColorSombra(uint32_t color) { colorSombra_ = color; }
     uint32_t color() const { return color_; }
     int grosor() const { return grosor_; }
     bool puntaRedonda() const { return puntaRedonda_; }
     Tool herramienta() const { return herramienta_; }
     Textura textura() const { return textura_; }
+    EstiloDoble estiloDoble() const { return estiloDoble_; }
+    ModoDoble modoDoble() const { return modoDoble_; }
+    uint32_t colorSombra() const { return colorSombra_; }
 
     // Trazo asistido: al terminar un trazo se descarta su recorrido y se
     // dibuja una recta entre el primer y el último punto (PINTAR no cambia).
@@ -144,6 +152,9 @@ private:
     bool puntaRedonda_ = true;
     Tool herramienta_ = Tool::LAPIZ;
     Textura textura_ = Textura::LISA;
+    EstiloDoble estiloDoble_ = EstiloDoble::LAPIZ;
+    ModoDoble modoDoble_ = ModoDoble::CENTRADO;
+    uint32_t colorSombra_ = 0;  // 0 = sin sombra (usa color_)
     bool asistenciaRecta_ = false;
 
     // Cámara.

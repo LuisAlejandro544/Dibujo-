@@ -10,10 +10,12 @@ import com.dibujo.core.BackendRender
 import com.dibujo.core.Camara
 import com.dibujo.core.Colores
 import com.dibujo.core.Cuantizador
+import com.dibujo.core.EstiloDoble
 import com.dibujo.core.Herramienta
 import com.dibujo.core.Lapiz
 import com.dibujo.core.Lienzo
 import com.dibujo.core.Modo
+import com.dibujo.core.ModoDoble
 import com.dibujo.core.MotorDibujo
 import com.dibujo.core.Textura
 import com.dibujo.engine.Motores
@@ -675,6 +677,18 @@ class DibujoViewModel(app: Application) : AndroidViewModel(app) {
 
     fun elegirHerramienta(herramienta: Herramienta) =
         actualizarLapiz { it.copy(herramienta = herramienta) }
+
+    /** Estilo de la segunda línea de la herramienta DOBLE. */
+    fun elegirEstiloDoble(estilo: EstiloDoble) =
+        actualizarLapiz { it.copy(estiloDoble = estilo) }
+
+    /** Colocación de la segunda línea (alrededor, a un lado o reflejada). */
+    fun elegirModoDoble(modo: ModoDoble) =
+        actualizarLapiz { it.copy(modoDoble = modo) }
+
+    /** Color de la copia (sombra); `null` usa el color principal. */
+    fun elegirColorSombra(argb: Int?) =
+        actualizarLapiz { it.copy(colorSombra = argb) }
 
     /**
      * Elige la textura del trazo (lisa, grano, rugosa, trama o salpicada). Si

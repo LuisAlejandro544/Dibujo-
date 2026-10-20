@@ -96,13 +96,26 @@ class MotorKotlin(
             lapiz.textura
         }
         if (lapiz.herramienta == com.dibujo.core.Herramienta.DOBLE) {
-            // Doble lápiz: dos líneas paralelas con la normal suavizada por
-            // vértice (polilínea completa), para que no tiemblen en los
-            // empalmes. Misma aritmética que el C++.
+            // Doble lápiz: recorrido principal + copia configurable (estilo,
+            // color de sombra y colocación), con la normal suavizada por
+            // vértice. Misma aritmética que el C++ (paridad).
+            val texturaCopia = if (lapiz.estiloDoble == com.dibujo.core.EstiloDoble.PINCEL) {
+                com.dibujo.core.Textura.LISA
+            } else {
+                textura
+            }
             hoja.polilineaDoble(
-                trazo, puntos * 2, grosor,
-                lapiz.punta == com.dibujo.core.Punta.REDONDA, color,
-                separacionDoble(grosor), textura,
+                trazo, puntos * 2,
+                grosor,
+                lapiz.punta == com.dibujo.core.Punta.REDONDA,
+                color,
+                lapiz.grosorCopiaDoble(),
+                lapiz.puntaCopiaDoble() == com.dibujo.core.Punta.REDONDA,
+                lapiz.colorCopiaDoble(),
+                separacionDoble(grosor),
+                lapiz.modoDoble,
+                textura,
+                texturaCopia,
             )
             puntos = 0
             return true

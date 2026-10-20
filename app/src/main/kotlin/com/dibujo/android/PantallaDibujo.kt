@@ -161,9 +161,11 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.dibujo.core.BackendRender
 import com.dibujo.core.Camara
 import com.dibujo.core.Colores
+import com.dibujo.core.EstiloDoble
 import com.dibujo.core.Herramienta
 import com.dibujo.core.Lapiz
 import com.dibujo.core.Modo
+import com.dibujo.core.ModoDoble
 import com.dibujo.core.Punta
 import com.dibujo.core.Textura
 import kotlinx.coroutines.Dispatchers
@@ -286,6 +288,8 @@ fun PantallaDibujo(
     var mostrarMasHerramientas by remember { mutableStateOf(false) }
     // Textura del trazo (más herramientas) y texto (insertar/editar).
     var mostrarTextura by remember { mutableStateOf(false) }
+    // Estilo, posición y color de sombra de la herramienta DOBLE.
+    var mostrarDoble by remember { mutableStateOf(false) }
     var mostrarTexto by remember { mutableStateOf(false) }
     var mostrarEditarTexto by remember { mutableStateOf(false) }
 
@@ -515,6 +519,7 @@ fun PantallaDibujo(
                 },
                 alAbrirColor = { mostrarColor = true },
                 alAbrirMasHerramientas = { mostrarMasHerramientas = true },
+                alAbrirDoble = { mostrarDoble = true },
                 alEditarTexto = { mostrarEditarTexto = true },
                 alQuitarTexto = vm::quitarTextoSeleccionado,
                 alTerminarTexto = vm::terminarEdicionTexto,
@@ -688,6 +693,10 @@ fun PantallaDibujo(
                 mostrarMasHerramientas = false
                 mostrarTextura = true
             },
+            alAbrirDoble = {
+                mostrarMasHerramientas = false
+                mostrarDoble = true
+            },
         )
     }
 
@@ -696,6 +705,16 @@ fun PantallaDibujo(
             actual = estado.lapiz.textura,
             alElegir = { vm.elegirTextura(it) },
             alCerrar = { mostrarTextura = false },
+        )
+    }
+
+    if (mostrarDoble) {
+        DialogoDoble(
+            estado = estado,
+            alElegirEstilo = vm::elegirEstiloDoble,
+            alElegirModo = vm::elegirModoDoble,
+            alElegirSombra = vm::elegirColorSombra,
+            alCerrar = { mostrarDoble = false },
         )
     }
 
@@ -1343,6 +1362,58 @@ private fun CapaGestos(
                     join = if (redonda) StrokeJoin.Round else StrokeJoin.Miter,
                 ),
             )
+            // Vista previa de la copia de la herramienta DOBLE, con la misma
+            // posición y color de sombra que usa el motor.
+            val n = trazo.size / 2
+            if (lapiz.herramienta == Herramienta.DOBLE && n >= 2) {
+                val copia = Path()
+                val separacion = (lapiz.grosor + 2) * 0.5f
+                val ejeX = trazo[0]
+                for (i in 0 until n) {
+                    val base = i * 2
+                    val hx: Float
+                    val hy: Float
+                    if (lapiz.modoDoble == ModoDoble.ESPEJO) {
+                        hx = 2f * ejeX - trazo[base]
+                        hy = trazo[base + 1]
+                    } else {
+                        val dx: Float
+                        val dy: Float
+                        when {
+                            i == 0 -> {
+                                dx = trazo[2] - trazo[0]
+                                dy = trazo[3] - trazo[1]
+                            }
+                            i == n - 1 -> {
+                                dx = trazo[base] - trazo[base - 2]
+                                dy = trazo[base + 1] - trazo[base - 1]
+                            }
+                            else -> {
+                                dx = trazo[base + 2] - trazo[base - 2]
+                                dy = trazo[base + 3] - trazo[base - 1]
+                            }
+                        }
+                        val largo = kotlin.math.sqrt(dx.toDouble() * dx + dy.toDouble() * dy)
+                        val nx = if (largo < 1e-6) 0f else (-dy / largo).toFloat()
+                        val ny = if (largo < 1e-6) 0f else (dx / largo).toFloat()
+                        val signo = if (lapiz.modoDoble == ModoDoble.LADO_B) -1f else 1f
+                        hx = trazo[base] + nx * separacion * signo
+                        hy = trazo[base + 1] + ny * separacion * signo
+                    }
+                    val p = aPantallaCamara(camara, hx, hy)
+                    if (i == 0) copia.moveTo(p.x, p.y) else copia.lineTo(p.x, p.y)
+                }
+                val redondaCopia = lapiz.puntaCopiaDoble() == Punta.REDONDA
+                drawPath(
+                    copia,
+                    color = Color(lapiz.colorCopiaDoble()),
+                    style = Stroke(
+                        width = lapiz.grosorCopiaDoble() * camara.zoom,
+                        cap = if (redondaCopia) StrokeCap.Round else StrokeCap.Butt,
+                        join = if (redondaCopia) StrokeJoin.Round else StrokeJoin.Miter,
+                    ),
+                )
+            }
         }
     }
 }
@@ -1622,6 +1693,7 @@ private fun BarraHerramientas(
     alAbrirIa: () -> Unit,
     alAbrirColor: () -> Unit,
     alAbrirMasHerramientas: () -> Unit,
+    alAbrirDoble: () -> Unit,
     alEditarTexto: () -> Unit,
     alQuitarTexto: () -> Unit,
     alTerminarTexto: () -> Unit,
@@ -1782,7 +1854,12 @@ private fun BarraHerramientas(
             // Franja 2: color actual, paleta y cuentagotas.
             FilaColor(estado, vm, alAbrirColor)
             // Franja 3: modo de gesto, grosor y más herramientas.
-            FilaPincel(estado, vm, alAbrirMasHerramientas)
+            FilaPincel(
+                estado = estado,
+                vm = vm,
+                alAbrirMasHerramientas = alAbrirMasHerramientas,
+                alAbrirDoble = alAbrirDoble,
+            )
         }
     }
 }
@@ -1861,6 +1938,7 @@ private fun FilaPincel(
     estado: DibujoEstado,
     vm: DibujoViewModel,
     alAbrirMasHerramientas: () -> Unit,
+    alAbrirDoble: () -> Unit,
 ) {
     Row(
         Modifier
@@ -1881,6 +1959,15 @@ private fun FilaPincel(
             alPulsar = { vm.alternarModo() },
         )
         Spacer(Modifier.weight(1f))
+        // Acceso directo a la configuración cuando la herramienta es DOBLE.
+        if (estado.lapiz.herramienta == Herramienta.DOBLE) {
+            IconoToggle(
+                icono = IconoTrazoDoble,
+                descripcion = stringResource(R.string.cd_doble_config),
+                seleccionado = true,
+                alPulsar = alAbrirDoble,
+            )
+        }
         Surface(
             shape = MaterialTheme.shapes.extraLarge,
             color = MaterialTheme.colorScheme.surfaceVariant,
@@ -2017,6 +2104,131 @@ private fun OpcionTextura(
     }
 }
 
+/**
+ * Configuración de la herramienta DOBLE: estilo de la segunda línea, dónde se
+ * coloca (alrededor, a un lado o reflejada) y su color de sombra. Todos los
+ * cambios se aplican en caliente al motor, sin salir del diálogo.
+ */
+@Composable
+private fun DialogoDoble(
+    estado: DibujoEstado,
+    alElegirEstilo: (EstiloDoble) -> Unit,
+    alElegirModo: (ModoDoble) -> Unit,
+    alElegirSombra: (Int?) -> Unit,
+    alCerrar: () -> Unit,
+) {
+    val lapiz = estado.lapiz
+    val estilos = listOf(
+        EstiloDoble.LAPIZ to R.string.doble_estilo_lapiz,
+        EstiloDoble.PORTAMINA to R.string.doble_estilo_portamina,
+        EstiloDoble.CARBONCILLO to R.string.doble_estilo_carboncillo,
+        EstiloDoble.PINCEL to R.string.doble_estilo_pincel,
+    )
+    val modos = listOf(
+        ModoDoble.CENTRADO to R.string.doble_modo_centrado,
+        ModoDoble.LADO_A to R.string.doble_modo_lado_a,
+        ModoDoble.LADO_B to R.string.doble_modo_lado_b,
+        ModoDoble.ESPEJO to R.string.doble_modo_espejo,
+    )
+    val descripcionModo = stringResource(
+        when (lapiz.modoDoble) {
+            ModoDoble.CENTRADO -> R.string.doble_modo_centrado_desc
+            ModoDoble.LADO_A -> R.string.doble_modo_lado_a_desc
+            ModoDoble.LADO_B -> R.string.doble_modo_lado_b_desc
+            ModoDoble.ESPEJO -> R.string.doble_modo_espejo_desc
+        },
+    )
+    AlertDialog(
+        onDismissRequest = alCerrar,
+        title = { Text(stringResource(R.string.doble_titulo)) },
+        text = {
+            Column(Modifier.verticalScroll(rememberScrollState())) {
+                Text(
+                    stringResource(R.string.doble_estilo),
+                    style = MaterialTheme.typography.titleSmall,
+                )
+                Row(
+                    Modifier
+                        .fillMaxWidth()
+                        .horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    estilos.forEach { (estilo, etiquetaRes) ->
+                        FilterChip(
+                            selected = lapiz.estiloDoble == estilo,
+                            onClick = { alElegirEstilo(estilo) },
+                            label = { Text(stringResource(etiquetaRes)) },
+                        )
+                    }
+                }
+                Spacer(Modifier.height(12.dp))
+                Text(
+                    stringResource(R.string.doble_modo),
+                    style = MaterialTheme.typography.titleSmall,
+                )
+                Row(
+                    Modifier
+                        .fillMaxWidth()
+                        .horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    modos.forEach { (modo, etiquetaRes) ->
+                        FilterChip(
+                            selected = lapiz.modoDoble == modo,
+                            onClick = { alElegirModo(modo) },
+                            label = { Text(stringResource(etiquetaRes)) },
+                        )
+                    }
+                }
+                Spacer(Modifier.height(6.dp))
+                Text(
+                    descripcionModo,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Spacer(Modifier.height(12.dp))
+                HorizontalDivider()
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    stringResource(R.string.doble_sombra),
+                    style = MaterialTheme.typography.titleSmall,
+                )
+                Text(
+                    stringResource(R.string.doble_sombra_desc),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Spacer(Modifier.height(8.dp))
+                Row(
+                    Modifier
+                        .fillMaxWidth()
+                        .horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    FilterChip(
+                        selected = lapiz.colorSombra == null,
+                        onClick = { alElegirSombra(null) },
+                        label = { Text(stringResource(R.string.doble_sin_sombra)) },
+                    )
+                    Colores.PALETA.forEach { color ->
+                        CabezaColor(
+                            color = color,
+                            seleccionado = lapiz.colorSombra == color.argb,
+                            onElegir = { alElegirSombra(color.argb) },
+                        )
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = alCerrar) {
+                Text(stringResource(R.string.cerrar))
+            }
+        },
+    )
+}
+
 /** Inserta o edita un texto con una de las cinco tipografías del sistema. */
 @Composable
 private fun DialogoTexto(
@@ -2120,6 +2332,7 @@ private fun HojaHerramientasHoja(
     alAbrirExpandir: () -> Unit,
     alAbrirTexto: () -> Unit,
     alAbrirTextura: () -> Unit,
+    alAbrirDoble: () -> Unit,
 ) {
     ModalBottomSheet(onDismissRequest = alCerrar) {
         Column(
@@ -2173,6 +2386,12 @@ private fun HojaHerramientasHoja(
                             .clip(RoundedCornerShape(4.dp)),
                     )
                 },
+            )
+            AccionHoja(
+                icono = IconoTrazoDoble,
+                etiqueta = stringResource(R.string.cd_doble_config),
+                habilitado = estado.lapiz.herramienta == Herramienta.DOBLE,
+                alPulsar = alAbrirDoble,
             )
             AccionHoja(
                 icono = Icons.Rounded.AutoFixHigh,

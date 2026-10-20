@@ -97,14 +97,28 @@ ulp de la libm. De ahí salen (ver `README_AI.md`):
   Kotlin y C++ (`kZoomMin`/`kZoomMax`).
 
 ### Herramienta DOBLE
-`Herramienta.DOBLE` (ordinal 5, mismo orden que `Tool::DOBLE` en C++) dibuja
-**dos trazos paralelos** separados `separacion = (grosor + 2) * 0.5`. Ya no se
-calcula la normal segmento a segmento: `polilineaDoble` desplaza la
-**polilínea completa** con una normal suavizada por vértice (promedio de las
-direcciones de los segmentos vecinos), así las dos líneas no tiemblan en los
-empalmes. Luego cada lado se rasteriza con `polilineaGruesa`; un toque sin
-arrastre dibuja un único disco/bloque centrado. La paridad la cubre
-`MotorTest.dobleParidadNativoKotlin`.
+`Herramienta.DOBLE` (ordinal 5, mismo orden que `Tool::DOBLE` en C++) dibuja el
+recorrido principal más una **copia configurable**, separada
+`separacion = (grosor + 2) * 0.5` px de la normal. La normal se calcula suavizada
+por vértice (promedio de las direcciones de los segmentos vecinos) y se desplaza
+la **polilínea completa**, así las líneas no tiemblan en los empalmes. Un toque
+sin arrastre dibuja un único disco/bloque centrado.
+
+La configuración vive en `Lapiz` y viaja por JNI a `DibujoEngine`:
+- `estiloDoble` (`EstiloDoble`: LAPIZ, PORTAMINA, CARBONCILLO, PINCEL) define
+  grosor y punta de la copia. PINCEL es más ancho, siempre redondo y sin textura
+  (pincel vector); el resto replica la textura y la punta principales.
+- `modoDoble` (`ModoDoble`: CENTRADO, LADO_A, LADO_B, ESPEJO) decide dónde va la
+  copia: una a cada lado del trazo (clásico), a un lado, al otro, o **reflejada**
+  al otro lado del primer punto (`x' = 2·x0 − x`). Es el caso "dibujo a la
+  derecha y la copia aparece cerca, a la izquierda".
+- `colorSombra` es el color de la copia; `null` (0 en JNI) usa el color
+  principal. Se elige desde la paleta en el diálogo "Configurar el doble".
+
+`Lienzo.polilineaDoble` y `polilineaDoble` del C++ replican toda la geometría y
+la aritmética. La paridad la cubren `MotorTest.dobleParidadNativoKotlin` (caso
+clásico) y `MotorTest.dobleConfigurableParidadNativoKotlin` (estilos, modos y
+color de sombra).
 
 ### Hoja
 `Lienzo` admite 1..4096 por lado, ARGB, fondo configurable (BLANCO por defecto).

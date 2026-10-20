@@ -27,6 +27,18 @@ inline float separacionDoble(int grosor) {
     return static_cast<float>(grosor + 2) * 0.5f;
 }
 
+// Grosor de la segunda línea de DOBLE según el estilo elegido. Replica
+// `Lapiz.grosorCopiaDoble()` de Kotlin (paridad).
+inline int grosorEstiloDoble(EstiloDoble estilo, int grosor) {
+    switch (estilo) {
+        case EstiloDoble::PORTAMINA: return std::max(1, grosor / 2);
+        case EstiloDoble::CARBONCILLO: return grosor + 2;
+        case EstiloDoble::PINCEL: return std::max(1, (grosor * 3) / 2);
+        case EstiloDoble::LAPIZ:
+        default: return grosor;
+    }
+}
+
 // Color de los píxeles fuera de la hoja en `renderizar` (gris claro). Debe
 // coincidir con `MotorKotlin.FUERA` para que el render no dependa del backend.
 constexpr uint32_t kFuera = 0xFFECECECu;
@@ -554,27 +566,31 @@ void lineaDoble(std::vector<uint32_t>& hoja, int ancho, int alto,
                 radio, redonda, color, textura);
 }
 
-// Polilínea doble: desplaza la polilínea completa con una normal suavizada por
-// vértice (promedio de las direcciones vecinas). Evita el "temblor" de calcular
-// la normal segmento a segmento. Replica `Lienzo.polilineaDoble` (paridad).
+// Polilínea doble: dibuja el recorrido principal y una copia configurable
+// (estilo, color y colocación). Usa una normal suavizada por vértice para que
+// las líneas no tiemblen en los empalmes. Replica `Lienzo.polilineaDoble`.
 void polilineaDoble(std::vector<uint32_t>& hoja, int ancho, int alto,
-                    const float* puntos, int cantidad, float radio,
-                    bool redonda, uint32_t color, float separacion,
-                    Textura textura = Textura::LISA) {
+                    const float* puntos, int cantidad,
+                    float radioPrincipal, bool redondaPrincipal,
+                    uint32_t colorPrincipal, float radioCopia,
+                    bool redondaCopia, uint32_t colorCopia, float separacion,
+                    ModoDoble modo, Textura texturaPrincipal,
+                    Textura texturaCopia) {
     if (cantidad < 2) return;
     if (cantidad == 2) {
-        if (redonda) {
-            pintarDisco(hoja, ancho, alto, puntos[0], puntos[1], radio, color, textura);
+        if (redondaPrincipal) {
+            pintarDisco(hoja, ancho, alto, puntos[0], puntos[1], radioPrincipal,
+                        colorPrincipal, texturaPrincipal);
         } else {
             const int px = static_cast<int>(std::lround(puntos[0]));
             const int py = static_cast<int>(std::lround(puntos[1]));
-            const int r = static_cast<int>(std::lround(radio));
+            const int r = static_cast<int>(std::lround(radioPrincipal));
             for (int oy = -r; oy <= r; ++oy) {
                 for (int ox = -r; ox <= r; ++ox) {
                     const int xx = px + ox;
                     const int yy = py + oy;
-                    pintarMezcla(hoja, ancho, alto, xx, yy, color,
-                                 aplicarTextura(textura, 255, xx, yy));
+                    pintarMezcla(hoja, ancho, alto, xx, yy, colorPrincipal,
+                                 aplicarTextura(texturaPrincipal, 255, xx, yy));
                 }
             }
         }
@@ -615,8 +631,41 @@ void polilineaDoble(std::vector<uint32_t>& hoja, int ancho, int alto,
         ladoB[static_cast<std::size_t>(base)] = puntos[base] - ox;
         ladoB[static_cast<std::size_t>(base + 1)] = puntos[base + 1] - oy;
     }
-    polilineaGruesa(hoja, ancho, alto, ladoA.data(), cantidad, radio, redonda, color, textura);
-    polilineaGruesa(hoja, ancho, alto, ladoB.data(), cantidad, radio, redonda, color, textura);
+    switch (modo) {
+        case ModoDoble::CENTRADO:
+            polilineaGruesa(hoja, ancho, alto, ladoA.data(), cantidad,
+                            radioPrincipal, redondaPrincipal, colorPrincipal,
+                            texturaPrincipal);
+            polilineaGruesa(hoja, ancho, alto, ladoB.data(), cantidad,
+                            radioCopia, redondaCopia, colorCopia, texturaCopia);
+            break;
+        case ModoDoble::LADO_A:
+        case ModoDoble::LADO_B: {
+            polilineaGruesa(hoja, ancho, alto, puntos, cantidad,
+                            radioPrincipal, redondaPrincipal, colorPrincipal,
+                            texturaPrincipal);
+            const float* lado = (modo == ModoDoble::LADO_A) ? ladoA.data() : ladoB.data();
+            polilineaGruesa(hoja, ancho, alto, lado, cantidad,
+                            radioCopia, redondaCopia, colorCopia, texturaCopia);
+            break;
+        }
+        case ModoDoble::ESPEJO: {
+            polilineaGruesa(hoja, ancho, alto, puntos, cantidad,
+                            radioPrincipal, redondaPrincipal, colorPrincipal,
+                            texturaPrincipal);
+            std::vector<float> espejo(static_cast<std::size_t>(cantidad), 0.0f);
+            const float ejeX = puntos[0];
+            for (int i = 0; i < n; ++i) {
+                const int base = i * 2;
+                espejo[static_cast<std::size_t>(base)] =
+                    2.0f * ejeX - puntos[base];
+                espejo[static_cast<std::size_t>(base + 1)] = puntos[base + 1];
+            }
+            polilineaGruesa(hoja, ancho, alto, espejo.data(), cantidad,
+                            radioCopia, redondaCopia, colorCopia, texturaCopia);
+            break;
+        }
+    }
 }
 
 } // namespace
@@ -684,11 +733,20 @@ bool DibujoEngine::terminarTrazo() {
                  static_cast<int>(std::lround(trazo_[0])),
                  static_cast<int>(std::lround(trazo_[1])), color_);
     } else if (herramienta_ == Tool::DOBLE) {
-        // Doble lápiz: dos líneas paralelas con normal suavizada por vértice.
+        // Doble lápiz: recorrido principal + copia configurable (estilo, color
+        // de sombra y colocación). El pincel vector siempre es redondo y liso.
         const float separacion = separacionDoble(grosor);
+        const uint32_t colorCopia = colorSombra_ != 0 ? colorSombra_ : color;
+        const int grosorCopia = grosorEstiloDoble(estiloDoble_, grosor_);
+        const float radioCopia = static_cast<float>(grosorCopia) * 0.5f;
+        const bool redondaCopia =
+            estiloDoble_ == EstiloDoble::PINCEL ? true : puntaRedonda_;
+        const Textura texturaCopia =
+            estiloDoble_ == EstiloDoble::PINCEL ? Textura::LISA : textura;
         polilineaDoble(hoja_, ancho_, alto_, trazo_.data(),
                        static_cast<int>(trazo_.size()), radio, puntaRedonda_,
-                       color, separacion, textura);
+                       color, radioCopia, redondaCopia, colorCopia, separacion,
+                       modoDoble_, textura, texturaCopia);
     } else {
         // Cobertura máxima por píxel y una sola mezcla para toda la polilínea.
         polilineaGruesa(hoja_, ancho_, alto_, trazo_.data(),

@@ -408,25 +408,37 @@ class Lienzo(
     }
 
     /**
-     * Polilínea doble (herramienta DOBLE): desplaza la **polilínea completa**
-     * hacia ambos lados usando una normal suavizada por vértice (promedio de
-     * las direcciones de los segmentos vecinos). Antes cada segmento calculaba
-     * su propia normal y las dos líneas temblaban en los empalmes. El C++
-     * replica el cálculo para mantener la paridad.
+     * Polilínea doble (herramienta DOBLE): dibuja el recorrido principal y una
+     * segunda línea configurable (estilo, color de sombra y colocación).
+     *
+     * La geometría usa una normal suavizada por vértice (promedio de las
+     * direcciones de los segmentos vecinos), así las líneas no tiemblan en los
+     * empalmes. [modo] decide dónde va la copia: alrededor del trazo
+     * ([ModoDoble.CENTRADO]), a un lado ([ModoDoble.LADO_A]/[ModoDoble.LADO_B])
+     * o reflejada al otro lado del primer punto ([ModoDoble.ESPEJO]). El C++
+     * replica el mismo cálculo (paridad píxel a píxel).
      */
     fun polilineaDoble(
         puntos: FloatArray,
         cantidad: Int,
-        grosor: Int,
-        redonda: Boolean,
-        color: Int,
+        grosorPrincipal: Int,
+        redondaPrincipal: Boolean,
+        colorPrincipal: Int,
+        grosorCopia: Int,
+        redondaCopia: Boolean,
+        colorCopia: Int,
         separacion: Float,
-        textura: Textura = Textura.LISA,
+        modo: ModoDoble,
+        texturaPrincipal: Textura = Textura.LISA,
+        texturaCopia: Textura = Textura.LISA,
     ) {
         if (cantidad < 2) return
         if (cantidad == 2) {
-            if (redonda) disco(puntos[0], puntos[1], grosor / 2.0f, color, textura)
-            else bloque(puntos[0], puntos[1], grosor / 2.0f, color, textura)
+            if (redondaPrincipal) {
+                disco(puntos[0], puntos[1], grosorPrincipal / 2.0f, colorPrincipal, texturaPrincipal)
+            } else {
+                bloque(puntos[0], puntos[1], grosorPrincipal / 2.0f, colorPrincipal, texturaPrincipal)
+            }
             return
         }
         val n = cantidad / 2
@@ -467,8 +479,43 @@ class Lienzo(
             ladoB[base] = puntos[base] - ox
             ladoB[base + 1] = puntos[base + 1] - oy
         }
-        polilineaGruesa(ladoA, cantidad, grosor, redonda, color, textura)
-        polilineaGruesa(ladoB, cantidad, grosor, redonda, color, textura)
+        when (modo) {
+            ModoDoble.CENTRADO -> {
+                polilineaGruesa(
+                    ladoA, cantidad, grosorPrincipal, redondaPrincipal,
+                    colorPrincipal, texturaPrincipal,
+                )
+                polilineaGruesa(
+                    ladoB, cantidad, grosorCopia, redondaCopia,
+                    colorCopia, texturaCopia,
+                )
+            }
+            ModoDoble.LADO_A, ModoDoble.LADO_B -> {
+                polilineaGruesa(
+                    puntos, cantidad, grosorPrincipal, redondaPrincipal,
+                    colorPrincipal, texturaPrincipal,
+                )
+                val lado = if (modo == ModoDoble.LADO_A) ladoA else ladoB
+                polilineaGruesa(lado, cantidad, grosorCopia, redondaCopia, colorCopia, texturaCopia)
+            }
+            ModoDoble.ESPEJO -> {
+                polilineaGruesa(
+                    puntos, cantidad, grosorPrincipal, redondaPrincipal,
+                    colorPrincipal, texturaPrincipal,
+                )
+                val espejo = FloatArray(cantidad)
+                val ejeX = puntos[0]
+                for (i in 0 until n) {
+                    val base = i * 2
+                    espejo[base] = 2.0f * ejeX - puntos[base]
+                    espejo[base + 1] = puntos[base + 1]
+                }
+                polilineaGruesa(
+                    espejo, cantidad, grosorCopia, redondaCopia,
+                    colorCopia, texturaCopia,
+                )
+            }
+        }
     }
 
     /**

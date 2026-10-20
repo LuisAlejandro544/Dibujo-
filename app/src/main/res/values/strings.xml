@@ -43,6 +43,26 @@
     <string name="herramienta_pintar">Pintar</string>
     <string name="herramienta_doble">Doble</string>
     <string name="herramienta_pluma">Pluma</string>
+    <string name="doble_config">Configurar el doble</string>
+    <string name="doble_titulo">Herramienta doble</string>
+    <string name="doble_estilo">Estilo de la copia</string>
+    <string name="doble_estilo_lapiz">Lápiz</string>
+    <string name="doble_estilo_portamina">Porta</string>
+    <string name="doble_estilo_carboncillo">Carbón</string>
+    <string name="doble_estilo_pincel">Pincel vector</string>
+    <string name="doble_modo">Posición de la copia</string>
+    <string name="doble_modo_centrado">Alrededor</string>
+    <string name="doble_modo_lado_a">A un lado</string>
+    <string name="doble_modo_lado_b">Al otro lado</string>
+    <string name="doble_modo_espejo">Reflejado</string>
+    <string name="doble_modo_centrado_desc">Las dos líneas van una a cada lado del recorrido.</string>
+    <string name="doble_modo_lado_a_desc">Tu trazo sigue el dedo y la copia va a un lado.</string>
+    <string name="doble_modo_lado_b_desc">Tu trazo sigue el dedo y la copia va al otro lado.</string>
+    <string name="doble_modo_espejo_desc">La copia se refleja al otro lado del primer punto: si dibujás a la derecha, aparece cerca, a la izquierda.</string>
+    <string name="doble_sombra">Color de la copia (sombra)</string>
+    <string name="doble_sin_sombra">Sin sombra</string>
+    <string name="doble_sombra_desc">Si elegís un color, la copia se dibuja con ese tono; si no, usa el color principal.</string>
+    <string name="cd_doble_config">Configurar el tipo y la posición del trazo doble</string>
 
     <!-- Accesibilidad (contentDescription) -->
     <string name="cd_deshacer">Deshacer</string>

@@ -22,6 +22,9 @@ object NativeEngine {
         puntaRedonda: Boolean,
         herramienta: Int,
         textura: Int,
+        estiloDoble: Int,
+        modoDoble: Int,
+        colorSombra: Int,
     )
     external fun nativoAsistenciaRecta(handle: Long, activa: Boolean)
     external fun nativoIniciarTrazo(handle: Long, x: Float, y: Float)

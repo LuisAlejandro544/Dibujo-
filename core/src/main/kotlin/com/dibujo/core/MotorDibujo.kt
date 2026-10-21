@@ -27,6 +27,15 @@ interface MotorDibujo : AutoCloseable {
      */
     fun asistenciaRecta(activa: Boolean)
 
+    /**
+     * Activa la **simetría** del trazo: al terminar, el motor dibuja el trazo
+     * y sus reflejos respecto del centro de la hoja (ver [Simetria]). El gesto
+     * sigue siendo un solo paso del historial (se deshace de una vez).
+     * No afecta a la herramienta PINTAR (el balde rellena, no traza).
+     * El C++ y Kotlin lo implementan igual (paridad).
+     */
+    fun simetria(modo: Simetria)
+
     /** Trazo en curso, en coordenadas de hoja. */
     fun iniciarTrazo(x: Float, y: Float)
     fun continuarTrazo(x: Float, y: Float)

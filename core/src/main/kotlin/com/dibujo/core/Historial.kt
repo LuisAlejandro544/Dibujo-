@@ -1,13 +1,19 @@
 package com.dibujo.core
 
 /**
- * Historial de la hoja con deshacer/rehacer por snapshots.
+ * Historial de la hoja con deshacer/rehacer por instantáneas **comprimidas**.
+ *
  * Límite de pasos configurable (por defecto 30: con hoja del tamaño de
- * pantalla cada snapshot son ~6-10 MB, y el C++ replica el mismo límite).
+ * pantalla cada paso son ~6-10 MB, y el C++ replica el mismo límite).
+ *
+ * Las instantáneas se guardan con RLE (ver [InstantaneaHoja]): en una hoja de
+ * dibujo la mayor parte es fondo del mismo color, así que cada paso ocupa
+ * decenas de KB en vez de megabytes. La compresión es sin pérdida: deshacer y
+ * rehacer devuelven la hoja idéntica.
  */
 class Historial(maximo: Int = 30) {
-    private val pasado = ArrayDeque<IntArray>()
-    private val futuro = ArrayDeque<IntArray>()
+    private val pasado = ArrayDeque<InstantaneaHoja>()
+    private val futuro = ArrayDeque<InstantaneaHoja>()
     private var maximo = maximo.coerceAtLeast(1)
 
     /**
@@ -20,7 +26,7 @@ class Historial(maximo: Int = 30) {
     }
 
     fun guardar(l: Lienzo) {
-        pasado.addLast(l.pixeles.copyOf())
+        pasado.addLast(InstantaneaHoja.capturar(l.pixeles))
         while (pasado.size > maximo) pasado.removeFirst()
         futuro.clear()
     }
@@ -39,15 +45,15 @@ class Historial(maximo: Int = 30) {
 
     fun deshacer(l: Lienzo): Boolean {
         val estado = pasado.removeLastOrNull() ?: return false
-        futuro.addLast(l.pixeles.copyOf())
-        System.arraycopy(estado, 0, l.pixeles, 0, estado.size)
+        futuro.addLast(InstantaneaHoja.capturar(l.pixeles))
+        estado.restaurar(l.pixeles)
         return true
     }
 
     fun rehacer(l: Lienzo): Boolean {
         val estado = futuro.removeLastOrNull() ?: return false
-        pasado.addLast(l.pixeles.copyOf())
-        System.arraycopy(estado, 0, l.pixeles, 0, estado.size)
+        pasado.addLast(InstantaneaHoja.capturar(l.pixeles))
+        estado.restaurar(l.pixeles)
         return true
     }
 }

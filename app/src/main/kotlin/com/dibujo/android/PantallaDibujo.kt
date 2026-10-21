@@ -66,6 +66,7 @@ import androidx.compose.material.icons.rounded.Delete
 import androidx.compose.material.icons.rounded.Draw
 import androidx.compose.material.icons.rounded.Edit
 import androidx.compose.material.icons.rounded.FormatColorFill
+import androidx.compose.material.icons.rounded.Flip
 import androidx.compose.material.icons.rounded.Gesture
 import androidx.compose.material.icons.rounded.Layers
 import androidx.compose.material.icons.rounded.Mode
@@ -121,6 +122,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
@@ -165,6 +167,7 @@ import com.dibujo.core.Herramienta
 import com.dibujo.core.Lapiz
 import com.dibujo.core.Modo
 import com.dibujo.core.Punta
+import com.dibujo.core.Simetria
 import com.dibujo.core.Textura
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -399,6 +402,41 @@ fun PantallaDibujo(
         if (!ok) Toast.makeText(contexto, textoCompartirError, Toast.LENGTH_SHORT).show()
     }
 
+    // Vectoriza el dibujo y lo comparte como SVG: el resultado son vectores
+    // editables (se pueden abrir y modificar en cualquier editor de dibujo).
+    // La vectorización es un trabajo pesado (recorre la hoja entera), así que
+    // corre fuera del hilo principal.
+    fun compartirSvg() {
+        val ancho = estadoState.value.hojaAncho
+        val alto = estadoState.value.hojaAlto
+        if (ancho <= 0 || alto <= 0) return
+        exportando = true
+        alcance.launch {
+            val svg = withContext(Dispatchers.Default) {
+                runCatching {
+                    val pixeles = IntArray(ancho * alto)
+                    if (!vm.copiarHojaConObjetosVivos(pixeles)) return@runCatching null
+                    com.dibujo.core.VectorizadorHoja.aSvg(pixeles, ancho, alto, Colores.BLANCO)
+                }.getOrNull()
+            }
+            exportando = false
+            mostrarExportar = false
+            if (svg == null) {
+                Toast.makeText(contexto, textoExportadoError, Toast.LENGTH_SHORT).show()
+                return@launch
+            }
+            val marca = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date())
+            val ok = ExportadorGaleria.compartirArchivo(
+                contexto,
+                svg.toByteArray(Charsets.UTF_8),
+                "dibujo_$marca",
+                "svg",
+                "image/svg+xml",
+            )
+            if (!ok) Toast.makeText(contexto, textoCompartirError, Toast.LENGTH_SHORT).show()
+        }
+    }
+
     // En API < 29 hace falta WRITE_EXTERNAL_STORAGE; desde Android 10 (Q) el
     // guardado por MediaStore no pide permisos. Compartir no usa permisos.
     val permisoEscritura = rememberLauncherForActivityResult(
@@ -488,6 +526,8 @@ fun PantallaDibujo(
                 alAjustarLienzo = { mostrarAjustarLienzo = true },
                 alTransformar = { mostrarTransformar = true },
                 alAlternarAsistencia = vm::alternarAsistenciaRecta,
+                alAlternarEstabilizador = vm::alternarEstabilizador,
+                alAlternarSimetria = vm::alternarSimetria,
                 exportando = exportando,
                 alAbrirConfig = alAbrirOpciones,
             )
@@ -556,6 +596,8 @@ fun PantallaDibujo(
             },
             alAlternar = vm::alternarCalco,
             alCambiarAlfa = vm::cambiarCalcoAlfa,
+            alElegirFiltro = vm::elegirFiltroCalco,
+            alCambiarAjuste = vm::cambiarAjusteCalco,
             alAlternarEdicion = {
                 vm.alternarEdicionCalco()
                 // Se cierra para poder mover/escalar la imagen con los gestos.
@@ -616,6 +658,7 @@ fun PantallaDibujo(
             },
             alGuardar = alGuardarEnGaleria,
             alCompartir = { compartirExportacion() },
+            alExportarSvg = { compartirSvg() },
             alCerrar = {
                 mostrarExportar = false
                 imagenLista = null
@@ -754,6 +797,8 @@ private fun BarraSuperior(
     alAjustarLienzo: () -> Unit,
     alTransformar: () -> Unit,
     alAlternarAsistencia: () -> Unit,
+    alAlternarEstabilizador: () -> Unit,
+    alAlternarSimetria: () -> Unit,
     exportando: Boolean,
     alAbrirConfig: () -> Unit,
 ) {
@@ -831,6 +876,36 @@ private fun BarraSuperior(
                         onClick = {
                             menuAbierto = false
                             alAlternarAsistencia()
+                        },
+                    )
+                    DropdownMenuItem(
+                        text = { Text(stringResource(R.string.cd_estabilizador)) },
+                        leadingIcon = {
+                            Icon(Icons.Rounded.Gesture, contentDescription = null)
+                        },
+                        trailingIcon = if (estado.estabilizador > 0f) {
+                            { Icon(Icons.Rounded.Check, contentDescription = null) }
+                        } else {
+                            null
+                        },
+                        onClick = {
+                            menuAbierto = false
+                            alAlternarEstabilizador()
+                        },
+                    )
+                    DropdownMenuItem(
+                        text = { Text(stringResource(R.string.cd_simetria)) },
+                        leadingIcon = {
+                            Icon(Icons.Rounded.Flip, contentDescription = null)
+                        },
+                        trailingIcon = if (estado.simetria != Simetria.NINGUNA) {
+                            { Icon(Icons.Rounded.Check, contentDescription = null) }
+                        } else {
+                            null
+                        },
+                        onClick = {
+                            menuAbierto = false
+                            alAlternarSimetria()
                         },
                     )
                     HorizontalDivider()
@@ -954,6 +1029,7 @@ private fun DialogoExportar(
     alCambiarRecorte: (Boolean) -> Unit,
     alGuardar: () -> Unit,
     alCompartir: () -> Unit,
+    alExportarSvg: () -> Unit,
     alCerrar: () -> Unit,
 ) {
     AlertDialog(
@@ -991,10 +1067,19 @@ private fun DialogoExportar(
                         Text(stringResource(R.string.exportar_calculando))
                     }
                 }
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    stringResource(R.string.exportar_svg_desc),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
             }
         },
         confirmButton = {
             Row {
+                TextButton(onClick = alExportarSvg, enabled = !calculando) {
+                    Text(stringResource(R.string.exportar_svg))
+                }
                 TextButton(onClick = alCompartir, enabled = peso != null) {
                     Text(stringResource(R.string.exportar_compartir))
                 }
@@ -1343,8 +1428,64 @@ private fun CapaGestos(
                     join = if (redonda) StrokeJoin.Round else StrokeJoin.Miter,
                 ),
             )
+            // Simetría: los reflejos se ven mientras se dibuja (el motor los
+            // dibuja al soltar). El reflejo es en coordenadas de hoja, igual
+            // que en el motor: `x' = (ancho - 1) - x`.
+            val simetria = estado.simetria
+            if (simetria != Simetria.NINGUNA &&
+                estado.hojaAncho > 0 && estado.hojaAlto > 0
+            ) {
+                val vertical = simetria == Simetria.VERTICAL || simetria == Simetria.CUADRADA
+                val horizontal = simetria == Simetria.HORIZONTAL || simetria == Simetria.CUADRADA
+                val reflejos = buildList {
+                    if (vertical) add(true to false)
+                    if (horizontal) add(false to true)
+                    if (vertical && horizontal) add(true to true)
+                }
+                reflejos.forEach { (ejeX, ejeY) ->
+                    val reflejo = Path()
+                    val inicio = puntoReflejado(trazo, 0, ejeX, ejeY, estado)
+                    val primero = aPantallaCamara(camara, inicio.first, inicio.second)
+                    reflejo.moveTo(primero.x, primero.y)
+                    var j = 2
+                    while (j + 1 < trazo.size) {
+                        val p = puntoReflejado(trazo, j, ejeX, ejeY, estado)
+                        val enPantalla = aPantallaCamara(camara, p.first, p.second)
+                        reflejo.lineTo(enPantalla.x, enPantalla.y)
+                        j += 2
+                    }
+                    drawPath(
+                        reflejo,
+                        color = colorTrazo,
+                        style = Stroke(
+                            width = grosorTrazo * camara.zoom,
+                            cap = if (redonda) StrokeCap.Round else StrokeCap.Butt,
+                            join = if (redonda) StrokeJoin.Round else StrokeJoin.Miter,
+                        ),
+                    )
+                }
+            }
         }
     }
+}
+
+/**
+ * Punto del trazo reflejado respecto del centro de la hoja: en vertical,
+ * `x' = (ancho - 1) - x`; en horizontal, `y' = (alto - 1) - y`. Es la misma
+ * cuenta que hace el motor (paridad).
+ */
+private fun puntoReflejado(
+    trazo: List<Float>,
+    indice: Int,
+    ejeX: Boolean,
+    ejeY: Boolean,
+    estado: DibujoEstado,
+): Pair<Float, Float> {
+    var x = trazo[indice]
+    var y = trazo[indice + 1]
+    if (ejeX) x = (estado.hojaAncho - 1) - x
+    if (ejeY) y = (estado.hojaAlto - 1) - y
+    return x to y
 }
 
 /** Punto de pantalla de una coordenada de hoja según la cámara (con rotación). */
@@ -1372,17 +1513,37 @@ private fun CapaCalco(
     val estado = estadoState.value
     val uri = estado.calcoUri
     val contexto = LocalContext.current
-    val bitmap = remember(uri) {
-        uri?.let { ruta -> cargarBitmap(contexto, Uri.parse(ruta)) }
+    val filtro = estado.calcoFiltro
+    val ajuste = estado.calcoAjuste
+    // La imagen se decodifica y se filtra fuera del hilo principal (filtrar
+    // una foto de 2048 px es un trabajo pesado). Mientras se recalcula se
+    // mantiene la imagen anterior: no parpadea la capa.
+    val bitmap by produceState<Bitmap?>(null, uri, filtro, ajuste) {
+        if (uri == null) {
+            value = null
+            return@produceState
+        }
+        val base = withContext(Dispatchers.IO) {
+            cargarBitmap(contexto, Uri.parse(uri))
+        } ?: return@produceState
+        value = if (filtro == com.dibujo.core.FiltroImagen.NINGUNO) {
+            base
+        } else {
+            withContext(Dispatchers.Default) {
+                filtrarBitmap(base, filtro, ajuste)
+            }
+        }
     }
-    if (bitmap == null || !estado.calcoVisible ||
+    // La imagen filtrada (o la original si no hay filtro).
+    val imagenBitmap = bitmap
+    if (imagenBitmap == null || !estado.calcoVisible ||
         estado.hojaAncho <= 0 || estado.hojaAlto <= 0
     ) {
         return
     }
     val descripcion = stringResource(R.string.cd_calco)
     Canvas(modifier.semantics { contentDescription = descripcion }) {
-        val imagen = bitmap.asImageBitmap()
+        val imagen = imagenBitmap.asImageBitmap()
         if (imagen.width <= 0 || imagen.height <= 0) return@Canvas
         val cam = estado.camara
         // Ajuste natural (encaja la imagen en la hoja) por la escala del usuario.
@@ -2479,16 +2640,29 @@ private fun DialogoCalco(
     alElegirImagen: () -> Unit,
     alAlternar: () -> Unit,
     alCambiarAlfa: (Float) -> Unit,
+    alElegirFiltro: (com.dibujo.core.FiltroImagen) -> Unit,
+    alCambiarAjuste: (Int) -> Unit,
     alAlternarEdicion: () -> Unit,
     alCentrar: () -> Unit,
     alQuitar: () -> Unit,
     alCerrar: () -> Unit,
 ) {
+    val filtros = listOf(
+        com.dibujo.core.FiltroImagen.NINGUNO to R.string.calco_filtro_ninguno,
+        com.dibujo.core.FiltroImagen.GRIS to R.string.calco_filtro_gris,
+        com.dibujo.core.FiltroImagen.CONTRASTE to R.string.calco_filtro_contraste,
+        com.dibujo.core.FiltroImagen.UMBRAL to R.string.calco_filtro_umbral,
+        com.dibujo.core.FiltroImagen.INVERTIR to R.string.calco_filtro_invertir,
+        com.dibujo.core.FiltroImagen.BORDES to R.string.calco_filtro_bordes,
+        com.dibujo.core.FiltroImagen.SIN_FONDO to R.string.calco_filtro_sin_fondo,
+    )
+    val rangoAjuste = com.dibujo.core.FiltrosImagen.rango(estado.calcoFiltro)
+    val hayAjuste = rangoAjuste.first != rangoAjuste.last
     AlertDialog(
         onDismissRequest = alCerrar,
         title = { Text(stringResource(R.string.calco_titulo)) },
         text = {
-            Column {
+            Column(Modifier.verticalScroll(rememberScrollState())) {
                 Text(
                     stringResource(R.string.calco_descripcion),
                     style = MaterialTheme.typography.bodySmall,
@@ -2501,6 +2675,41 @@ private fun DialogoCalco(
                     ),
                     style = MaterialTheme.typography.bodyMedium,
                 )
+                Spacer(Modifier.height(12.dp))
+                Text(
+                    stringResource(R.string.calco_filtro_titulo),
+                    style = MaterialTheme.typography.labelLarge,
+                )
+                Text(
+                    stringResource(R.string.calco_filtro_descripcion),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Row(
+                    Modifier.horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    filtros.forEach { (filtro, etiqueta) ->
+                        FilterChip(
+                            selected = estado.calcoFiltro == filtro,
+                            onClick = { alElegirFiltro(filtro) },
+                            enabled = estado.calcoUri != null,
+                            label = { Text(stringResource(etiqueta)) },
+                        )
+                    }
+                }
+                if (hayAjuste) {
+                    Text(
+                        stringResource(etiquetaAjusteCalco(estado.calcoFiltro), estado.calcoAjuste),
+                        style = MaterialTheme.typography.labelLarge,
+                    )
+                    Slider(
+                        value = estado.calcoAjuste.toFloat(),
+                        onValueChange = { alCambiarAjuste(it.roundToInt()) },
+                        valueRange = rangoAjuste.first.toFloat()..rangoAjuste.last.toFloat(),
+                        enabled = estado.calcoUri != null,
+                    )
+                }
                 Spacer(Modifier.height(8.dp))
                 Text(
                     stringResource(
@@ -2564,6 +2773,17 @@ private fun DialogoCalco(
             }
         },
     )
+}
+
+/**
+ * Etiqueta del ajuste del filtro de calco: cada filtro tiene su propio
+ * parámetro (umbral, contraste, sensibilidad o fondo).
+ */
+private fun etiquetaAjusteCalco(filtro: com.dibujo.core.FiltroImagen): Int = when (filtro) {
+    com.dibujo.core.FiltroImagen.CONTRASTE -> R.string.calco_ajuste_contraste
+    com.dibujo.core.FiltroImagen.BORDES -> R.string.calco_ajuste_bordes
+    com.dibujo.core.FiltroImagen.SIN_FONDO -> R.string.calco_ajuste_fondo
+    else -> R.string.calco_ajuste_umbral
 }
 
 /**

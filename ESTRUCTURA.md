@@ -40,7 +40,8 @@ se implementa en C++ **y** Kotlin, y pasa `MotorTest` (paridad píxel a píxel).
         ┌──────────────────────────────────┐
         │  :core  Lienzo, Lapiz, Color,    │
         │  Historial, MotorDibujo, Modo,   │
-        │  Cuantizador, BackendRender      │
+        │  Cuantizador, FiltrosImagen,    │
+        │  VectorizadorHoja, BackendRender│
         └──────────────────────────────────┘
 ```
 
@@ -58,8 +59,17 @@ se implementa en C++ **y** Kotlin, y pasa `MotorTest` (paridad píxel a píxel).
   DOBLE, PLUMA) y `grosorEfectivo()`. PLUMA es sólo para `:app`: el motor la
   acepta para conservar el ordinal de JNI, pero no la rasteriza.
 - `Color.kt` — `Color` y `Colores` (paleta fija). `Modo.kt` — EDICION/MOVER.
-- `Historial.kt` — undo/redo por snapshots (límite **30**).
+- `Historial.kt` — undo/redo por instantáneas **comprimidas** (RLE sin
+  pérdida), límite **30**. `InstantaneaHoja.kt` — la instantánea comprimida
+  (la replica el C++).
 - `Cuantizador.kt` — k-medias determinista para la **paleta del calco**.
+- `FiltrosImagen.kt` — filtros de imagen para el **calco** (grises, contraste,
+  umbral, invertir, bordes, quitar fondo).
+- `VectorizadorHoja.kt` — convierte la hoja raster en **SVG** (contornos con
+  Moore, agujeros y simplificación). `RamerDouglasPeucker.kt` — simplificación
+  de polilíneas (la usa también la pluma de `:app`).
+- `EstabilizadorTrazo.kt` — suaviza el temblor de la mano. `Simetria.kt` —
+  simetría del trazo (la implementa el motor, con paridad).
 - `BackendRender.kt` — enum del backend gráfico (CPU/OpenGL/Vulkan).
 - `ComandoLinea.kt` — parser de comandos (usado por la consola).
 - `core/src/test/.../DibujoCoreTest.kt` — tests del dominio.

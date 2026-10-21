@@ -378,7 +378,8 @@ tocar uno se elige y la herramienta pasa a PINTAR. Es aprendizaje no supervisado
 local: **0 MB** y ninguna dependencia nueva.
 
 ### Historial
-Undo/redo por snapshots completos de la hoja. El tope es **configurable**
+Undo/redo por **instantáneas comprimidas** de la hoja (RLE de píxeles iguales,
+sin pérdida). El tope es **configurable**
 (5..100, por defecto **30**) desde *Opciones → Historial*; `MotorDibujo.limiteHistorial`
 lo aplica en caliente al motor (`Historial.fijarMaximo` en Kotlin y
 `DibujoEngine::fijarLimiteHistorial` en C++, con el mismo recorte de pasos
@@ -387,6 +388,24 @@ viejos). Ambos lados tienen que coincidir. El estado Compose expone
 el `Canvas` lee el `State` dentro del `draw` (`estadoState.value`), no sólo
 durante la composición; si no, undo/redo cambian el motor pero no repintan
 (era el bug "se unde y no hace nada").
+
+**Compresión de las instantáneas (RLE).** Antes cada paso guardaba una copia
+completa de la hoja (4 bytes por píxel): con una hoja de 1080×2000 eran ~8,6 MB
+por paso (~260 MB con 30 pasos) y con una de 4096×4096, 64 MB por paso (~2 GB):
+la app se quedaba sin memoria antes de poder deshacer. Ahora:
+- Kotlin: `core/.../InstantaneaHoja.kt` (`capturar`/`restaurar`) y
+  `core/.../Historial.kt` las usa.
+- C++: `comprimirHoja`/`restaurarHoja` en `engine/src/main/cpp/DibujoEngine.cpp`
+  (`Instantanea` en el `.h`), y `pasado_`/`futuro_` son vectores de
+  instantáneas.
+- El formato es el mismo en los dos lados: pares (cantidad, color) y, si el
+  RLE no conviene (imagen ruidosa), la copia cruda (así el historial nunca
+  ocupa más que antes).
+- La compresión es **sin pérdida**: deshacer/rehacer devuelven la hoja
+  idéntica. La paridad la cubre `MotorTest.historialComprimidoParidadNativoKotlin`.
+- Ojo al tocar el historial: `terminarTrazo` (y `limpiarHoja`, `limpiarTrazos`,
+  `reemplazarHoja`, `transformarHoja`) guardan la instantánea **antes** de
+  modificar la hoja.
 
 `DibujoViewModel` mantiene además un **historial unificado** en la app
 (`PasoHistorial`: `Pixeles`, `Vectores(antes, despues)` o
@@ -564,6 +583,50 @@ Particularidades:
   mientras se ajusta. No toca el motor (vive en Compose), por eso **no aplica la
   paridad**; el flag es de UI (`calcoEnEdicion`), no un valor nuevo de `Modo`
   (que es de `:core` y usa la consola).
+- **Filtros de la imagen de calco**: `core/.../FiltrosImagen.kt` tiene los
+  filtros (`FiltroImagen`: `NINGUNO`, `GRIS`, `CONTRASTE`, `UMBRAL`,
+  `INVERTIR`, `BORDES`, `SIN_FONDO`) sobre buffers ARGB. Son operaciones de
+  **imagen**, no de dibujo: viven en `:core` (como el `Cuantizador`) y **no
+  aplican la paridad** C++/Kotlin porque no tocan el motor. El estado del
+  ViewModel es `calcoFiltro` + `calcoAjuste` (el parámetro depende del filtro:
+  umbral, contraste, sensibilidad o fondo; el rango y el valor por defecto los
+  dan `FiltrosImagen.rango`/`valorPorDefecto`). `CapaCalco` decodifica y
+  filtra **fuera del hilo principal** (`produceState` + `Dispatchers.IO` /
+  `Dispatchers.Default`) y mantiene la imagen anterior mientras recalcula (no
+  parpadea). Sirve para que una foto sea calicable de verdad.
+- **Estabilizador de mano**: `core/.../EstabilizadorTrazo.kt` suaviza los
+  puntos de entrada (filtro exponencial). Se aplica en **espacio de pantalla**
+  (allí el temblor mide siempre lo mismo) y recién después se pasan a la hoja:
+  `DibujoViewModel.iniciarTrazo`/`continuarTrazo` suavizan y después llaman a
+  `aHoja`. El nivel (`estado.estabilizador`, 0..0,95) se guarda en las
+  preferencias (`CLAVE_ESTABILIZADOR`), se cambia desde *más opciones* (toggle)
+  y con un deslizador en *Opciones → Valores de dibujo*. No toca el motor
+  (mismo criterio que el calco: **no aplica la paridad**).
+- **Simetría del trazo** (`core/.../Simetria.kt`): el motor dibuja el trazo y
+  sus reflejos respecto del centro de la hoja (`NINGUNA`, `VERTICAL`,
+  `HORIZONTAL`, `CUADRADA`). **Sí es cambio de motor**: va en C++ y en Kotlin
+  con paridad (`MotorTest.simetriaParidadNativoKotlin`).
+  - El reflejo es una resta: `x' = (ancho - 1) - x` en vertical y
+    `y' = (alto - 1) - y` en horizontal (sin trigonometría: así C++ y Kotlin
+    dan el mismo píxel). Ojo: `MotorKotlin.reflejar` y
+    `DibujoEngine.cpp:reflejarTrazo` tienen que decir exactamente lo mismo.
+  - Los reflejos se dibujan al **terminar** el trazo (`terminarTrazo`), así el
+    gesto es un solo paso del historial y se deshace de una vez. Por eso la
+    vista previa (que es de la app, en `CapaGestos`) tiene que dibujar los
+    reflejos a mano para que coincida con lo que pasa al soltar.
+  - La simetría radial (N ejes) quedó **pendiente**: necesita cos/sin y ahí
+    C++ y Kotlin pueden diferir en la última ulp (el mismo problema que la
+    rotación de la cámara, por eso la paridad de cámara se prueba en 0°/90°/180°).
+- **Vectorizador y export a SVG** (`core/.../VectorizadorHoja.kt`): convierte
+  la hoja raster en un SVG con un `<path>` por figura. Pasos: máscara de tinta
+  (distancia al color de fondo > [VectorizadorHoja.UMBRAL_TINTA]), componentes
+  conexas (8 vecinos), contorno con el **algoritmo de Moore** (criterio de
+  terminación de Jacob), agujeros (el papel encerrado por la tinta: el interior
+  de un círculo) recortados con `fill-rule="evenodd"`, y simplificación con
+  `RamerDouglasPeucker` (que también usa la pluma vectorial de `:app`).
+  Es una operación de **imagen**: no toca el motor y **no aplica la paridad**.
+  En la app: botón "SVG" en el diálogo de exportar, que vectoriza fuera del
+  hilo principal y lo comparte (`ExportadorGaleria.compartirArchivo`).
 - **Texturas del trazo** (issue 70): el acceso vive en la hoja de **más
   herramientas** (los tres puntos horizontales); `DialogoTextura` muestra cada
   opción con un **trazo de muestra** rasterizado con el mismo `Textura.aplicar`
@@ -859,8 +922,16 @@ Es clave para trabajar desde el móvil, sin adb ni PC.
   cámara: al reabrir sólo se recupera la hoja. Release sin firmar y sin más
   metadatos por dibujo (nombre propio).
 - Release de `:app` no está firmado para distribución (solo debug).
-- El historial es por snapshots: tope configurable 5..100 (30 por defecto,
-  compartido C++/Kotlin) para acotar la RAM del dispositivo (ver "Historial").
+- El historial guarda instantáneas **comprimidas** (RLE sin pérdida): tope
+  configurable 5..100 (30 por defecto, compartido C++/Kotlin) y la memoria por
+  paso cae de ~8,6 MB a decenas de KB en una hoja normal (ver "Historial").
+- La simetría del trazo es de **espejo** (vertical, horizontal y cuadrada). La
+  **radial** quedó pendiente: necesita cos/sin y ahí C++ y Kotlin pueden
+  diferir en la última ulp.
+- El export a **SVG** vectoriza el dibujo raster (contornos con Moore). El
+  resultado es una aproximación: las curvas no son Bézier y las figuras muy
+  curvas quedan poligonales. La **simetría radial** y el *skeleton* (trazo con
+  ancho, en vez de contorno relleno) son la paso siguiente.
 
 ## 7. Datos útiles para agentes
 

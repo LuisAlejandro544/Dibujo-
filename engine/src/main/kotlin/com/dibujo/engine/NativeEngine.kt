@@ -24,6 +24,9 @@ object NativeEngine {
         textura: Int,
     )
     external fun nativoAsistenciaRecta(handle: Long, activa: Boolean)
+
+    /** Simetría del trazo (ordinal de `com.dibujo.core.Simetria`). */
+    external fun nativoSimetria(handle: Long, modo: Int)
     external fun nativoIniciarTrazo(handle: Long, x: Float, y: Float)
     external fun nativoContinuarTrazo(handle: Long, x: Float, y: Float)
     external fun nativoTerminarTrazo(handle: Long): Boolean

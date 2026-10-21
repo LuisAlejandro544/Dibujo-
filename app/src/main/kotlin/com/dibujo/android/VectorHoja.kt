@@ -16,7 +16,6 @@ import com.dibujo.core.Textura
 import java.nio.ByteBuffer
 import kotlin.math.ceil
 import kotlin.math.floor
-import kotlin.math.max
 
 /**
  * Trazo vectorial vivo: una polilínea suavizada en coordenadas de hoja que se
@@ -86,9 +85,6 @@ class TrazoRasterizado(
  * perder la forma. Todo vive en `:app` (no toca JNI ni la paridad del motor).
  */
 object VectorHoja {
-
-    /** Tolerancia de simplificación, en px de hoja. */
-    private const val TOLERANCIA_MINIMA = 0.35f
 
     /**
      * Tope de píxeles del bitmap temporal de un trazo. Un trazo que ocupe más
@@ -321,57 +317,12 @@ object VectorHoja {
     /**
      * Simplifica una polilínea (pares x, y) con Ramer-Douglas-Peucker. La
      * tolerancia está en px de hoja; al agrandar la hoja conviene una tolerancia
-     * proporcionalmente menor para no perder detalle.
+     * proporcionalmente menor para no perder detalle. La implementación vive
+     * en `:core` (`RamerDouglasPeucker`), que la usa también el vectorizador
+     * que exporta a SVG.
      */
-    fun simplificar(puntos: List<Float>, tolerancia: Float): List<Float> {
-        val vertices = puntos.size / 2
-        if (vertices <= 2) return puntos
-        val limite = max(tolerancia, TOLERANCIA_MINIMA)
-        val limite2 = limite * limite
-        val conservar = BooleanArray(vertices)
-        conservar[0] = true
-        conservar[vertices - 1] = true
-        val pendientes = ArrayDeque<IntArray>()
-        pendientes.addLast(intArrayOf(0, vertices - 1))
-        while (pendientes.isNotEmpty()) {
-            val rango = pendientes.removeLast()
-            val inicio = rango[0]
-            val fin = rango[1]
-            val ax = puntos[inicio * 2]
-            val ay = puntos[inicio * 2 + 1]
-            val bx = puntos[fin * 2]
-            val by = puntos[fin * 2 + 1]
-            var lejano = -1
-            var mayor = limite2
-            for (i in inicio + 1 until fin) {
-                val distancia = distanciaCuadrado(
-                    puntos[i * 2],
-                    puntos[i * 2 + 1],
-                    ax,
-                    ay,
-                    bx,
-                    by,
-                )
-                if (distancia > mayor) {
-                    mayor = distancia
-                    lejano = i
-                }
-            }
-            if (lejano > 0) {
-                conservar[lejano] = true
-                pendientes.addLast(intArrayOf(inicio, lejano))
-                pendientes.addLast(intArrayOf(lejano, fin))
-            }
-        }
-        val salida = ArrayList<Float>(vertices * 2)
-        for (i in 0 until vertices) {
-            if (conservar[i]) {
-                salida.add(puntos[i * 2])
-                salida.add(puntos[i * 2 + 1])
-            }
-        }
-        return salida
-    }
+    fun simplificar(puntos: List<Float>, tolerancia: Float): List<Float> =
+        com.dibujo.core.RamerDouglasPeucker.simplificar(puntos, tolerancia)
 
     /** Distancia al cuadrado del punto ([px], [py]) al trazo (mínima al segmento). */
     fun distanciaCuadradaAlTrazo(

@@ -77,6 +77,8 @@
     <string name="exportar_calculando">Preparando…</string>
     <string name="exportar_guardar">Guardar en galería</string>
     <string name="exportar_compartir">Compartir</string>
+    <string name="exportar_svg">SVG</string>
+    <string name="exportar_svg_desc">El SVG convierte el dibujo en vectores: se editan y se escalan sin perder nitidez.</string>
     <string name="compartir_error">No se pudo compartir el dibujo</string>
     <string name="exportar_recortar">Recortar al dibujo</string>
     <string name="exportar_recortar_desc">Elimina el fondo que no usaste y guarda sólo lo que dibujaste. No modifica tu dibujo.</string>
@@ -110,6 +112,9 @@
     <string name="config_grosor_inicial">Grosor inicial</string>
     <string name="config_grosor_valor">Grosor %1$d</string>
     <string name="config_textura_inicial">Textura inicial</string>
+    <string name="config_estabilizador_titulo">Estabilizador de mano</string>
+    <string name="config_estabilizador_desc">Suaviza el temblor de los dedos al dibujar. Más nivel, trazo más recto (y un poco más corto al final).</string>
+    <string name="config_estabilizador_valor">Suavizado %1$d%%</string>
     <string name="config_feedback_titulo">Retroalimentación</string>
     <string name="config_feedback_desc">Vibración y sonidos al dibujar, deshacer y rehacer</string>
     <string name="config_vibracion">Vibración háptica</string>
@@ -119,7 +124,7 @@
     <string name="config_historial_titulo">Historial</string>
     <string name="config_historial_desc">Cantidad de pasos que se pueden deshacer. Más pasos usan más memoria.</string>
     <string name="config_historial_valor">%1$d pasos</string>
-    <string name="config_historial_memoria">Cada paso guarda una copia completa de la hoja en memoria.</string>
+    <string name="config_historial_memoria">Cada paso guarda una copia comprimida de la hoja en memoria.</string>
     <string name="config_backend">Motor gráfico</string>
     <string name="config_backend_efectivo">En uso: %1$s</string>
     <string name="config_vulkan_no_soportado">Este equipo no soporta Vulkan 1.1; la opción queda bloqueada.</string>
@@ -158,6 +163,21 @@
     <string name="calco_centrar">Centrar</string>
     <string name="calco_ajuste_hint">Ajustando el calco: un dedo lo mueve, dos dedos lo escalan.</string>
     <string name="calco_listo">Listo</string>
+
+    <!-- Filtros de la imagen de calco -->
+    <string name="calco_filtro_titulo">Filtro de la imagen</string>
+    <string name="calco_filtro_descripcion">Prepara la foto para calcar: la pasa a líneas o le saca el fondo.</string>
+    <string name="calco_filtro_ninguno">Sin filtro</string>
+    <string name="calco_filtro_gris">Grises</string>
+    <string name="calco_filtro_contraste">Contraste</string>
+    <string name="calco_filtro_umbral">Umbral</string>
+    <string name="calco_filtro_invertir">Invertir</string>
+    <string name="calco_filtro_bordes">Bordes</string>
+    <string name="calco_filtro_sin_fondo">Quitar fondo</string>
+    <string name="calco_ajuste_umbral">Umbral: %1$d</string>
+    <string name="calco_ajuste_contraste">Contraste: %1$d</string>
+    <string name="calco_ajuste_bordes">Sensibilidad: %1$d</string>
+    <string name="calco_ajuste_fondo">Fondo: %1$d</string>
 
     <!-- IA local (modelo chico empaquetado y algoritmos clásicos; todo en el equipo) -->
     <string name="ia_titulo">Herramientas con IA local</string>
@@ -208,6 +228,12 @@
 
     <!-- Trazo asistido (endereza las líneas al soltar) -->
     <string name="cd_asistencia_recta">Líneas rectas asistidas: al soltar, el trazo se endereza</string>
+
+    <!-- Estabilizador de mano (suaviza el temblor de los dedos) -->
+    <string name="cd_estabilizador">Estabilizador de mano: suaviza el temblor al dibujar</string>
+
+    <!-- Simetría del trazo (el motor dibuja el trazo y sus reflejos) -->
+    <string name="cd_simetria">Simetría: dibujar el trazo y sus reflejos</string>
 
     <!-- Textura del trazo -->
     <string name="cd_textura">Elegir la textura del trazo</string>

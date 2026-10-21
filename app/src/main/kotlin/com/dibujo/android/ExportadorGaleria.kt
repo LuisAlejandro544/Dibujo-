@@ -64,26 +64,39 @@ object ExportadorGaleria {
      * ninguna app que pueda recibir la imagen.
      */
     fun compartir(contexto: Context, bytes: ByteArray, nombre: String): Boolean =
-        runCatching {
-            val carpeta = File(contexto.cacheDir, CARPETA_COMPARTIR)
-            if (!carpeta.exists() && !carpeta.mkdirs()) return false
-            val archivo = File(carpeta, "$nombre.png")
-            FileOutputStream(archivo).use { it.write(bytes) }
-            val uri = FileProvider.getUriForFile(
-                contexto,
-                "${contexto.packageName}.fileprovider",
-                archivo,
-            )
-            val enviar = Intent(Intent.ACTION_SEND).apply {
-                type = "image/png"
-                putExtra(Intent.EXTRA_STREAM, uri)
-                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-            }
-            val elegir = Intent.createChooser(enviar, null)
-                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-            contexto.startActivity(elegir)
-            true
-        }.getOrDefault(false)
+        compartirArchivo(contexto, bytes, nombre, "png", "image/png")
+
+    /**
+     * Comparte cualquier archivo (PNG, SVG...) con las apps del equipo: lo
+     * escribe en la caché y lo expone por [FileProvider]. La extensión y el
+     * tipo MIME decides cómo lo ve la app que lo recibe.
+     */
+    fun compartirArchivo(
+        contexto: Context,
+        bytes: ByteArray,
+        nombre: String,
+        extension: String,
+        tipoMime: String,
+    ): Boolean = runCatching {
+        val carpeta = File(contexto.cacheDir, CARPETA_COMPARTIR)
+        if (!carpeta.exists() && !carpeta.mkdirs()) return false
+        val archivo = File(carpeta, "$nombre.$extension")
+        FileOutputStream(archivo).use { it.write(bytes) }
+        val uri = FileProvider.getUriForFile(
+            contexto,
+            "${contexto.packageName}.fileprovider",
+            archivo,
+        )
+        val enviar = Intent(Intent.ACTION_SEND).apply {
+            type = tipoMime
+            putExtra(Intent.EXTRA_STREAM, uri)
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        }
+        val elegir = Intent.createChooser(enviar, null)
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        contexto.startActivity(elegir)
+        true
+    }.getOrDefault(false)
 
     /** Tamaño legible en KB/MB para avisar al usuario antes de guardar. */
     fun formatearTamano(bytes: Int): String {

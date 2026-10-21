@@ -18,6 +18,7 @@ class MotorKotlin(
     private val historial = com.dibujo.core.Historial()
     private var lapiz = Lapiz()
     private var asistencia = false
+    private var simetria = com.dibujo.core.Simetria.NINGUNA
 
     override val ancho: Int get() = hoja.ancho
     override val alto: Int get() = hoja.alto
@@ -42,6 +43,10 @@ class MotorKotlin(
 
     override fun asistenciaRecta(activa: Boolean) {
         asistencia = activa
+    }
+
+    override fun simetria(modo: com.dibujo.core.Simetria) {
+        simetria = modo
     }
 
     override fun iniciarTrazo(x: Float, y: Float) {
@@ -95,26 +100,73 @@ class MotorKotlin(
         } else {
             lapiz.textura
         }
-        if (lapiz.herramienta == com.dibujo.core.Herramienta.DOBLE) {
-            // Doble lápiz: dos líneas paralelas con la normal suavizada por
-            // vértice (polilínea completa), para que no tiemblen en los
-            // empalmes. Misma aritmética que el C++.
-            hoja.polilineaDoble(
-                trazo, puntos * 2, grosor,
-                lapiz.punta == com.dibujo.core.Punta.REDONDA, color,
-                separacionDoble(grosor), textura,
-            )
-            puntos = 0
-            return true
+        val cantidad = puntos * 2
+        val redonda = lapiz.punta == com.dibujo.core.Punta.REDONDA
+        // Dibuja una polilínea con la herramienta actual (Doble hace las dos
+        // líneas paralelas; el resto, una línea gruesa con cobertura máxima
+        // por píxel y una sola mezcla).
+        val dibujar = { ps: FloatArray, n: Int ->
+            if (lapiz.herramienta == com.dibujo.core.Herramienta.DOBLE) {
+                hoja.polilineaDoble(
+                    ps, n, grosor, redonda, color,
+                    separacionDoble(grosor), textura,
+                )
+            } else {
+                hoja.polilineaGruesa(ps, n, grosor, redonda, color, textura)
+            }
         }
-        // Se rasteriza toda la polilínea con cobertura máxima por píxel y una
-        // sola mezcla: sin discos superpuestos ni bordes acumulados.
-        hoja.polilineaGruesa(
-            trazo, puntos * 2, grosor,
-            lapiz.punta == com.dibujo.core.Punta.REDONDA, color, textura,
-        )
+        dibujar(trazo, cantidad)
+        // Simetría: el trazo se dibuja también en sus reflejos respecto del
+        // centro de la hoja. El reflejo es una resta (sin trigonometría) para
+        // que el C++ dé el mismo resultado píxel a píxel.
+        if (simetria != com.dibujo.core.Simetria.NINGUNA) {
+            val vertical = simetria == com.dibujo.core.Simetria.VERTICAL ||
+                simetria == com.dibujo.core.Simetria.CUADRADA
+            val horizontal = simetria == com.dibujo.core.Simetria.HORIZONTAL ||
+                simetria == com.dibujo.core.Simetria.CUADRADA
+            if (vertical) {
+                val reflejo = reflejar(trazo, cantidad, hoja.ancho, hoja.alto, true, false)
+                dibujar(reflejo, cantidad)
+            }
+            if (horizontal) {
+                val reflejo = reflejar(trazo, cantidad, hoja.ancho, hoja.alto, false, true)
+                dibujar(reflejo, cantidad)
+            }
+            if (vertical && horizontal) {
+                val reflejo = reflejar(trazo, cantidad, hoja.ancho, hoja.alto, true, true)
+                dibujar(reflejo, cantidad)
+            }
+        }
         puntos = 0
         return true
+    }
+
+    /**
+     * Refleja los puntos de la polilínea respecto del centro de la hoja: en
+     * vertical, `x' = (ancho - 1) - x`; en horizontal, `y' = (alto - 1) - y`.
+     * El C++ (`reflejarTrazo` en `DibujoEngine.cpp`) replica esta misma
+     * aritmética para mantener la paridad.
+     */
+    private fun reflejar(
+        puntos: FloatArray,
+        cantidad: Int,
+        ancho: Int,
+        alto: Int,
+        ejeX: Boolean,
+        ejeY: Boolean,
+    ): FloatArray {
+        val salida = FloatArray(cantidad)
+        var i = 0
+        while (i + 1 < cantidad) {
+            var x = puntos[i]
+            var y = puntos[i + 1]
+            if (ejeX) x = (ancho - 1).toFloat() - x
+            if (ejeY) y = (alto - 1).toFloat() - y
+            salida[i] = x
+            salida[i + 1] = y
+            i += 2
+        }
+        return salida
     }
 
     override fun cancelarTrazo() {

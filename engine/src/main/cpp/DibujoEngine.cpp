@@ -5,7 +5,74 @@
 
 namespace dibujo {
 
+// Instantánea comprimida de la hoja: RLE de píxeles iguales (cantidad, color)
+// con respaldo crudo cuando el RLE no conviene. Sin pérdida: la hoja se
+// restaura idéntica. Replica `InstantaneaHoja.capturar` de Kotlin (paridad).
+Instantanea comprimirHoja(const std::vector<uint32_t>& hoja) {
+    Instantanea instantanea;
+    instantanea.pixeles = hoja.size();
+    if (hoja.empty()) return instantanea;
+    // Primera pasada: cuántas rachas de píxeles iguales hay.
+    std::size_t rachas = 0;
+    for (std::size_t i = 0; i < hoja.size(); ++i) {
+        if (i == 0 || hoja[i] != hoja[i - 1]) ++rachas;
+    }
+    // El RLE ocupa 2 enteros por racha: sólo conviene si no supera el tamaño
+    // crudo (si no, se guarda la copia tal cual).
+    if (rachas * 2 <= hoja.size()) {
+        instantanea.comprimido = true;
+        instantanea.datos.reserve(rachas * 2);
+        std::size_t inicio = 0;
+        while (inicio < hoja.size()) {
+            std::size_t fin = inicio + 1;
+            while (fin < hoja.size() && hoja[fin] == hoja[inicio]) ++fin;
+            instantanea.datos.push_back(static_cast<uint32_t>(fin - inicio));
+            instantanea.datos.push_back(hoja[inicio]);
+            inicio = fin;
+        }
+    } else {
+        instantanea.datos = hoja;
+    }
+    return instantanea;
+}
+
+// Restaura una instantánea sobre la hoja (sobrescribe lo que haya).
+void restaurarHoja(const Instantanea& instantanea, std::vector<uint32_t>& hoja) {
+    if (!instantanea.comprimido) {
+        const std::size_t n = std::min(instantanea.datos.size(), hoja.size());
+        std::copy(instantanea.datos.begin(), instantanea.datos.begin() + n, hoja.begin());
+        return;
+    }
+    std::size_t i = 0;
+    std::size_t destino = 0;
+    while (i + 1 < instantanea.datos.size() && destino < hoja.size()) {
+        const std::size_t cuenta = instantanea.datos[i];
+        const uint32_t color = instantanea.datos[i + 1];
+        i += 2;
+        for (std::size_t k = 0; k < cuenta && destino < hoja.size(); ++k) {
+            hoja[destino++] = color;
+        }
+    }
+}
+
 namespace {
+
+// Refleja los puntos de la polilínea respecto del centro de la hoja: en
+// vertical, `x' = (ancho - 1) - x`; en horizontal, `y' = (alto - 1) - y`.
+// Replica `MotorKotlin.reflejar` (paridad): sólo restas, sin trigonometría.
+std::vector<float> reflejarTrazo(const std::vector<float>& puntos, int ancho,
+                                 int alto, bool ejeX, bool ejeY) {
+    std::vector<float> salida(puntos.size());
+    for (std::size_t i = 0; i + 1 < puntos.size(); i += 2) {
+        float x = puntos[i];
+        float y = puntos[i + 1];
+        if (ejeX) x = static_cast<float>(ancho - 1) - x;
+        if (ejeY) y = static_cast<float>(alto - 1) - y;
+        salida[i] = x;
+        salida[i + 1] = y;
+    }
+    return salida;
+}
 
 // Grosor base (px de hoja) según la herramienta.
 inline int grosorHerramienta(Tool tool, int grosor) {
@@ -653,7 +720,7 @@ bool DibujoEngine::terminarTrazo() {
     // La hoja la lee también el hilo de render GPU: bloquear la mutación.
     std::lock_guard<std::mutex> bloqueo(mutex_);
     // Snapshot para undo antes de aplicar el trazo.
-    pasado_.push_back(hoja_);
+    pasado_.push_back(comprimirHoja(hoja_));
     if (pasado_.size() > maxHistorial_) pasado_.erase(pasado_.begin());
     futuro_.clear();
 
@@ -683,17 +750,42 @@ bool DibujoEngine::terminarTrazo() {
         rellenar(hoja_, ancho_, alto_,
                  static_cast<int>(std::lround(trazo_[0])),
                  static_cast<int>(std::lround(trazo_[1])), color_);
-    } else if (herramienta_ == Tool::DOBLE) {
-        // Doble lápiz: dos líneas paralelas con normal suavizada por vértice.
-        const float separacion = separacionDoble(grosor);
-        polilineaDoble(hoja_, ancho_, alto_, trazo_.data(),
-                       static_cast<int>(trazo_.size()), radio, puntaRedonda_,
-                       color, separacion, textura);
     } else {
-        // Cobertura máxima por píxel y una sola mezcla para toda la polilínea.
-        polilineaGruesa(hoja_, ancho_, alto_, trazo_.data(),
-                        static_cast<int>(trazo_.size()), radio, puntaRedonda_,
-                        color, textura);
+        // Dibuja una polilínea con la herramienta actual (Doble hace las dos
+        // líneas paralelas; el resto, una línea gruesa con cobertura máxima
+        // por píxel y una sola mezcla).
+        const auto dibujar = [&](const std::vector<float>& puntos) {
+            if (herramienta_ == Tool::DOBLE) {
+                // Doble lápiz: dos líneas paralelas con normal suavizada.
+                const float separacion = separacionDoble(grosor);
+                polilineaDoble(hoja_, ancho_, alto_, puntos.data(),
+                               static_cast<int>(puntos.size()), radio,
+                               puntaRedonda_, color, separacion, textura);
+            } else {
+                polilineaGruesa(hoja_, ancho_, alto_, puntos.data(),
+                                static_cast<int>(puntos.size()), radio,
+                                puntaRedonda_, color, textura);
+            }
+        };
+        dibujar(trazo_);
+        // Simetría: el trazo se dibuja también en sus reflejos respecto del
+        // centro de la hoja. El reflejo es una resta (sin trigonometría) para
+        // que Kotlin dé el mismo resultado píxel a píxel.
+        if (simetria_ != Simetria::NINGUNA) {
+            const bool vertical = simetria_ == Simetria::VERTICAL ||
+                                  simetria_ == Simetria::CUADRADA;
+            const bool horizontal = simetria_ == Simetria::HORIZONTAL ||
+                                    simetria_ == Simetria::CUADRADA;
+            if (vertical) {
+                dibujar(reflejarTrazo(trazo_, ancho_, alto_, true, false));
+            }
+            if (horizontal) {
+                dibujar(reflejarTrazo(trazo_, ancho_, alto_, false, true));
+            }
+            if (vertical && horizontal) {
+                dibujar(reflejarTrazo(trazo_, ancho_, alto_, true, true));
+            }
+        }
     }
 
     trazo_.clear();
@@ -716,8 +808,8 @@ void DibujoEngine::fijarLimiteHistorial(std::size_t maximo) {
 bool DibujoEngine::deshacer() {
     std::lock_guard<std::mutex> bloqueo(mutex_);
     if (pasado_.empty()) return false;
-    futuro_.push_back(hoja_);
-    hoja_ = pasado_.back();
+    futuro_.push_back(comprimirHoja(hoja_));
+    restaurarHoja(pasado_.back(), hoja_);
     pasado_.pop_back();
     ++revision_;
     return true;
@@ -726,8 +818,8 @@ bool DibujoEngine::deshacer() {
 bool DibujoEngine::rehacer() {
     std::lock_guard<std::mutex> bloqueo(mutex_);
     if (futuro_.empty()) return false;
-    pasado_.push_back(hoja_);
-    hoja_ = futuro_.back();
+    pasado_.push_back(comprimirHoja(hoja_));
+    restaurarHoja(futuro_.back(), hoja_);
     futuro_.pop_back();
     ++revision_;
     return true;
@@ -735,7 +827,7 @@ bool DibujoEngine::rehacer() {
 
 void DibujoEngine::limpiarHoja() {
     std::lock_guard<std::mutex> bloqueo(mutex_);
-    pasado_.push_back(hoja_);
+    pasado_.push_back(comprimirHoja(hoja_));
     if (pasado_.size() > maxHistorial_) pasado_.erase(pasado_.begin());
     futuro_.clear();
     std::fill(hoja_.begin(), hoja_.end(), fondo_);
@@ -758,7 +850,7 @@ bool DibujoEngine::limpiarTrazos(float radio) {
     // Snapshot para undo y copia de colores: el esqueleto es un subconjunto de
     // la tinta, así que cada píxel conserva el color que tenía (`origen`).
     std::vector<uint32_t> origen = hoja_;
-    pasado_.push_back(hoja_);
+    pasado_.push_back(comprimirHoja(hoja_));
     if (pasado_.size() > maxHistorial_) pasado_.erase(pasado_.begin());
     futuro_.clear();
 
@@ -781,7 +873,7 @@ bool DibujoEngine::limpiarTrazos(float radio) {
 bool DibujoEngine::reemplazarHoja(const uint32_t* datos, std::size_t n) {
     std::lock_guard<std::mutex> bloqueo(mutex_);
     if (datos == nullptr || n != hoja_.size()) return false;
-    pasado_.push_back(hoja_);
+    pasado_.push_back(comprimirHoja(hoja_));
     if (pasado_.size() > maxHistorial_) pasado_.erase(pasado_.begin());
     futuro_.clear();
     std::copy(datos, datos + n, hoja_.begin());
@@ -797,8 +889,9 @@ bool DibujoEngine::transformar(bool voltearHorizontal, bool voltearVertical,
         return false;
     }
     std::lock_guard<std::mutex> bloqueo(mutex_);
-    // Copia para muestrear y para el historial (se mueve al final, sin copiar
-    // dos veces). El mapeo inverso por píxel destino evita huecos al ampliar.
+    // Copia para muestrear y para el historial (se comprime al final, así el
+    // historial no guarda una copia completa de la hoja por paso). El mapeo
+    // inverso por píxel destino evita huecos al ampliar.
     std::vector<uint32_t> fuente = hoja_;
     const double cx = (ancho_ - 1) / 2.0;
     const double cy = (alto_ - 1) / 2.0;
@@ -820,7 +913,7 @@ bool DibujoEngine::transformar(bool voltearHorizontal, bool voltearVertical,
                     : fondo_;
         }
     }
-    pasado_.push_back(std::move(fuente));
+    pasado_.push_back(comprimirHoja(fuente));
     if (pasado_.size() > maxHistorial_) pasado_.erase(pasado_.begin());
     futuro_.clear();
     ++revision_;

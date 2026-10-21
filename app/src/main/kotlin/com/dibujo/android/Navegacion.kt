@@ -211,6 +211,7 @@ fun AppDibujo(vm: DibujoViewModel = viewModel()) {
             alElegirHerramienta = vm::elegirHerramientaInicial,
             alElegirGrosor = vm::elegirGrosorInicial,
             alElegirTextura = vm::elegirTexturaInicial,
+            alElegirEstabilizador = vm::elegirEstabilizador,
             alVolver = { destino = Destino.OPCIONES },
         )
 

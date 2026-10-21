@@ -36,6 +36,9 @@
     <!-- Barra de herramientas -->
     <string name="modo_editar">Dibujar</string>
     <string name="modo_mover">Mover</string>
+    <!-- Indicador flotante del modo, sobre el lienzo -->
+    <string name="modo_indicador_dibujo">Dibujando</string>
+    <string name="modo_indicador_mover">Moviendo</string>
     <string name="herramienta_lapiz">Lápiz</string>
     <string name="herramienta_portamina">Porta</string>
     <string name="herramienta_carboncillo">Carbón</string>
@@ -64,6 +67,8 @@
     <string name="cd_calco">Imagen de calco</string>
     <string name="cd_calco_elegir">Elegir imagen para calcar</string>
     <string name="cd_calco_alternar">Mostrar u ocultar la imagen de calco</string>
+    <string name="cd_calco_mostrar">Mostrar la imagen de calco</string>
+    <string name="cd_calco_ocultar">Ocultar la imagen de calco</string>
     <string name="cd_calco_opciones">Opciones de calco</string>
     <string name="cd_expandir">Expandir la hoja</string>
     <string name="cd_exportar">Exportar el dibujo a la galería</string>

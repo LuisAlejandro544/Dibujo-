@@ -20,7 +20,7 @@ public:
     static RenderizadorGpu* crear(ANativeWindow* ventana, DibujoEngine* motor);
     ~RenderizadorGL() override;
 
-    bool render() override;
+    EstadoCuadro render() override;
     void redimensionar(int ancho, int alto) override;
     const char* nombre() const override { return nombre_.c_str(); }
 

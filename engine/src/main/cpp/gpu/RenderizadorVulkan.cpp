@@ -14,6 +14,9 @@ namespace gpu {
 
 namespace {
 
+// Cuadros en vuelo a la vez. Cada uno tiene su propio command buffer, sus
+// semáforos, su valla y su buffer de subida: así un cuadro no pisa lo que el
+// otro todavía está usando.
 constexpr int kMaxCuadrosEnVuelo = 2;
 constexpr const char* kExtensionSwapchain = VK_KHR_SWAPCHAIN_EXTENSION_NAME;
 
@@ -66,22 +69,14 @@ bool RenderizadorVulkan::iniciar(ANativeWindow* ventana, DibujoEngine* motor) {
         return false;
     }
 
+    if (!crearStaging()) return false;
     if (!crearHoja()) return false;
+    subirHojaInicial(); // subida inicial + transición a SHADER_READ_ONLY
     if (!crearDescriptores()) return false;
     if (!crearCadena()) return false;
     if (!crearPasada()) return false;
     if (!crearTuberia()) return false;
-    if (!crearDestinos()) return false;
-    if (!crearSincronizacion()) return false;
-
-    VkCommandBufferAllocateInfo cai{VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO};
-    cai.commandPool = pool_;
-    cai.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
-    cai.commandBufferCount = 1;
-    if (vkAllocateCommandBuffers(dispositivo_, &cai, &comando_) != VK_SUCCESS) {
-        LOGE("Vulkan: vkAllocateCommandBuffers falló");
-        return false;
-    }
+    if (!crearRecursosCuadro()) return false;
 
     VkPhysicalDeviceProperties props{};
     vkGetPhysicalDeviceProperties(fisico_, &props);
@@ -296,54 +291,63 @@ bool RenderizadorVulkan::crearHoja() {
     vci.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
     if (vkCreateImageView(dispositivo_, &vci, nullptr, &vistaHoja_) != VK_SUCCESS) return false;
 
-    tamanoStaging_ = static_cast<VkDeviceSize>(anchoHoja_) * altoHoja_ * 4;
-    if (!crearBuffer(tamanoStaging_, VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
-                     VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
-                     staging_, memoriaStaging_)) {
-        LOGE("Vulkan: no se pudo crear el buffer de subida");
-        return false;
-    }
-    subirHoja(VK_NULL_HANDLE); // subida inicial + transición a SHADER_READ_ONLY
     return true;
 }
 
-void RenderizadorVulkan::subirHoja(VkCommandBuffer externo) {
+bool RenderizadorVulkan::crearStaging() {
+    // Un buffer de subida por cuadro en vuelo: así un cuadro en vuelo no pisa
+    // el buffer que el otro todavía está copiando a la GPU.
+    tamanoStaging_ = static_cast<VkDeviceSize>(anchoHoja_) * altoHoja_ * 4;
+    const std::size_t ranuras = static_cast<std::size_t>(kMaxCuadrosEnVuelo);
+    staging_.assign(ranuras, VK_NULL_HANDLE);
+    memoriaStaging_.assign(ranuras, VK_NULL_HANDLE);
+    for (std::size_t i = 0; i < ranuras; ++i) {
+        if (!crearBuffer(tamanoStaging_, VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+                         VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+                         staging_[i], memoriaStaging_[i])) {
+            LOGE("Vulkan: no se pudo crear el buffer de subida");
+            return false;
+        }
+    }
+    return true;
+}
+
+void RenderizadorVulkan::subirHojaInicial() {
     // Igual que en OpenGL: la revisión 0 (hoja recién creada) es válida y debe
     // subirse. Descartarla dejaba la imagen de la hoja sin inicializar, así que
     // el lienzo se veía negro hasta el primer cambio de contenido.
+    // Sólo ocurre una vez (al crear el renderizador): aquí sí se puede parar
+    // la cola con `vkQueueWaitIdle` para que la copia termine antes de seguir.
     const uint64_t rev = motor_->copiarHoja(buffer_.data(), buffer_.size());
 
+    // La hoja va al buffer de subida (HOST_COHERENT: no hace falta flush).
     void* destino = nullptr;
-    if (vkMapMemory(dispositivo_, memoriaStaging_, 0, tamanoStaging_, 0, &destino) == VK_SUCCESS) {
+    if (vkMapMemory(dispositivo_, memoriaStaging_[0], 0, tamanoStaging_, 0, &destino) == VK_SUCCESS) {
         std::memcpy(destino, buffer_.data(), static_cast<std::size_t>(tamanoStaging_));
-        vkUnmapMemory(dispositivo_, memoriaStaging_);
+        vkUnmapMemory(dispositivo_, memoriaStaging_[0]);
     }
 
-    const bool propio = externo == VK_NULL_HANDLE;
-    VkCommandBuffer cmd = propio ? comenzarComandoUnico() : externo;
+    VkCommandBuffer cmd = comenzarComandoUnico();
     if (cmd == VK_NULL_HANDLE) return;
 
     VkImageSubresourceRange rango{VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
-    if (disposicionHoja_ == VK_IMAGE_LAYOUT_UNDEFINED) {
-        VkImageMemoryBarrier a{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
-        a.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-        a.newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
-        a.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-        a.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-        a.image = hoja_;
-        a.subresourceRange = rango;
-        a.srcAccessMask = 0;
-        a.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
-        vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
-                             VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0, nullptr, 1, &a);
-        disposicionHoja_ = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
-    }
+    VkImageMemoryBarrier a{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
+    a.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+    a.newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+    a.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    a.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    a.image = hoja_;
+    a.subresourceRange = rango;
+    a.srcAccessMask = 0;
+    a.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+    vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
+                         VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0, nullptr, 1, &a);
 
     VkBufferImageCopy copia{};
     copia.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
     copia.imageExtent = {static_cast<uint32_t>(anchoHoja_),
                          static_cast<uint32_t>(altoHoja_), 1};
-    vkCmdCopyBufferToImage(cmd, staging_, hoja_, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &copia);
+    vkCmdCopyBufferToImage(cmd, staging_.front(), hoja_, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &copia);
 
     VkImageMemoryBarrier b{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
     b.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
@@ -356,9 +360,62 @@ void RenderizadorVulkan::subirHoja(VkCommandBuffer externo) {
     b.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
     vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TRANSFER_BIT,
                          VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0, 0, nullptr, 0, nullptr, 1, &b);
-    disposicionHoja_ = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
 
-    if (propio) terminarComandoUnico(cmd);
+    terminarComandoUnico(cmd);
+    disposicionHoja_ = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+    revision_ = rev;
+}
+
+void RenderizadorVulkan::grabarSubidaHoja(VkCommandBuffer cmd, uint32_t slot) {
+    // La copia va en el command buffer del propio cuadro (con sus barreras),
+    // sin `vkQueueWaitIdle`: así la GPU no se para en cada trazo, que es lo que
+    // OpenGL no sufre.
+    const uint64_t rev = motor_->copiarHoja(buffer_.data(), buffer_.size());
+
+    void* destino = nullptr;
+    if (vkMapMemory(dispositivo_, memoriaStaging_[slot], 0, tamanoStaging_, 0, &destino) == VK_SUCCESS) {
+        std::memcpy(destino, buffer_.data(), static_cast<std::size_t>(tamanoStaging_));
+        vkUnmapMemory(dispositivo_, memoriaStaging_[slot]);
+    }
+
+    VkImageSubresourceRange rango{VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+
+    // La imagen pasa de "la lee el shader" a "destino de la copia". La espera
+    // cubre también las escrituras de copia anteriores (misma imagen, cuadro
+    // anterior) para que no se pisen.
+    VkImageMemoryBarrier a{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
+    a.oldLayout = disposicionHoja_;
+    a.newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+    a.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    a.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    a.image = hoja_;
+    a.subresourceRange = rango;
+    a.srcAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT;
+    a.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+    vkCmdPipelineBarrier(cmd,
+                         VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT | VK_PIPELINE_STAGE_TRANSFER_BIT,
+                         VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0, nullptr, 1, &a);
+
+    VkBufferImageCopy copia{};
+    copia.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
+    copia.imageExtent = {static_cast<uint32_t>(anchoHoja_),
+                         static_cast<uint32_t>(altoHoja_), 1};
+    vkCmdCopyBufferToImage(cmd, staging_[slot], hoja_, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &copia);
+
+    // Y de vuelta a "la lee el shader" para el dibujo de este mismo cuadro.
+    VkImageMemoryBarrier b{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
+    b.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+    b.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+    b.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    b.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    b.image = hoja_;
+    b.subresourceRange = rango;
+    b.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+    b.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+    vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TRANSFER_BIT,
+                         VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0, 0, nullptr, 0, nullptr, 1, &b);
+
+    disposicionHoja_ = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
     revision_ = rev;
 }
 
@@ -419,14 +476,29 @@ bool RenderizadorVulkan::crearCadena() {
     VkSurfaceCapabilitiesKHR caps{};
     if (vkGetPhysicalDeviceSurfaceCapabilitiesKHR(fisico_, superficie_, &caps) != VK_SUCCESS) {
         LOGE("Vulkan: vkGetPhysicalDeviceSurfaceCapabilitiesKHR falló");
+        superficieInvalida_ = true;
+        return false;
+    }
+
+    // La superficie puede estar momentáneamente sin tamaño (o sin formatos)
+    // durante un cambio brusco de interfaz: NO es un fallo del render, sólo
+    // hay que esperar al siguiente cuadro.
+    if (caps.currentExtent.width == 0 || caps.currentExtent.height == 0) {
+        if (!superficieInvalida_) {
+            LOGE("Vulkan: la superficie está sin tamaño; se reintenta");
+        }
+        superficieInvalida_ = true;
         return false;
     }
 
     uint32_t nFormatos = 0;
     vkGetPhysicalDeviceSurfaceFormatsKHR(fisico_, superficie_, &nFormatos, nullptr);
+    if (nFormatos == 0) {
+        superficieInvalida_ = true;
+        return false;
+    }
     std::vector<VkSurfaceFormatKHR> formatos(nFormatos);
     vkGetPhysicalDeviceSurfaceFormatsKHR(fisico_, superficie_, &nFormatos, formatos.data());
-    if (nFormatos == 0) return false;
     VkSurfaceFormatKHR elegido = formatos[0];
     for (const auto& f : formatos) {
         if (f.format == VK_FORMAT_R8G8B8A8_UNORM) { elegido = f; break; }
@@ -444,14 +516,19 @@ bool RenderizadorVulkan::crearCadena() {
     if (caps.currentExtent.width != UINT32_MAX) {
         extension_ = caps.currentExtent;
     } else {
+        const int anchoVista = vw_.load();
+        const int altoVista = vh_.load();
         VkExtent2D e{
-            static_cast<uint32_t>(vw_ > 0 ? vw_ : caps.minImageExtent.width),
-            static_cast<uint32_t>(vh_ > 0 ? vh_ : caps.minImageExtent.height)};
+            static_cast<uint32_t>(anchoVista > 0 ? anchoVista : caps.minImageExtent.width),
+            static_cast<uint32_t>(altoVista > 0 ? altoVista : caps.minImageExtent.height)};
         e.width = std::clamp(e.width, caps.minImageExtent.width, caps.maxImageExtent.width);
         e.height = std::clamp(e.height, caps.minImageExtent.height, caps.maxImageExtent.height);
         extension_ = e;
     }
-    if (extension_.width == 0 || extension_.height == 0) return false;
+    if (extension_.width == 0 || extension_.height == 0) {
+        superficieInvalida_ = true;
+        return false;
+    }
 
     uint32_t cantidad = caps.minImageCount + 1;
     if (caps.maxImageCount > 0 && cantidad > caps.maxImageCount) cantidad = caps.maxImageCount;
@@ -470,8 +547,11 @@ bool RenderizadorVulkan::crearCadena() {
     ci.presentMode = modo;
     ci.clipped = VK_TRUE;
     ci.oldSwapchain = VK_NULL_HANDLE;
-    if (vkCreateSwapchainKHR(dispositivo_, &ci, nullptr, &cadena_) != VK_SUCCESS) {
-        LOGE("Vulkan: vkCreateSwapchainKHR falló");
+    const VkResult creado = vkCreateSwapchainKHR(dispositivo_, &ci, nullptr, &cadena_);
+    if (creado != VK_SUCCESS) {
+        LOGE("Vulkan: vkCreateSwapchainKHR falló (%d)", creado);
+        if (creado == VK_ERROR_DEVICE_LOST) dispositivoPerdido_ = true;
+        superficieInvalida_ = true;
         return false;
     }
 
@@ -489,6 +569,7 @@ bool RenderizadorVulkan::crearCadena() {
         vci.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
         if (vkCreateImageView(dispositivo_, &vci, nullptr, &vistas_[i]) != VK_SUCCESS) return false;
     }
+    superficieInvalida_ = false;
     return true;
 }
 
@@ -625,7 +706,8 @@ bool RenderizadorVulkan::crearTuberia() {
     return true;
 }
 
-bool RenderizadorVulkan::crearDestinos() {
+bool RenderizadorVulkan::crearRecursosCuadro() {
+    // Marcos (framebuffers) del render pass, uno por imagen de la cadena.
     marcos_.resize(vistas_.size());
     for (std::size_t i = 0; i < vistas_.size(); ++i) {
         VkImageView adjuntos[] = {vistas_[i]};
@@ -638,23 +720,32 @@ bool RenderizadorVulkan::crearDestinos() {
         ci.layers = 1;
         if (vkCreateFramebuffer(dispositivo_, &ci, nullptr, &marcos_[i]) != VK_SUCCESS) return false;
     }
-    return true;
-}
 
-bool RenderizadorVulkan::crearSincronizacion() {
+    // Una ranura por cuadro en vuelo. Cada una tiene su command buffer, sus
+    // semáforos, su valla y su buffer de subida: así un cuadro nunca pisa lo
+    // que el otro todavía está usando.
+    const std::size_t ranuras = static_cast<std::size_t>(kMaxCuadrosEnVuelo);
+    comandos_.assign(ranuras, VK_NULL_HANDLE);
+    disponibles_.assign(ranuras, VK_NULL_HANDLE);
+    presentado_.assign(ranuras, VK_NULL_HANDLE);
+    enVuelo_.assign(ranuras, VK_NULL_HANDLE);
+
+    VkCommandBufferAllocateInfo cai{VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO};
+    cai.commandPool = pool_;
+    cai.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+    cai.commandBufferCount = static_cast<uint32_t>(ranuras);
+    if (vkAllocateCommandBuffers(dispositivo_, &cai, comandos_.data()) != VK_SUCCESS) return false;
+
     VkSemaphoreCreateInfo sci{VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO};
-    if (vkCreateSemaphore(dispositivo_, &sci, nullptr, &disponible_) != VK_SUCCESS) return false;
-
-    const std::size_t n = imagenes_.size();
-    presentado_.resize(n);
-    for (std::size_t i = 0; i < n; ++i) {
+    for (std::size_t i = 0; i < ranuras; ++i) {
+        if (vkCreateSemaphore(dispositivo_, &sci, nullptr, &disponibles_[i]) != VK_SUCCESS) return false;
         if (vkCreateSemaphore(dispositivo_, &sci, nullptr, &presentado_[i]) != VK_SUCCESS) return false;
     }
 
     VkFenceCreateInfo fci{VK_STRUCTURE_TYPE_FENCE_CREATE_INFO};
+    // Las vallas arrancan señaladas: el primer cuadro no espera a nada.
     fci.flags = VK_FENCE_CREATE_SIGNALED_BIT;
-    enVuelo_.resize(n);
-    for (std::size_t i = 0; i < n; ++i) {
+    for (std::size_t i = 0; i < ranuras; ++i) {
         if (vkCreateFence(dispositivo_, &fci, nullptr, &enVuelo_[i]) != VK_SUCCESS) return false;
     }
     return true;
@@ -673,6 +764,15 @@ void RenderizadorVulkan::limpiarCadena() {
         vkDestroySwapchainKHR(dispositivo_, cadena_, nullptr);
         cadena_ = VK_NULL_HANDLE;
     }
+    if (!comandos_.empty() && pool_ != VK_NULL_HANDLE) {
+        vkFreeCommandBuffers(dispositivo_, pool_,
+                             static_cast<uint32_t>(comandos_.size()), comandos_.data());
+    }
+    comandos_.clear();
+    for (VkSemaphore s : disponibles_) {
+        if (s != VK_NULL_HANDLE) vkDestroySemaphore(dispositivo_, s, nullptr);
+    }
+    disponibles_.clear();
     for (VkSemaphore s : presentado_) {
         if (s != VK_NULL_HANDLE) vkDestroySemaphore(dispositivo_, s, nullptr);
     }
@@ -681,46 +781,81 @@ void RenderizadorVulkan::limpiarCadena() {
         if (f != VK_NULL_HANDLE) vkDestroyFence(dispositivo_, f, nullptr);
     }
     enVuelo_.clear();
-    imagenes_.clear();
+    // Los buffers de subida no dependen de la cadena: viven hasta que se
+    // destruye el renderizador (los usa la subida de la hoja).
 }
 
 bool RenderizadorVulkan::recrearCadena() {
     vkDeviceWaitIdle(dispositivo_);
     limpiarCadena();
-    if (vw_ > 0 && vh_ > 0) {
-        // El tamaño de la ventana manda cuando la superficie no lo fija.
-    }
     if (!crearCadena()) return false;
-    if (!crearDestinos()) return false;
-    if (!crearSincronizacion()) return false;
+    if (!crearRecursosCuadro()) return false;
     cuadro_ = 0;
     reiniciarCadena_ = false;
     return true;
 }
 
-bool RenderizadorVulkan::render() {
-    if (dispositivo_ == VK_NULL_HANDLE || cadena_ == VK_NULL_HANDLE) return false;
-    if (reiniciarCadena_ && !recrearCadena()) return false;
+EstadoCuadro RenderizadorVulkan::render() {
+    if (instancia_ == VK_NULL_HANDLE || dispositivo_ == VK_NULL_HANDLE) {
+        return EstadoCuadro::FALLO;
+    }
+    if (dispositivoPerdido_) return EstadoCuadro::FALLO;
 
-    VkFence& valla = enVuelo_[cuadro_];
+    // La cadena se rehace cuando cambió el tamaño de la superficie o cuando
+    // la presentación avisó que quedó vieja. Si la superficie todavía no está
+    // lista (tamaño 0×0 durante un cambio brusco de interfaz) NO se pierde el
+    // render: se reintenta en el cuadro siguiente.
+    if (reiniciarCadena_.exchange(false)) {
+        if (!recrearCadena()) {
+            if (dispositivoPerdido_) return EstadoCuadro::FALLO;
+            reiniciarCadena_ = true;
+            return EstadoCuadro::REINTENTAR;
+        }
+    }
+    if (cadena_ == VK_NULL_HANDLE || comandos_.empty() || enVuelo_.empty()) {
+        return EstadoCuadro::REINTENTAR;
+    }
+
+    const uint32_t ranuras = static_cast<uint32_t>(enVuelo_.size());
+    const uint32_t slot = cuadro_ % ranuras;
+    VkFence& valla = enVuelo_[slot];
+
+    // Se espera a que el cuadro anterior de esta ranura termine. La valla se
+    // reinicia justo antes del envío (VUID: la valla debe estar sin señalizar
+    // al encolar), así que cualquier salida anticipada la deja señalizada y el
+    // siguiente cuadro no se queda esperando.
     vkWaitForFences(dispositivo_, 1, &valla, VK_TRUE, UINT64_MAX);
 
     uint32_t indice = 0;
     const VkResult adquiere =
-        vkAcquireNextImageKHR(dispositivo_, cadena_, UINT64_MAX, disponible_, VK_NULL_HANDLE, &indice);
+        vkAcquireNextImageKHR(dispositivo_, cadena_, UINT64_MAX, disponibles_[slot],
+                              VK_NULL_HANDLE, &indice);
     if (adquiere == VK_ERROR_OUT_OF_DATE_KHR) {
+        // La cadena quedó vieja: se rehace en el próximo cuadro. No es un fallo.
         reiniciarCadena_ = true;
-        return true;
+        return EstadoCuadro::PRESENTADO;
+    }
+    if (adquiere == VK_ERROR_DEVICE_LOST) {
+        dispositivoPerdido_ = true;
+        return EstadoCuadro::FALLO;
+    }
+    if (adquiere == VK_ERROR_SURFACE_LOST_KHR) {
+        // La superficie murió: se rehace desde la ventana nativa y se reintenta.
+        LOGE("Vulkan: superficie perdida; se reconstruye");
+        reiniciarCadena_ = true;
+        limpiarCadena();
+        if (superficie_ != VK_NULL_HANDLE) {
+            vkDestroySurfaceKHR(instancia_, superficie_, nullptr);
+            superficie_ = VK_NULL_HANDLE;
+        }
+        if (!crearSuperficie(ventana_)) return EstadoCuadro::FALLO;
+        return EstadoCuadro::REINTENTAR;
     }
     if (adquiere == VK_SUBOPTIMAL_KHR) {
         reiniciarCadena_ = true;
     } else if (adquiere != VK_SUCCESS) {
-        return false;
+        return EstadoCuadro::REINTENTAR;
     }
-
-    vkResetFences(dispositivo_, 1, &valla);
-
-    if (motor_->revision() != revision_) subirHoja(VK_NULL_HANDLE);
 
     float panX = 0.0f;
     float panY = 0.0f;
@@ -743,15 +878,22 @@ bool RenderizadorVulkan::render() {
     p.flipY = 0.0f; // Vulkan: origen arriba
     p.rot = rot;
 
-    vkResetCommandBuffer(comando_, 0);
+    VkCommandBuffer cmd = comandos_[slot];
+    vkResetCommandBuffer(cmd, 0);
     VkCommandBufferBeginInfo bi{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
-    vkBeginCommandBuffer(comando_, &bi);
+    vkBeginCommandBuffer(cmd, &bi);
+
+    // Subida de la hoja (si cambió) dentro del mismo command buffer del cuadro:
+    // la GPU no se para esperando a la copia.
+    if (motor_->revision() != revision_) {
+        grabarSubidaHoja(cmd, slot);
+    }
 
     VkViewport vp{0.0f, 0.0f, static_cast<float>(extension_.width),
                   static_cast<float>(extension_.height), 0.0f, 1.0f};
-    vkCmdSetViewport(comando_, 0, 1, &vp);
+    vkCmdSetViewport(cmd, 0, 1, &vp);
     VkRect2D tijera{{0, 0}, extension_};
-    vkCmdSetScissor(comando_, 0, 1, &tijera);
+    vkCmdSetScissor(cmd, 0, 1, &tijera);
 
     VkClearValue limpieza{};
     limpieza.color = {{p.fuera[0], p.fuera[1], p.fuera[2], 1.0f}};
@@ -761,31 +903,36 @@ bool RenderizadorVulkan::render() {
     rp.renderArea = tijera;
     rp.clearValueCount = 1;
     rp.pClearValues = &limpieza;
-    vkCmdBeginRenderPass(comando_, &rp, VK_SUBPASS_CONTENTS_INLINE);
-    vkCmdBindPipeline(comando_, VK_PIPELINE_BIND_POINT_GRAPHICS, tuberia_);
-    vkCmdBindDescriptorSets(comando_, VK_PIPELINE_BIND_POINT_GRAPHICS, diseno_, 0, 1,
+    vkCmdBeginRenderPass(cmd, &rp, VK_SUBPASS_CONTENTS_INLINE);
+    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, tuberia_);
+    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, diseno_, 0, 1,
                             &descriptores_, 0, nullptr);
-    vkCmdPushConstants(comando_, diseno_,
+    vkCmdPushConstants(cmd, diseno_,
                        VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0,
                        sizeof(ParametrosPresentacion), &p);
-    vkCmdDraw(comando_, 3, 1, 0, 0);
-    vkCmdEndRenderPass(comando_);
-    vkEndCommandBuffer(comando_);
+    vkCmdDraw(cmd, 3, 1, 0, 0);
+    vkCmdEndRenderPass(cmd);
+    vkEndCommandBuffer(cmd);
 
     VkPipelineStageFlags espera = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
     VkSubmitInfo si{VK_STRUCTURE_TYPE_SUBMIT_INFO};
     si.waitSemaphoreCount = 1;
-    si.pWaitSemaphores = &disponible_;
+    si.pWaitSemaphores = &disponibles_[slot];
     si.pWaitDstStageMask = &espera;
     si.commandBufferCount = 1;
-    si.pCommandBuffers = &comando_;
+    si.pCommandBuffers = &cmd;
     si.signalSemaphoreCount = 1;
-    si.pSignalSemaphores = &presentado_[indice];
-    if (vkQueueSubmit(cola_, 1, &si, valla) != VK_SUCCESS) return false;
+    si.pSignalSemaphores = &presentado_[slot];
+
+    vkResetFences(dispositivo_, 1, &valla);
+    if (vkQueueSubmit(cola_, 1, &si, valla) != VK_SUCCESS) {
+        LOGE("Vulkan: vkQueueSubmit falló");
+        return EstadoCuadro::FALLO;
+    }
 
     VkPresentInfoKHR pi{VK_STRUCTURE_TYPE_PRESENT_INFO_KHR};
     pi.waitSemaphoreCount = 1;
-    pi.pWaitSemaphores = &presentado_[indice];
+    pi.pWaitSemaphores = &presentado_[slot];
     pi.swapchainCount = 1;
     pi.pSwapchains = &cadena_;
     pi.pImageIndices = &indice;
@@ -793,11 +940,13 @@ bool RenderizadorVulkan::render() {
     if (presenta == VK_ERROR_OUT_OF_DATE_KHR || presenta == VK_SUBOPTIMAL_KHR) {
         reiniciarCadena_ = true;
     } else if (presenta != VK_SUCCESS) {
-        return false;
+        if (presenta == VK_ERROR_DEVICE_LOST) dispositivoPerdido_ = true;
+        LOGE("Vulkan: vkQueuePresentKHR falló (%d)", presenta);
+        return EstadoCuadro::FALLO;
     }
 
-    cuadro_ = (cuadro_ + 1) % enVuelo_.size();
-    return true;
+    cuadro_ = (cuadro_ + 1) % ranuras;
+    return EstadoCuadro::PRESENTADO;
 }
 
 void RenderizadorVulkan::redimensionar(int ancho, int alto) {
@@ -811,10 +960,6 @@ void RenderizadorVulkan::liberar() {
     if (dispositivo_ != VK_NULL_HANDLE) {
         vkDeviceWaitIdle(dispositivo_);
         limpiarCadena();
-        if (comando_ != VK_NULL_HANDLE) {
-            vkFreeCommandBuffers(dispositivo_, pool_, 1, &comando_);
-            comando_ = VK_NULL_HANDLE;
-        }
         if (tuberia_ != VK_NULL_HANDLE) vkDestroyPipeline(dispositivo_, tuberia_, nullptr);
         if (diseno_ != VK_NULL_HANDLE) vkDestroyPipelineLayout(dispositivo_, diseno_, nullptr);
         if (pasada_ != VK_NULL_HANDLE) vkDestroyRenderPass(dispositivo_, pasada_, nullptr);
@@ -824,10 +969,15 @@ void RenderizadorVulkan::liberar() {
         if (vistaHoja_ != VK_NULL_HANDLE) vkDestroyImageView(dispositivo_, vistaHoja_, nullptr);
         if (hoja_ != VK_NULL_HANDLE) vkDestroyImage(dispositivo_, hoja_, nullptr);
         if (memoriaHoja_ != VK_NULL_HANDLE) vkFreeMemory(dispositivo_, memoriaHoja_, nullptr);
-        if (staging_ != VK_NULL_HANDLE) vkDestroyBuffer(dispositivo_, staging_, nullptr);
-        if (memoriaStaging_ != VK_NULL_HANDLE) vkFreeMemory(dispositivo_, memoriaStaging_, nullptr);
+        for (VkBuffer b : staging_) {
+            if (b != VK_NULL_HANDLE) vkDestroyBuffer(dispositivo_, b, nullptr);
+        }
+        staging_.clear();
+        for (VkDeviceMemory m : memoriaStaging_) {
+            if (m != VK_NULL_HANDLE) vkFreeMemory(dispositivo_, m, nullptr);
+        }
+        memoriaStaging_.clear();
         if (pool_ != VK_NULL_HANDLE) vkDestroyCommandPool(dispositivo_, pool_, nullptr);
-        if (disponible_ != VK_NULL_HANDLE) vkDestroySemaphore(dispositivo_, disponible_, nullptr);
         vkDestroyDevice(dispositivo_, nullptr);
         dispositivo_ = VK_NULL_HANDLE;
     }

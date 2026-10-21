@@ -43,6 +43,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.windowInsetsPadding
@@ -128,6 +129,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.FilterQuality
@@ -136,6 +138,7 @@ import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.clipRect
 import androidx.compose.ui.graphics.drawscope.withTransform
@@ -168,6 +171,7 @@ import com.dibujo.core.Punta
 import com.dibujo.core.Simetria
 import com.dibujo.core.Textura
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.text.SimpleDateFormat
@@ -176,6 +180,13 @@ import java.util.Locale
 import kotlin.math.cos
 import kotlin.math.roundToInt
 import kotlin.math.sin
+
+/**
+ * Espera (ms) antes de releer del archivo original la zona del calco que se
+ * está viendo. Es una espera "anti-rebote": durante un gesto no se decodea
+ * nada; cuando el usuario se detiene, se recarga la zona con detalle real.
+ */
+private const val RETRASO_DETALLE_CALCO = 120L
 
 
 class MainActivity : ComponentActivity() {
@@ -510,6 +521,7 @@ fun PantallaDibujo(
                 alDeshacer = vm::deshacer,
                 alRehacer = vm::rehacer,
                 alCentrar = vm::centrar,
+                alAlternarCalco = vm::alternarCalco,
             )
         },
         bottomBar = {
@@ -808,6 +820,7 @@ private fun BarraSuperior(
     alDeshacer: () -> Unit,
     alRehacer: () -> Unit,
     alCentrar: () -> Unit,
+    alAlternarCalco: () -> Unit,
 ) {
     TopAppBar(
         modifier = Modifier.absorberToque(),
@@ -839,6 +852,26 @@ private fun BarraSuperior(
                 habilitado = estado.puedeRehacer,
                 alPulsar = alRehacer,
             )
+            // Botón directo del calco: mostrar u ocultar la imagen de referencia
+            // sin abrir el diálogo (sólo aparece si hay una imagen puesta).
+            if (estado.calcoUri != null) {
+                BotonIcono(
+                    icono = if (estado.calcoVisible) {
+                        Icons.Rounded.Visibility
+                    } else {
+                        Icons.Rounded.VisibilityOff
+                    },
+                    descripcion = stringResource(
+                        if (estado.calcoVisible) {
+                            R.string.cd_calco_ocultar
+                        } else {
+                            R.string.cd_calco_mostrar
+                        },
+                    ),
+                    seleccionado = estado.calcoVisible,
+                    alPulsar = alAlternarCalco,
+                )
+            }
             BotonIcono(
                 icono = Icons.Rounded.CenterFocusWeak,
                 descripcion = stringResource(R.string.cd_centrar),
@@ -1001,6 +1034,14 @@ private fun AreaDibujo(
         // Textos vivos: encima de la hoja, del calco y del trazo en curso, igual
         // que en la imagen final. No interceptan toques (sin pointerInput).
         CapaTextos(estadoState, Modifier.fillMaxSize())
+        // Indicador flotante del modo: dice si el dedo dibuja o mueve la vista.
+        IndicadorModo(
+            modo = estado.modo,
+            modifier = Modifier
+                .align(Alignment.TopStart)
+                .windowInsetsPadding(WindowInsets.statusBars)
+                .padding(start = 12.dp, top = 72.dp),
+        )
 
         // Mientras el motor/renderizador se crea (al abrir la app o al cambiar
         // de backend) tapamos la superficie para no mostrar el cuadro en negro.
@@ -1357,12 +1398,121 @@ private fun aPantallaCamara(cam: Camara, hx: Float, hy: Float): Offset {
 }
 
 /**
+ * Recuadro de la hoja que se ve en pantalla (la caja que lo contiene, para no
+ * complicarse con la rotación). Sirve para saber qué zona del calco hay que
+ * releer del archivo original cuando se hace mucho zoom.
+ */
+private fun regionVisibleHoja(cam: Camara, tamano: IntSize): Rect {
+    val c = cos(cam.rotacion.toDouble()).toFloat()
+    val s = sin(cam.rotacion.toDouble()).toFloat()
+    var minX = Float.MAX_VALUE
+    var minY = Float.MAX_VALUE
+    var maxX = -Float.MAX_VALUE
+    var maxY = -Float.MAX_VALUE
+    val puntos = floatArrayOf(
+        0f, 0f,
+        tamano.width.toFloat(), 0f,
+        tamano.width.toFloat(), tamano.height.toFloat(),
+        0f, tamano.height.toFloat(),
+    )
+    var i = 0
+    while (i < puntos.size) {
+        val px = puntos[i] + cam.panX
+        val py = puntos[i + 1] + cam.panY
+        // hoja = R(−rotación)·(pantalla + pan) / zoom (la misma cuenta que el
+        // motor y que el shader de presentación).
+        val hx = (c * px + s * py) / cam.zoom
+        val hy = (-s * px + c * py) / cam.zoom
+        if (hx < minX) minX = hx
+        if (hx > maxX) maxX = hx
+        if (hy < minY) minY = hy
+        if (hy > maxY) maxY = hy
+        i += 2
+    }
+    return Rect(minX, minY, maxX, maxY)
+}
+
+/** Dibuja el calco entero (la versión reducida) en coordenadas de hoja. */
+private fun DrawScope.dibujarCalcoEntero(
+    imagen: ImageBitmap,
+    izquierda: Float,
+    arriba: Float,
+    ancho: Float,
+    alto: Float,
+    alfa: Float,
+) {
+    drawImage(
+        image = imagen,
+        srcOffset = IntOffset.Zero,
+        srcSize = IntSize(imagen.width, imagen.height),
+        dstOffset = IntOffset(izquierda.roundToInt(), arriba.roundToInt()),
+        dstSize = IntSize(ancho.roundToInt(), alto.roundToInt()),
+        alpha = alfa,
+        filterQuality = FilterQuality.Medium,
+    )
+}
+
+/**
+ * Dibuja el calco reducido **menos** el rectángulo [reservado] (donde ya se
+ * dibujó la versión a resolución completa). Se hace con cuatro bandas para que
+ * el alfa del calco no se aplique dos veces en la misma zona.
+ */
+private fun DrawScope.dibujarCalcoFuera(
+    imagen: ImageBitmap,
+    izquierda: Float,
+    arriba: Float,
+    ancho: Float,
+    alto: Float,
+    reservado: Rect,
+    alfa: Float,
+) {
+    val derecha = izquierda + ancho
+    val abajo = arriba + alto
+    // Las bandas se recortan a la imagen: una zona reservada que se sale de la
+    // imagen dejaría bandas invertidas (y un recorte al revés).
+    val arribaZona = reservado.top.coerceIn(arriba, abajo)
+    val abajoZona = reservado.bottom.coerceIn(arribaZona, abajo)
+    val izquierdaZona = reservado.left.coerceIn(izquierda, derecha)
+    val derechaZona = reservado.right.coerceIn(izquierdaZona, derecha)
+    // Banda superior.
+    if (arribaZona > arriba) {
+        clipRect(izquierda, arriba, derecha, arribaZona) {
+            dibujarCalcoEntero(imagen, izquierda, arriba, ancho, alto, alfa)
+        }
+    }
+    // Banda inferior.
+    if (abajoZona < abajo) {
+        clipRect(izquierda, abajoZona, derecha, abajo) {
+            dibujarCalcoEntero(imagen, izquierda, arriba, ancho, alto, alfa)
+        }
+    }
+    // Banda izquierda.
+    if (izquierdaZona > izquierda) {
+        clipRect(izquierda, arribaZona, izquierdaZona, abajoZona) {
+            dibujarCalcoEntero(imagen, izquierda, arriba, ancho, alto, alfa)
+        }
+    }
+    // Banda derecha.
+    if (derechaZona < derecha) {
+        clipRect(derechaZona, arribaZona, derecha, abajoZona) {
+            dibujarCalcoEntero(imagen, izquierda, arriba, ancho, alto, alfa)
+        }
+    }
+}
+
+/**
  * Imagen de calco: capa translúcida que se dibuja sobre la hoja (GPU o CPU) y
  * debajo de la vista previa del trazo. La imagen se ajusta (manteniendo la
  * proporción) dentro de la hoja y se centra sola; el usuario puede desplazarla
  * y escalarla con [DibujoEstado.calcoOffsetX]/[DibujoEstado.calcoOffsetY] y
  * [DibujoEstado.calcoEscala]. Sigue la cámara (pan/zoom), así se puede calcar
  * con el dibujo a la vista.
+ *
+ * **Detalle al hacer zoom**: la versión que se carga para la vista general
+ * está recortada a [MAX_CALCO] px, así que al ampliar mucho el calco se veía
+ * pixelado. Para arreglarlo, cuando la imagen original tiene más resolución de
+ * la que entra en pantalla, se relee del archivo **sólo la zona que se está
+ * viendo** (con margen) y se dibuja esa: al cerca se ve el detalle real.
  */
 @Composable
 private fun CapaCalco(
@@ -1393,30 +1543,116 @@ private fun CapaCalco(
             }
         }
     }
-    // La imagen filtrada (o la original si no hay filtro).
+    // Tamaño real de la imagen (sin reducir): dice cuánto detalle hay más allá
+    // de la versión recortada que se usa para la vista general.
+    val original by produceState<Pair<Int, Int>?>(null, uri) {
+        value = if (uri == null) {
+            null
+        } else {
+            withContext(Dispatchers.IO) { tamanoOriginalImagen(contexto, Uri.parse(uri)) }
+        }
+    }
+    val originalImagen = original
+    // Tamaño de la vista: dice qué parte de la hoja se está viendo (sirve para
+    // releer del original sólo esa zona).
+    var tamanoVista by remember { mutableStateOf(IntSize.Zero) }
+
     val imagenBitmap = bitmap
-    if (imagenBitmap == null || !estado.calcoVisible ||
+    val cam = estado.camara
+    val escala = if (imagenBitmap != null && imagenBitmap.width > 0 && imagenBitmap.height > 0) {
+        minOf(
+            estado.hojaAncho.toFloat() / imagenBitmap.width,
+            estado.hojaAlto.toFloat() / imagenBitmap.height,
+        ) * estado.calcoEscala
+    } else {
+        0f
+    }
+    // Factor entre la imagen original y la versión recortada que se cargó.
+    val factorX = if (imagenBitmap != null && imagenBitmap.width > 0) {
+        (originalImagen?.first?.toFloat() ?: imagenBitmap.width.toFloat()) / imagenBitmap.width
+    } else {
+        1f
+    }
+    val factorY = if (imagenBitmap != null && imagenBitmap.height > 0) {
+        (originalImagen?.second?.toFloat() ?: imagenBitmap.height.toFloat()) / imagenBitmap.height
+    } else {
+        1f
+    }
+    // Cuántos píxeles de pantalla cubre un píxel de la imagen original: si es
+    // más de uno, la versión recortada no alcanza y hay que releer la zona.
+    val ampliacion = if (escala > 0f) {
+        minOf(escala * cam.zoom / factorX, escala * cam.zoom / factorY)
+    } else {
+        0f
+    }
+    val usarDetalle = estado.calcoVisible && originalImagen != null && ampliacion >= 1f &&
+        maxOf(factorX, factorY) > 1.02f && tamanoVista.width > 0 && tamanoVista.height > 0
+
+    // Centro de la hoja más el desplazamiento del calco (0 = auto-centrado).
+    val centroX = estado.hojaAncho / 2f + estado.calcoOffsetX
+    val centroY = estado.hojaAlto / 2f + estado.calcoOffsetY
+    val xHoja = centroX - (imagenBitmap?.width ?: 0) * escala / 2f
+    val yHoja = centroY - (imagenBitmap?.height ?: 0) * escala / 2f
+
+    // Zona de la imagen original que hay que releer (en px de la original).
+    val regionOriginal: android.graphics.Rect? = if (usarDetalle && originalImagen != null) {
+        val visible = regionVisibleHoja(cam, tamanoVista)
+        val izquierda = ((visible.left - xHoja) / escala * factorX).toInt()
+        val arriba = ((visible.top - yHoja) / escala * factorY).toInt()
+        val derecha = ((visible.right - xHoja) / escala * factorX).toInt()
+        val abajo = ((visible.bottom - yHoja) / escala * factorY).toInt()
+        // Margen: un desplazamiento corto no debe dejar huecos mientras se
+        // recarga la zona.
+        val margenX = ((derecha - izquierda) * 0.3f).toInt()
+        val margenY = ((abajo - arriba) * 0.3f).toInt()
+        val anchoOrig = originalImagen.first
+        val altoOrig = originalImagen.second
+        val iz = (izquierda - margenX).coerceIn(0, (anchoOrig - 1).coerceAtLeast(0))
+        val ar = (arriba - margenY).coerceIn(0, (altoOrig - 1).coerceAtLeast(0))
+        val der = (derecha + margenX).coerceIn(iz + 1, anchoOrig)
+        val ab = (abajo + margenY).coerceIn(ar + 1, altoOrig)
+        android.graphics.Rect(iz, ar, der, ab)
+    } else null
+
+    val claveRegion = regionOriginal?.let { "${it.left},${it.top},${it.right},${it.bottom}" } ?: ""
+    val detalleBitmap by produceState<Bitmap?>(null, claveRegion, uri, filtro, ajuste) {
+        if (claveRegion.isEmpty() || uri == null) {
+            value = null
+            return@produceState
+        }
+        val region = regionOriginal ?: return@produceState
+        // Se espera a que el usuario se detenga: durante un gesto no se relee
+        // el archivo en cada cuadro (eso sería lentísimo); cuando para, se
+        // recarga la zona que se está viendo a resolución completa.
+        delay(RETRASO_DETALLE_CALCO)
+        val recargada = withContext(Dispatchers.IO) {
+            decodificarRegionImagen(contexto, Uri.parse(uri), region)
+        } ?: return@produceState
+        value = if (filtro == com.dibujo.core.FiltroImagen.NINGUNO) {
+            recargada
+        } else {
+            withContext(Dispatchers.Default) { filtrarBitmap(recargada, filtro, ajuste) }
+        }
+    }
+
+    // La imagen filtrada (o la original si no hay filtro).
+    val imagenBase = remember(imagenBitmap) { imagenBitmap?.asImageBitmap() }
+    val imagenDetalle = remember(detalleBitmap) { detalleBitmap?.asImageBitmap() }
+    if (imagenBase == null || !estado.calcoVisible ||
         estado.hojaAncho <= 0 || estado.hojaAlto <= 0
     ) {
         return
     }
     val descripcion = stringResource(R.string.cd_calco)
-    Canvas(modifier.semantics { contentDescription = descripcion }) {
-        val imagen = imagenBitmap.asImageBitmap()
-        if (imagen.width <= 0 || imagen.height <= 0) return@Canvas
-        val cam = estado.camara
+    Canvas(
+        modifier
+            .onSizeChanged { tamanoVista = it }
+            .semantics { contentDescription = descripcion }
+    ) {
+        if (imagenBase.width <= 0 || imagenBase.height <= 0) return@Canvas
         // Ajuste natural (encaja la imagen en la hoja) por la escala del usuario.
-        val escala = minOf(
-            estado.hojaAncho.toFloat() / imagen.width,
-            estado.hojaAlto.toFloat() / imagen.height,
-        ) * estado.calcoEscala
-        val anchoHoja = imagen.width * escala
-        val altoHoja = imagen.height * escala
-        // Centro de la hoja más el desplazamiento del calco (0 = auto-centrado).
-        val centroX = estado.hojaAncho / 2f + estado.calcoOffsetX
-        val centroY = estado.hojaAlto / 2f + estado.calcoOffsetY
-        val xHoja = centroX - anchoHoja / 2f
-        val yHoja = centroY - altoHoja / 2f
+        val anchoHoja = imagenBase.width * escala
+        val altoHoja = imagenBase.height * escala
         // La imagen se dibuja en coordenadas de hoja y el `withTransform` la
         // lleva a pantalla igual que el motor: pantalla = R(rot)·(hoja·zoom) − pan.
         // (Orden de transformaciones = se aplica la primera envuelta: T·R·S.)
@@ -1428,15 +1664,49 @@ private fun CapaCalco(
             )
             scale(scaleX = cam.zoom, scaleY = cam.zoom, pivot = Offset.Zero)
         }) {
-            drawImage(
-                image = imagen,
-                srcOffset = IntOffset.Zero,
-                srcSize = IntSize(imagen.width, imagen.height),
-                dstOffset = IntOffset(xHoja.roundToInt(), yHoja.roundToInt()),
-                dstSize = IntSize(anchoHoja.roundToInt(), altoHoja.roundToInt()),
-                alpha = estado.calcoAlfa,
-                filterQuality = FilterQuality.Medium,
-            )
+            val detalle = imagenDetalle
+            val region = regionOriginal
+            if (detalle != null && region != null) {
+                // Zona recargada del archivo original: nítida al hacer zoom.
+                val izquierda = xHoja + (region.left / factorX) * escala
+                val arribaDetalle = yHoja + (region.top / factorY) * escala
+                val anchoDestino = (region.width() / factorX) * escala
+                val altoDestino = (region.height() / factorY) * escala
+                drawImage(
+                    image = detalle,
+                    srcOffset = IntOffset.Zero,
+                    srcSize = IntSize(detalle.width, detalle.height),
+                    dstOffset = IntOffset(izquierda.roundToInt(), arribaDetalle.roundToInt()),
+                    dstSize = IntSize(anchoDestino.roundToInt(), altoDestino.roundToInt()),
+                    alpha = estado.calcoAlfa,
+                    filterQuality = FilterQuality.Medium,
+                )
+                // El resto de la imagen va con la versión reducida, recortada
+                // para no aplicar el alfa dos veces en la zona de arriba.
+                dibujarCalcoFuera(
+                    imagen = imagenBase,
+                    izquierda = xHoja,
+                    arriba = yHoja,
+                    ancho = anchoHoja,
+                    alto = altoHoja,
+                    reservado = Rect(
+                        izquierda,
+                        arribaDetalle,
+                        izquierda + anchoDestino,
+                        arribaDetalle + altoDestino,
+                    ),
+                    alfa = estado.calcoAlfa,
+                )
+            } else {
+                dibujarCalcoEntero(
+                    imagen = imagenBase,
+                    izquierda = xHoja,
+                    arriba = yHoja,
+                    ancho = anchoHoja,
+                    alto = altoHoja,
+                    alfa = estado.calcoAlfa,
+                )
+            }
             // Marco guía mientras se ajusta: deja ver hasta dónde llega la
             // imagen cuando el fondo es claro y se confunde con la hoja.
             if (estado.calcoEnEdicion) {
@@ -1618,6 +1888,47 @@ private fun CapaVectores(
                     )
                 }
             }
+        }
+    }
+}
+
+/**
+ * Indicador flotante del modo de interacción: "Dibujando" o "Moviendo". Es
+ * sólo informativo (para cambiar de modo está el botón de la barra inferior),
+ * pero quita la duda de si el dedo está pintando o desplazando la vista.
+ * No intercepta toques.
+ */
+@Composable
+private fun IndicadorModo(modo: Modo, modifier: Modifier = Modifier) {
+    val dibujando = modo == Modo.EDICION
+    val etiqueta = stringResource(
+        if (dibujando) R.string.modo_indicador_dibujo else R.string.modo_indicador_mover,
+    )
+    val descripcion = stringResource(
+        if (dibujando) R.string.cd_modo_editar else R.string.cd_modo_mover,
+    )
+    Surface(
+        modifier = modifier.semantics { contentDescription = descripcion },
+        shape = MaterialTheme.shapes.extraLarge,
+        color = MaterialTheme.colorScheme.surface.copy(alpha = 0.85f),
+        tonalElevation = 2.dp,
+    ) {
+        Row(
+            Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Icon(
+                imageVector = if (dibujando) Icons.Rounded.Brush else Icons.Rounded.PanTool,
+                contentDescription = null,
+                modifier = Modifier.size(16.dp),
+                tint = MaterialTheme.colorScheme.primary,
+            )
+            Spacer(Modifier.width(6.dp))
+            Text(
+                etiqueta,
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onSurface,
+            )
         }
     }
 }

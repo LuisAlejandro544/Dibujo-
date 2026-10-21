@@ -19,6 +19,16 @@ enum class Backend : int {
     VULKAN = 2,
 };
 
+// Estado del último cuadro dibujado. Distingue "no pasó nada, reintentá" de
+// "el render GPU se perdió": sólo `FALLO` justifies caer al render por CPU.
+// Los valores coinciden con los que devuelve `nativoGpuRender` (0/1/2) para
+// que el puente JNI los reenvíe sin traducción.
+enum class EstadoCuadro {
+    PRESENTADO = 0, // el cuadro se presentó en pantalla
+    REINTENTAR = 1, // error transitorio: reintentar más tarde, NO es fatal
+    FALLO = 2,      // error fatal: el render GPU se perdió
+};
+
 // Renderizador GPU de la hoja. Recibe la ventana nativa (del `SurfaceView`)
 // y lee la hoja/cámara del [DibujoEngine]; dibuja la hoja como textura
 // aplicando la cámara en el shader. Una instancia pertenece a un único hilo
@@ -27,9 +37,11 @@ class RenderizadorGpu {
 public:
     virtual ~RenderizadorGpu() = default;
 
-    // Dibuja un cuadro y lo presenta. Devuelve false si el contexto se perdió
-    // o la superficie quedó inválida (el llamador debe recrear o caer a CPU).
-    virtual bool render() = 0;
+    // Dibuja un cuadro y lo presenta. Devuelve el estado del cuadro:
+    // `PRESENTADO` si se presentó, `REINTENTAR` si hubo un error transitorio
+    // (superficie sin tamaño, cadena no lista: reintentar más tarde) y
+    // `FALLO` sólo si el render GPU se perdió (el llamador cae a CPU).
+    virtual EstadoCuadro render() = 0;
 
     // Notifica un cambio de tamaño del backbuffer (px). Se llama en el hilo de
     // render antes del próximo `render()`.

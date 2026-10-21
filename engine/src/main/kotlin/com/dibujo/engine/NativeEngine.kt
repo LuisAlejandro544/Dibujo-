@@ -78,8 +78,16 @@ object NativeEngine {
     /** Crea el renderizador GPU; devuelve su peer o 0 si no fue posible. */
     external fun nativoGpuCrear(motorHandle: Long, surface: Any, backend: Int): Long
 
-    /** Dibuja y presenta un cuadro; false si el contexto se perdió. */
-    external fun nativoGpuRender(gpu: Long): Boolean
+    /**
+     * Dibuja y presenta un cuadro.
+     *
+     * Devuelve el estado del cuadro:
+     * - `0` presentado;
+     * - `1` error transitorio (la superficie todavía no está lista): hay que
+     *   reintentar, el render GPU sigue vivo;
+     * - `2` fallo fatal: el render GPU se perdió y hay que caer a CPU.
+     */
+    external fun nativoGpuRender(gpu: Long): Int
 
     /** Notifica un cambio de tamaño del backbuffer en px. */
     external fun nativoGpuRedimensionar(gpu: Long, ancho: Int, alto: Int)

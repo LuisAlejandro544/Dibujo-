@@ -106,6 +106,7 @@ object Menu {
         lapiz: Lapiz,
     ): Lapiz? {
         salida.append("— Doble: de qué lado —\n")
+        salida.append("  (el doble va al revés del trazo)\n")
         salida.append("  1) sobre el trazo\n")
         salida.append("  2) izquierda\n")
         salida.append("  3) derecha\n")

@@ -1362,7 +1362,7 @@ private fun CapaGestos(
             // debajo del principal, igual que en el motor.
             if (lapiz.herramienta == Herramienta.DOBLE) {
                 val separacion = TrazoDoble.separacion(grosorTrazo)
-                val desplazado = TrazoDoble.desplazar(
+                val desplazado = TrazoDoble.acompanante(
                     trazo.toFloatArray(),
                     trazo.size,
                     separacion,

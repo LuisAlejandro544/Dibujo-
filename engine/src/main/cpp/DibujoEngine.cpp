@@ -612,35 +612,51 @@ void lineaGruesa(std::vector<uint32_t>& hoja, int ancho, int alto,
     polilineaGruesa(hoja, ancho, alto, puntos, 4, radio, true, color, textura);
 }
 
-// Desplaza la polilínea del gesto perpendicularmente para dibujar el trazo
-// acompañante ("la doble"). La normal se suaviza por vértice (se usa la
-// dirección de la cuerda que une los vecinos), así las dos líneas no tiemblan
-// en los empalmes. Con `LadoDoble::MISMO` devuelve los mismos puntos: el
-// acompañante se dibuja encima del principal.
+// Trazo acompañante ("la doble"): la polilínea que acompaña al gesto.
 //
-// Replica `TrazoDoble.desplazar` de Kotlin (paridad píxel a píxel).
-std::vector<float> desplazarTrazo(const std::vector<float>& puntos,
-                                  float separacion, LadoDoble lado) {
+// El acompañante va **al revés** del gesto (nace donde termina el trazo y
+// vuelve hacia donde empezó) y desplazado hacia el lado elegido. La normal se
+// suaviza por vértice (se usa la dirección de la cuerda que une los vecinos),
+// así las dos líneas no tiemblan en los empalmes. Con `LadoDoble::MISMO` el
+// acompañante se dibuja encima del principal (pero igual al revés).
+//
+// Replica `TrazoDoble.acompanante` de Kotlin (paridad píxel a píxel).
+std::vector<float> trazoAcompanante(const std::vector<float>& puntos,
+                                    float separacion, LadoDoble lado) {
     const std::size_t cantidad = puntos.size();
     std::vector<float> salida(cantidad, 0.0f);
-    // Con menos de dos vértices no hay dirección: no hay nada que desplazar.
-    if (cantidad < 4 || lado == LadoDoble::MISMO || separacion == 0.0f) {
+    const int vertices = static_cast<int>(cantidad) / 2;
+    // Con un solo vértice no hay dirección: no hay nada que invertir.
+    if (vertices < 2) {
         for (std::size_t i = 0; i < cantidad; ++i) salida[i] = puntos[i];
+        return salida;
+    }
+    // El acompañante va al revés: el vértice i del gesto ocupa el lugar
+    // (vertices - 1 - i) de la polilínea acompañante.
+    if (lado == LadoDoble::MISMO || separacion == 0.0f) {
+        for (int i = 0; i < vertices; ++i) {
+            const int base = i * 2;
+            const int destino = (vertices - 1 - i) * 2;
+            salida[static_cast<std::size_t>(destino)] =
+                puntos[static_cast<std::size_t>(base)];
+            salida[static_cast<std::size_t>(destino + 1)] =
+                puntos[static_cast<std::size_t>(base + 1)];
+        }
         return salida;
     }
     // La normal (-dy, dx) apunta a la derecha del sentido del trazo (en
     // coordenadas de pantalla, con la y hacia abajo); la izquierda es la
-    // opuesta.
+    // opuesta. Como el acompañante va al revés, su normal es la opuesta a la
+    // del gesto.
     const float signo = (lado == LadoDoble::IZQUIERDA) ? -1.0f : 1.0f;
-    const int n = static_cast<int>(cantidad) / 2;
-    for (int i = 0; i < n; ++i) {
+    for (int i = 0; i < vertices; ++i) {
         const int base = i * 2;
         float dx;
         float dy;
         if (i == 0) {
             dx = puntos[2] - puntos[0];
             dy = puntos[3] - puntos[1];
-        } else if (i == n - 1) {
+        } else if (i == vertices - 1) {
             dx = puntos[base] - puntos[base - 2];
             dy = puntos[base + 1] - puntos[base - 1];
         } else {
@@ -658,10 +674,13 @@ std::vector<float> desplazarTrazo(const std::vector<float>& puntos,
             nx = static_cast<float>(-dy / largo);
             ny = static_cast<float>(dx / largo);
         }
-        const float ox = nx * separacion * signo;
-        const float oy = ny * separacion * signo;
-        salida[static_cast<std::size_t>(base)] = puntos[base] + ox;
-        salida[static_cast<std::size_t>(base + 1)] = puntos[base + 1] + oy;
+        const float ox = -nx * separacion * signo;
+        const float oy = -ny * separacion * signo;
+        const int destino = (vertices - 1 - i) * 2;
+        salida[static_cast<std::size_t>(destino)] =
+            puntos[static_cast<std::size_t>(base)] + ox;
+        salida[static_cast<std::size_t>(destino + 1)] =
+            puntos[static_cast<std::size_t>(base + 1)] + oy;
     }
     return salida;
 }
@@ -748,7 +767,7 @@ bool DibujoEngine::terminarTrazo() {
             if (herramienta_ == Tool::DOBLE) {
                 if (herramientaDoble_ != ToolDoble::PLUMA) {
                     const std::vector<float> desplazado =
-                        desplazarTrazo(puntos, separacion, ladoDoble_);
+                        trazoAcompanante(puntos, separacion, ladoDoble_);
                     polilineaGruesa(hoja_, ancho_, alto_, desplazado.data(),
                                     static_cast<int>(desplazado.size()),
                                     static_cast<float>(grosorDoble) * 0.5f,

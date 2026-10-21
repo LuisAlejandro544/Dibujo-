@@ -8,6 +8,10 @@ package com.dibujo.core
  * (con el lápiz elegido) y el acompañante (el "doble"), que se puede pintar
  * con otra herramienta y otro color (el *color de sombra*).
  *
+ * El acompañante va **al revés** del gesto (nace donde termina el trazo y
+ * vuelve hacia donde empezaste) y desplazado unos píxeles hacia el lado
+ * elegido: es automático, no se configura el sentido.
+ *
  * El orden de los valores viaja por JNI hasta el enum `ToolDoble` del C++, así
  * que hay que agregarlos al final en los dos lados.
  */
@@ -32,6 +36,11 @@ enum class HerramientaDoble(val herramienta: Herramienta) {
 /**
  * Lado donde se dibuja el trazo acompañante de la herramienta DOBLE.
  *
+ * El acompañante **siempre va al revés** del gesto (nace donde termina el
+ * trazo y vuelve hacia donde empezó), así que el lado se mide respecto del
+ * propio acompañante: si el doble va hacia la izquierda, su izquierda es la
+ * de ese recorrido, no la del gesto original.
+ *
  * El orden de los valores viaja por JNI hasta el enum `LadoDoble` del C++, así
  * que hay que agregarlos al final en los dos lados.
  */
@@ -43,19 +52,19 @@ enum class LadoDoble {
      */
     MISMO,
 
-    /** El doble se dibuja a la **izquierda** del sentido del trazo. */
+    /** El doble se dibuja a la **izquierda** del sentido en que se dibuja. */
     IZQUIERDA,
 
-    /** El doble se dibuja a la **derecha** del sentido del trazo. */
+    /** El doble se dibuja a la **derecha** del sentido en que se dibuja. */
     DERECHA,
 }
 
 /**
- * Geometría del trazo doble: dónde va la línea acompañante respecto del gesto.
+ * Geometría del trazo doble: la polilínea acompañante del gesto.
  *
- * Es la **única** implementación del desplazamiento (la usan el motor Kotlin,
- * el motor C++ —que la replica— y la capa de vectores de la app), así el
- * doble se ve igual en todas partes.
+ * Es la **única** implementación (la usan el motor Kotlin, el motor C++ —que
+ * la replica— y la capa de vectores de la app), así el doble se ve igual en
+ * todas partes.
  */
 object TrazoDoble {
 
@@ -67,50 +76,66 @@ object TrazoDoble {
     fun separacion(grosor: Int): Float = (grosor + 2) * 0.5f
 
     /**
-     * Devuelve la polilínea desplazada perpendicularmente al gesto.
+     * Devuelve la polilínea del trazo acompañante ("la doble").
+     *
+     * El acompañante va **al revés** del gesto: nace donde termina el trazo
+     * principal y vuelve hacia donde empezaste (si dibujás hacia la derecha,
+     * el doble va hacia la izquierda). Es automático: no se configura.
+     *
+     * Además se dibuja desplazado [separacion] píxeles hacia el [lado]
+     * elegido. Como el recorrido está invertido, el lado se mide respecto del
+     * propio acompañante (su izquierda, no la del gesto).
      *
      * [puntos] son coordenadas intercaladas (x, y) y [cantidad] la cantidad de
      * floats usados (2 por punto). La normal se suaviza por vértice (se usa la
      * dirección de la cuerda que une los vecinos), así las dos líneas no
      * tiemblan en los empalmes.
      *
-     * Con [LadoDoble.MISMO] devuelve los mismos puntos: el acompañante se
-     * dibuja encima del principal.
+     * Con [LadoDoble.MISMO] el acompañante se dibuja encima del principal
+     * (pero igual al revés).
      */
-    fun desplazar(
+    fun acompanante(
         puntos: FloatArray,
         cantidad: Int,
         separacion: Float,
         lado: LadoDoble,
     ): FloatArray {
         val salida = FloatArray(cantidad)
-        // Con menos de dos vértices no hay dirección: no hay nada que desplazar.
-        if (cantidad < 4 || lado == LadoDoble.MISMO || separacion == 0f) {
+        val vertices = cantidad / 2
+        // Con un solo vértice no hay dirección: no hay nada que invertir.
+        if (vertices < 2) {
             for (i in 0 until cantidad) salida[i] = puntos[i]
+            return salida
+        }
+        // El acompañante va al revés: el vértice i del gesto ocupa el lugar
+        // (vertices - 1 - i) de la polilínea acompañante.
+        if (lado == LadoDoble.MISMO || separacion == 0f) {
+            for (i in 0 until vertices) {
+                val base = i * 2
+                val destino = (vertices - 1 - i) * 2
+                salida[destino] = puntos[base]
+                salida[destino + 1] = puntos[base + 1]
+            }
             return salida
         }
         // La normal (-dy, dx) apunta a la derecha del sentido del trazo (en
         // coordenadas de pantalla, con la y hacia abajo); la izquierda es la
-        // opuesta.
+        // opuesta. Como el acompañante va al revés, su normal es la opuesta
+        // a la del gesto.
         val signo = if (lado == LadoDoble.IZQUIERDA) -1f else 1f
-        val vertices = cantidad / 2
         for (i in 0 until vertices) {
             val base = i * 2
             val dx: Float
             val dy: Float
-            when (i) {
-                0 -> {
-                    dx = puntos[2] - puntos[0]
-                    dy = puntos[3] - puntos[1]
-                }
-                vertices - 1 -> {
-                    dx = puntos[base] - puntos[base - 2]
-                    dy = puntos[base + 1] - puntos[base - 1]
-                }
-                else -> {
-                    dx = puntos[base + 2] - puntos[base - 2]
-                    dy = puntos[base + 3] - puntos[base - 1]
-                }
+            if (i == 0) {
+                dx = puntos[2] - puntos[0]
+                dy = puntos[3] - puntos[1]
+            } else if (i == vertices - 1) {
+                dx = puntos[base] - puntos[base - 2]
+                dy = puntos[base + 1] - puntos[base - 1]
+            } else {
+                dx = puntos[base + 2] - puntos[base - 2]
+                dy = puntos[base + 3] - puntos[base - 1]
             }
             val largo = kotlin.math.sqrt(dx.toDouble() * dx + dy.toDouble() * dy)
             val nx: Float
@@ -122,10 +147,11 @@ object TrazoDoble {
                 nx = (-dy / largo).toFloat()
                 ny = (dx / largo).toFloat()
             }
-            val ox = nx * separacion * signo
-            val oy = ny * separacion * signo
-            salida[base] = puntos[base] + ox
-            salida[base + 1] = puntos[base + 1] + oy
+            val ox = -nx * separacion * signo
+            val oy = -ny * separacion * signo
+            val destino = (vertices - 1 - i) * 2
+            salida[destino] = puntos[base] + ox
+            salida[destino + 1] = puntos[base + 1] + oy
         }
         return salida
     }

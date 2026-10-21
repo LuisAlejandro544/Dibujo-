@@ -628,8 +628,8 @@ class DibujoViewModel(app: Application) : AndroidViewModel(app) {
      * Crea el trazo acompañante cuando el "doble" es el **pincel vectorial**.
      *
      * El motor no lo dibuja (los trazos vectoriales son objetos vivos de la
-     * app), así que acá se crea el vector con la ruta desplazada al lado
-     * elegido, el color de sombra y el grosor del pincel.
+     * app), así que acá se crea el vector con la ruta del acompañante (que va
+     * al revés del gesto), el color de sombra y el grosor del pincel.
      *
      * Devuelve el par (vectores antes, vectores después) para que el paso
      * quede en el historial junto con los píxeles del trazo principal, o null
@@ -644,7 +644,7 @@ class DibujoViewModel(app: Application) : AndroidViewModel(app) {
         if (trazo == null || trazo.size < 2) return null
         val m = motor ?: return null
         val separacion = TrazoDoble.separacion(est.lapiz.grosorEfectivo())
-        val desplazado = TrazoDoble.desplazar(
+        val desplazado = TrazoDoble.acompanante(
             trazo.toFloatArray(),
             trazo.size,
             separacion,

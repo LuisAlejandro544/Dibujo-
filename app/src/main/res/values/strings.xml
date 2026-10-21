@@ -217,11 +217,11 @@
 
     <!-- Trazo doble (herramienta DOBLE): qué doble, de qué lado y de qué color -->
     <string name="doble_titulo">Doble trazo</string>
-    <string name="doble_descripcion">Con un solo gesto se dibujan dos trazos: el principal y el doble, con su propia herramienta, su lado y su color de sombra.</string>
+    <string name="doble_descripcion">Con un solo gesto se dibujan dos trazos: el principal y el doble, que va al revés (nace donde termina tu trazo y vuelve hacia donde empezaste), con su propia herramienta, su lado y su color de sombra.</string>
     <string name="doble_principal">Trazo principal</string>
     <string name="doble_acompante">Trazo doble</string>
     <string name="doble_lado">Lado del doble</string>
-    <string name="doble_lado_hint">Izquierda y derecha son según el sentido en que dibujás.</string>
+    <string name="doble_lado_hint">El doble va al revés de tu trazo: izquierda y derecha son según el sentido en que se dibuja el doble.</string>
     <string name="doble_lado_mismo">Sobre el trazo</string>
     <string name="doble_lado_izquierda">Izquierda</string>
     <string name="doble_lado_derecha">Derecha</string>

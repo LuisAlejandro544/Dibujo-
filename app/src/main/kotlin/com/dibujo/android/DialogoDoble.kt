@@ -49,9 +49,11 @@ import com.dibujo.core.Lapiz
  *
  * El doble dibuja dos trazos con un solo gesto:
  * - el **principal**, con el lápiz elegido (lápiz, portamina o carbóncillo);
- * - el **acompañante** ("la doble"), con otra herramienta, del lado elegido
- *   (sobre el trazo, a la izquierda o a la derecha) y con su propio color de
- *   sombra.
+ * - el **acompañante** ("la doble"), que va **al revés** del gesto (nace donde
+ *   termina el trazo y vuelve hacia donde empezaste) y del lado elegido (sobre
+ *   el trazo, a la izquierda o a la derecha), con su propio color de sombra.
+ *
+ * Como el doble va al revés, el lado se mide respecto del propio doble.
  *
  * Con el pincel vectorial el acompañante lo dibuja la capa de vectores (no el
  * motor), pero el resultado es el mismo: dos trazos con un solo gesto.

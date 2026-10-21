@@ -110,7 +110,7 @@ class MotorKotlin(
         val colorDoble = lapiz.colorDoble
         val dibujarDoble = { ps: FloatArray, n: Int ->
             if (lapiz.herramientaDoble != com.dibujo.core.HerramientaDoble.PLUMA) {
-                val desplazado = com.dibujo.core.TrazoDoble.desplazar(
+                val desplazado = com.dibujo.core.TrazoDoble.acompanante(
                     ps, n, separacion, lapiz.ladoDoble,
                 )
                 hoja.polilineaGruesa(desplazado, n, grosorDoble, redonda, colorDoble, textura)

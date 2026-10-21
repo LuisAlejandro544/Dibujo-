@@ -393,21 +393,34 @@ class TrazoDobleTest {
     private val horizontal = floatArrayOf(0f, 0f, 10f, 0f)
 
     @Test
-    fun mismoLadoDevuelveLosMismosPuntos() {
-        val salida = TrazoDoble.desplazar(horizontal, horizontal.size, 4f, LadoDoble.MISMO)
-        assertEquals(horizontal.toList(), salida.toList())
+    fun elAcompananteVaAlRevesDelGesto() {
+        val salida = TrazoDoble.acompanante(horizontal, horizontal.size, 4f, LadoDoble.MISMO)
+        // Nace donde termina el gesto y vuelve hacia donde empezó.
+        assertEquals(10f, salida[0], 0.001f)
+        assertEquals(0f, salida[1], 0.001f)
+        assertEquals(0f, salida[2], 0.001f)
+        assertEquals(0f, salida[3], 0.001f)
+    }
+
+    @Test
+    fun mismoLadoMantieneLaRutaDelGesto() {
+        val salida = TrazoDoble.acompanante(horizontal, horizontal.size, 4f, LadoDoble.MISMO)
+        // Sobre el trazo: los mismos puntos, pero recorridos al revés.
+        assertEquals(listOf(10f, 0f, 0f, 0f), salida.toList())
     }
 
     @Test
     fun izquierdaYDerechaSonSimetricos() {
-        val izq = TrazoDoble.desplazar(horizontal, horizontal.size, 4f, LadoDoble.IZQUIERDA)
-        val der = TrazoDoble.desplazar(horizontal, horizontal.size, 4f, LadoDoble.DERECHA)
-        // Al ir hacia la derecha, la izquierda del trazo es hacia arriba.
-        assertEquals(-4f, izq[1], 0.001f)
-        assertEquals(4f, der[1], 0.001f)
-        // La x no se mueve (el desplazamiento es perpendicular).
-        assertEquals(0f, izq[0], 0.001f)
-        assertEquals(10f, izq[2], 0.001f)
+        val izq = TrazoDoble.acompanante(horizontal, horizontal.size, 4f, LadoDoble.IZQUIERDA)
+        val der = TrazoDoble.acompanante(horizontal, horizontal.size, 4f, LadoDoble.DERECHA)
+        // El doble va al revés (hacia la izquierda), así que su izquierda es
+        // abajo: el acompañante queda debajo del gesto.
+        assertEquals(4f, izq[1], 0.001f)
+        assertEquals(-4f, der[1], 0.001f)
+        // La x no se mueve (el desplazamiento es perpendicular) y el orden de
+        // los vértices está invertido.
+        assertEquals(10f, izq[0], 0.001f)
+        assertEquals(0f, izq[2], 0.001f)
     }
 
     @Test
@@ -419,7 +432,7 @@ class TrazoDobleTest {
     @Test
     fun desplazamientoDeUnSoloPuntoNoMueveNada() {
         val punto = floatArrayOf(3f, 4f)
-        val salida = TrazoDoble.desplazar(punto, punto.size, 4f, LadoDoble.IZQUIERDA)
+        val salida = TrazoDoble.acompanante(punto, punto.size, 4f, LadoDoble.IZQUIERDA)
         assertEquals(punto.toList(), salida.toList())
     }
 }

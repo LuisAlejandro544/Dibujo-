@@ -42,7 +42,12 @@ data class Lapiz(
     val herramientaPrincipal: Herramienta = Herramienta.LAPIZ,
     /** Herramienta del trazo acompañante ("la doble"). */
     val herramientaDoble: HerramientaDoble = HerramientaDoble.LAPIZ,
-    /** Lado donde se dibuja el trazo acompañante. */
+    /**
+     * Lado donde se dibuja el trazo acompañante.
+     *
+     * El acompañante va al revés del gesto, así que el lado se mide respecto
+     * del propio acompañante (ver [LadoDoble]).
+     */
     val ladoDoble: LadoDoble = LadoDoble.IZQUIERDA,
     /** Color del trazo acompañante (el "color de sombra"). */
     val colorDoble: Int = Colores.NEGRO,

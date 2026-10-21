@@ -60,8 +60,9 @@ se implementa en C++ **y** Kotlin, y pasa `MotorTest` (paridad píxel a píxel).
   acepta para conservar el ordinal de JNI, pero no la rasteriza.
 - `TrazoDoble.kt` — configuración del **doble trazo**: `HerramientaDoble`
   (LAPIZ, PORTAMINA, CARBONCILLO, PLUMA), `LadoDoble` (MISMO, IZQUIERDA,
-  DERECHA) y `TrazoDoble.desplazar` (la normal suavizada por vértice que
-  define dónde va el trazo acompañante; la replica el C++).
+  DERECHA) y `TrazoDoble.acompanante` (la polilínea del acompañante: va
+  **al revés** del gesto y desplazada con la normal suavizada por vértice que
+  define de qué lado cae; la replica el C++).
 - `Color.kt` — `Color` y `Colores` (paleta fija). `Modo.kt` — EDICION/MOVER.
 - `Historial.kt` — undo/redo por instantáneas **comprimidas** (RLE sin
   pérdida), límite **30**. `InstantaneaHoja.kt` — la instantánea comprimida

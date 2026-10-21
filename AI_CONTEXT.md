@@ -107,24 +107,30 @@ principal, la del doble, el lado y el color de sombra).
 
 - **Lado** (`LadoDoble`): `MISMO` (el acompañante se dibuja **encima** del
   principal: queda debajo, así se ve como sombra/contorno si es más grueso o
-  de otro color), `IZQUIERDA` y `DERECHA` (desplazado perpendicular al
-  sentido del gesto; la normal `(-dy, dx)` apunta a la derecha del sentido de
-  marcha en coordenadas de pantalla).
+  de otro color), `IZQUIERDA` y `DERECHA` (desplazado perpendicular; la normal
+  `(-dy, dx)` apunta a la derecha del sentido de marcha en coordenadas de
+  pantalla). Como el acompañante va **al revés**, el lado se mide respecto del
+  propio doble (su izquierda), no del gesto.
+- **Sentido inverso (automático)**: el acompañante **nace donde termina** el
+  gesto y **vuelve** hacia donde empezaste: si dibujás hacia la derecha, el
+  doble va hacia la izquierda. No se configura, sale de la geometría.
 - **Separación**: `separacion = (grosor + 2) / 2` px (`TrazoDoble.separacion`),
   con el grosor **efectivo del trazo principal**. Antes el DOBLE pintaba dos
   líneas simétricas respecto del gesto; ahora el principal queda **donde se
   dibuja** y el acompañante va al lado elegido.
-- **Desplazamiento**: `TrazoDoble.desplazar` (`core/.../TrazoDoble.kt`) es la
-  **única** implementación: la normal se suaviza por vértice (dirección de la
+- **Geometría**: `TrazoDoble.acompanante` (`core/.../TrazoDoble.kt`) es la
+  **única** implementación: invierte el recorrido del gesto y desplaza la
+  polilínea al lado elegido; la normal se suaviza por vértice (dirección de la
   cuerda entre vecinos) para que las dos líneas no tiemblan en los empalmes. El
-  C++ la replica (`desplazarTrazo` en `DibujoEngine.cpp`) y la app la usa para
-  la vista previa y para el doble vectorial.
+  C++ la replica (`trazoAcompanante` en `DibujoEngine.cpp`) y la app la usa para
+  la vista previa y para el doble vectorial (que queda con los puntos
+  invertidos: el vector también va al revés).
 - **Pincel vectorial** (`HerramientaDoble.PLUMA`): el motor **no** lo dibuja
   (los vectores son objetos vivos de `:app`); la app crea el `TrazoVectorial`
-  con la ruta desplazada, el color de sombra y el grosor, y lo registra en el
-  **mismo paso de historial** que los píxeles (`PasoHistorial.Ambos`).
+  con la ruta del acompañante, el color de sombra y el grosor, y lo registra en
+  el **mismo paso de historial** que los píxeles (`PasoHistorial.Ambos`).
 - Paridad: `MotorTest.dobleConfigurableNativoKotlin`,
-  `dobleMismoLadoParidadNativoKotlin`, `dobleDibujaElAcompananteConSuColor` y
+  `dobleMismoLadoParidadNativoKotlin`, `dobleDibujaElAcompananteAlReves` y
   `dobleConPincelVectorialNoLoDibujaElMotor`.
 - En la consola (`:ui`) el menú de lápices suma las opciones 9 (herramienta
   del doble), 10 (lado) y 11 (color de sombra).
@@ -704,13 +710,14 @@ Particularidades:
   configura en `DialogoDoble.kt` (archivo propio): con qué herramienta va el
   trazo acompañante (lápiz, portamina, carbóncillo o **pincel vectorial**), de
   qué lado (**sobre el trazo**, a la **izquierda** o a la **derecha** del
-  sentido del gesto) y de qué **color de sombra**. El diálogo se abre al elegir
+  sentido en que se dibuja el doble, que va al revés del gesto) y de qué
+  **color de sombra**. El diálogo se abre al elegir
   la herramienta Doble por primera vez (después, desde *Herramientas de la
   hoja* → "Configurar el doble trazo", que muestra el color de sombra) y la
   configuración se aplica **al instante** (el motor se reconfigura). El color de
   sombra sigue al del lápiz mientras el usuario no elija uno propio
   (`DibujoEstado.colorDoblePropio`). La **vista previa** dibuja el doble
-  mientras se arrastra (`TrazoDoble.desplazar` + `rutaEnPantalla` en
+  mientras se arrastra (`TrazoDoble.acompanante` + `rutaEnPantalla` en
   `PantallaDibujo.kt`).
 - **Texto vivo** (issue 70): `TextoEnHoja` es un objeto del estado
   (`DibujoViewModel.insertarTexto`), no píxeles horneados. `CapaTextos` lo dibuja

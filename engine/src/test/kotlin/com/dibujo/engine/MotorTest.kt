@@ -736,9 +736,9 @@ class MotorNativoTest {
     }
 
     @Test
-    fun dobleDibujaElAcompananteConSuColor() {
-        // Trazo horizontal hacia la derecha: la izquierda del trazo es arriba y
-        // la derecha es abajo.
+    fun dobleDibujaElAcompananteAlReves() {
+        // Trazo horizontal hacia la derecha: el doble va al revés (hacia la
+        // izquierda), así que su izquierda es abajo y queda debajo del gesto.
         val izquierda = MotorKotlin(24, 24)
         izquierda.configurarLapiz(
             Lapiz(
@@ -754,8 +754,8 @@ class MotorNativoTest {
         izquierda.continuarTrazo(20f, 12f)
         assertTrue(izquierda.terminarTrazo())
         assertEquals(Colores.AZUL, izquierda.pixelHoja(12, 12), "trazo principal")
-        assertEquals(Colores.ROJO, izquierda.pixelHoja(12, 10), "doble a la izquierda")
-        assertEquals(Colores.BLANCO, izquierda.pixelHoja(12, 16), "lejos del doble")
+        assertEquals(Colores.ROJO, izquierda.pixelHoja(12, 14), "doble a la izquierda")
+        assertEquals(Colores.BLANCO, izquierda.pixelHoja(12, 8), "lejos del doble")
 
         val derecha = MotorKotlin(24, 24)
         derecha.configurarLapiz(
@@ -772,8 +772,8 @@ class MotorNativoTest {
         derecha.continuarTrazo(20f, 12f)
         assertTrue(derecha.terminarTrazo())
         assertEquals(Colores.AZUL, derecha.pixelHoja(12, 12), "trazo principal")
-        assertEquals(Colores.ROJO, derecha.pixelHoja(12, 14), "doble a la derecha")
-        assertEquals(Colores.BLANCO, derecha.pixelHoja(12, 8), "lejos del doble")
+        assertEquals(Colores.ROJO, derecha.pixelHoja(12, 10), "doble a la derecha")
+        assertEquals(Colores.BLANCO, derecha.pixelHoja(12, 16), "lejos del doble")
     }
 
     @Test
@@ -796,6 +796,7 @@ class MotorNativoTest {
         assertTrue(m.terminarTrazo())
         assertEquals(Colores.AZUL, m.pixelHoja(12, 12), "trazo principal")
         assertEquals(Colores.BLANCO, m.pixelHoja(12, 10), "sin doble vectorial")
+        assertEquals(Colores.BLANCO, m.pixelHoja(12, 14), "sin doble vectorial")
     }
 
     @Test

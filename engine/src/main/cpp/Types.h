@@ -29,10 +29,14 @@ enum class ToolDoble : int {
 // Lado donde se dibuja el trazo acompañante de la herramienta DOBLE. El valor
 // entero viaja por JNI y el orden debe coincidir con
 // `com.dibujo.core.LadoDoble`.
+//
+// El acompañante va AL REVÉS del gesto (nace donde termina el trazo y vuelve
+// hacia donde empezaste), así que el lado se mide respecto del propio
+// acompañante.
 enum class LadoDoble : int {
     MISMO = 0,       // encima del trazo principal (sombra/contorno)
-    IZQUIERDA = 1,   // a la izquierda del sentido del trazo
-    DERECHA = 2,     // a la derecha del sentido del trazo
+    IZQUIERDA = 1,   // a la izquierda del sentido en que se dibuja
+    DERECHA = 2,     // a la derecha del sentido en que se dibuja
 };
 
 // Texturas del trazo. El valor entero viaja por JNI y el orden debe coincidir

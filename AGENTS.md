@@ -68,6 +68,26 @@ Kotlin (`kotlin.code.style=official`).
    y `ROADMAP.md` si cerraste algo de ahí.
 6. En el PR: describí qué hiciste, cómo lo verificaste y qué queda pendiente.
 
+## Subagentes propios (`.opencode/agents/`)
+
+Delegá con la herramienta `task` (o `@nombre`) cuando el pedido sea de una specialty
+concreta. Cada subagente = 1 llamada extra de LLM: usalos en paralelo, no en cadena.
+
+| Subagente | Para qué | Edita |
+|---|---|---|
+| `diseno-kotlin` | Compose/UI, temas, animaciones, accesibilidad, strings | sí |
+| `logica-kotlin` | MVI, ViewModels, coroutines, dominio, paridad C++↔Kotlin, tests | sí |
+| `auditor-seguridad` | OWASP MASVS, SAST/SCA, C++/JNI, dependencias → informe | no |
+| `experto-opengl` | EGL/GLES 3.x, shaders, VBOs, render thread (`engine/src/main/cpp/gpu`) | sí |
+| `experto-vulkan` | Spec/VUIDs, sincronización, MoltenVK | sí |
+| `investigador-web` | Docs de API, CVEs, Material 3, código real de terceros | no |
+
+Reglas al delegar: cada subagente tiene su propio contexto, así que **repetí en el
+prompt las reglas que le apliquen** (español, paridad C++/Kotlin con `MotorTest`, cero
+texto duro en Compose). `auditor-seguridad` e `investigador-web` son de solo lectura:
+devuelven informe, no parche. Los que editan, que avisen qué otro subagente debería
+revisar su diff.
+
 ## Prohibido
 
 - Push directo a `main`.

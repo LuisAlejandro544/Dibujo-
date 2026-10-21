@@ -512,17 +512,19 @@ Particularidades:
   se transforma con `withTransform { translate(-pan); rotate(rot, Offset.Zero);
   scale(zoom, Offset.Zero) }` para quedar alineada con la hoja.
 - **Edge-to-edge** desde la Activity (`enableEdgeToEdge()`), `Scaffold` con
-  `TopAppBar` (título + motor; acciones deshacer/rehacer/centrar/enderezar y un
-  menú **"más opciones"** con limpiar/exportar/configuración; "enderezar" queda
-  habilitado sólo si hay rotación) y barra inferior con
-  herramientas/chips de modo/grosor y la paleta. Las herramientas son seis
-  (…+ DOBLE), con botones compactos (`IconoToggle(tamano = 34.dp)`) para que
-  entren en una fila sin scroll.
-- **Transformar y color (issue 52)**: el menú "más opciones" suma
+  `TopAppBar` (título + motor; acciones deshacer/rehacer/centrar) y barra
+  inferior con herramientas/chips de modo/grosor y la paleta. Las herramientas
+  son seis (…+ DOBLE), con botones compactos (`IconoToggle(tamano = 34.dp)`)
+  para que entren en una fila sin scroll. Todo lo que no es dibujar (calco,
+  texto, textura, IA local, enderezar, trazo asistido, estabilizador,
+  simetría, guardar, importar, ajustar/transformar/expandir el lienzo,
+  exportar, limpiar y configuración) vive en **una sola** hoja inferior:
+  *Herramientas de la hoja* (botón "…" de la barra de dibujo).
+- **Transformar y color (issue 52)**: *Herramientas de la hoja* suma
   "Transformar dibujo" (`DialogoTransformar`: voltear H/V, escalar 0.25–2× con
   `Slider` y el botón **"Ajustar libremente"** que abre el modo de ajuste por
   gestos — ver *Ajuste libre del dibujo*; todo deshacible). El trazo asistido de
-  **líneas rectas** pasó al menú "más opciones" (con tilde cuando está activo).
+  **líneas rectas** también vive ahí (con tilde cuando está activo).
   La paleta arranca con los colores recientes antes de la paleta fija, y el
   círculo del color actual abre la rueda HSV (`DialogoColor` en `RuedaHsv.kt`).
   Particularidades que costaron bugs reales:
@@ -537,8 +539,10 @@ Particularidades:
     el `TopAppBar` y en pantallas angostas no dejaban ancho para el título, que
     se dibujaba carácter por carácter. Se movió lo poco frecuente a un
     `DropdownMenu` ("más opciones") y el título quedó con `maxLines = 1` +
-    `TextOverflow.Ellipsis`. La barra superior se dejó en lo mínimo
-    (volver, título, deshacer, rehacer, centrar y "más opciones"); el subtítulo
+    `TextOverflow.Ellipsis`. Hoy ese `DropdownMenu` ya no existe: todas sus
+    acciones se mudaron a la hoja inferior *Herramientas de la hoja* (ver
+    *Una sola lista de herramientas*), así que la barra superior quedó en lo
+    mínimo (volver, título, deshacer, rehacer y centrar); el subtítulo
     "Motor: …" se quitó (la información sigue en Opciones).
   - **Giro accidental en el pinch**: el gesto de dos dedos usaba
     `detectTransformGestures` sin `panZoomLock`, así que un pellizco de zoom
@@ -560,6 +564,26 @@ Particularidades:
   (`Colores.PALETA`), con brillos (neón), metálicos y pasteles al final; los
   primeros 12 conservan su índice (la consola y sus tests los eligen por
   número), los nuevos van al final.
+- **Una sola lista de herramientas**: el `DropdownMenu` "más opciones" de la
+  barra superior y la hoja inferior *Herramientas de la hoja* eran dos listas
+  distintas para lo mismo (calco/texto/textura/IA en una; enderezar, trazo
+  asistido, estabilizador, simetría, guardar, importar, ajustar, transformar,
+  exportar, limpiar y configuración en la otra). Ahora **todo vive en la hoja
+  inferior** y el `DropdownMenu` se borró: la barra superior queda en volver,
+  título, deshacer, rehacer y centrar.
+  - `HojaHerramientasHoja` agrupa por bloques con `HorizontalDivider`: calco →
+    ayudas al trazo → contenido (texto/textura/IA) → el lienzo → cierre
+    (limpiar y configuración). El botón "…" de la barra de dibujo la abre.
+  - La hoja es larga: usa `rememberModalBottomSheetState(skipPartiallyExpanded =
+    true)` y la columna de contenido lleva `verticalScroll`, si no el texto se
+    cortaría contra el borde inferior.
+  - Los interruptores (calco visible, líneas rectas, estabilizador, simetría)
+    **dejan la hoja abierta** para que se vea la tilde (`AccionHoja.marcada`);
+    las acciones que abren un diálogo o el selector del sistema la cierran
+    primero (si no, el `AlertDialog` quedaría detrás del `ModalBottomSheet`).
+  - `AccionHoja` announce el estado con `contentDescription` = "etiqueta,
+    opción activa" (string `opcion_activa`, en minúsculas y sin concordancia
+    de género para que sirva para las tres herramientas).
 - **Tema Material 3 propio** (issue 63): `TemaDibujo` define
   `EsquemaDibujo` (violeta suave sobre fondos casi blancos, `lightColorScheme`)
   y `FormasDibujo` (`Shapes` con esquinas redondeadas coherentes) en vez del
@@ -599,7 +623,8 @@ Particularidades:
   (allí el temblor mide siempre lo mismo) y recién después se pasan a la hoja:
   `DibujoViewModel.iniciarTrazo`/`continuarTrazo` suavizan y después llaman a
   `aHoja`. El nivel (`estado.estabilizador`, 0..0,95) se guarda en las
-  preferencias (`CLAVE_ESTABILIZADOR`), se cambia desde *más opciones* (toggle)
+  preferencias (`CLAVE_ESTABILIZADOR`), se cambia desde *Herramientas de la
+  hoja* (toggle)
   y con un deslizador en *Opciones → Valores de dibujo*. No toca el motor
   (mismo criterio que el calco: **no aplica la paridad**).
 - **Simetría del trazo** (`core/.../Simetria.kt`): el motor dibuja el trazo y
@@ -677,7 +702,7 @@ Particularidades:
     `textura`, por defecto LISA) y `transformarDibujo`/terminar el ajuste libre
     le aplican el mismo mapeo que a los textos. No toca el rasterizado ni la
     paridad. Fase 2 pendiente: edición de nodos, relleno, figuras y export SVG.
-- **Importar imagen** (issue 35): entrada explícita en el menú "más opciones"
+- **Importar imagen** (issue 35): entrada explícita en *Herramientas de la hoja*
   que abre el Photo Picker y fija la imagen de calco (sin permisos).
 - **Recortar / redimensionar lienzo** (issue 35): diálogo "Recortar o
   redimensionar lienzo". *Recortar al dibujo* calcula la caja del contenido
@@ -782,7 +807,7 @@ principal** con cuatro accesos, cada uno en su propio archivo/pantalla.
     el estado tiene `modificado = true`, al salir del lienzo (onDispose de la
     pantalla) y al irse la app a segundo plano (`ON_STOP`). *Continuar dibujando*
     lo reanuda.
-  - **Biblioteca**: "Guardar en la app" (menú "más opciones" del lienzo) crea una
+  - **Biblioteca**: "Guardar en la app" (en *Herramientas de la hoja*) crea una
     copia con marca de tiempo; son las que lista *Cargar dibujo*. El export a la
     galería sigue existiendo y es aparte.
 - **Carga en el `DibujoViewModel`** (`abrirDibujo(ancho, alto, pixeles)`):

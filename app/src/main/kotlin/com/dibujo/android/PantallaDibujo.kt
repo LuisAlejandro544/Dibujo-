@@ -71,7 +71,6 @@ import androidx.compose.material.icons.rounded.Gesture
 import androidx.compose.material.icons.rounded.Layers
 import androidx.compose.material.icons.rounded.Mode
 import androidx.compose.material.icons.rounded.MoreHoriz
-import androidx.compose.material.icons.rounded.MoreVert
 import androidx.compose.material.icons.rounded.OpenInFull
 import androidx.compose.material.icons.rounded.OpenWith
 import androidx.compose.material.icons.rounded.PanTool
@@ -91,8 +90,6 @@ import androidx.compose.material.icons.rounded.VisibilityOff
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilterChipDefaults
@@ -113,6 +110,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.lightColorScheme
+import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
@@ -453,8 +451,6 @@ fun PantallaDibujo(
         }
     }
 
-    val alExportar = { mostrarExportar = true }
-
     // Al abrir el diálogo o cambiar el interruptor de recorte se (re)arma el
     // PNG con ese ajuste. Se hace acá y no en el clic para que el interruptor
     // cambie el resultado antes de guardar/compartir.
@@ -514,22 +510,6 @@ fun PantallaDibujo(
                 alDeshacer = vm::deshacer,
                 alRehacer = vm::rehacer,
                 alCentrar = vm::centrar,
-                alEnderezar = vm::enderezar,
-                alLimpiar = { mostrarLimpiar = true },
-                alGuardar = { guardarEnApp() },
-                alExportar = alExportar,
-                alImportarImagen = {
-                    elegirImagen.launch(
-                        PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly),
-                    )
-                },
-                alAjustarLienzo = { mostrarAjustarLienzo = true },
-                alTransformar = { mostrarTransformar = true },
-                alAlternarAsistencia = vm::alternarAsistenciaRecta,
-                alAlternarEstabilizador = vm::alternarEstabilizador,
-                alAlternarSimetria = vm::alternarSimetria,
-                exportando = exportando,
-                alAbrirConfig = alAbrirOpciones,
             )
         },
         bottomBar = {
@@ -700,6 +680,7 @@ fun PantallaDibujo(
     if (mostrarMasHerramientas) {
         HojaHerramientasHoja(
             estado = estado,
+            exportando = exportando,
             alCerrar = { mostrarMasHerramientas = false },
             alElegirImagen = {
                 mostrarMasHerramientas = false
@@ -730,6 +711,38 @@ fun PantallaDibujo(
             alAbrirTextura = {
                 mostrarMasHerramientas = false
                 mostrarTextura = true
+            },
+            // Los interruptores dejan la hoja abierta para ver la tilde.
+            alEnderezar = vm::enderezar,
+            alAlternarAsistencia = vm::alternarAsistenciaRecta,
+            alAlternarEstabilizador = vm::alternarEstabilizador,
+            alAlternarSimetria = vm::alternarSimetria,
+            alGuardar = { guardarEnApp() },
+            alImportarImagen = {
+                mostrarMasHerramientas = false
+                elegirImagen.launch(
+                    PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly),
+                )
+            },
+            alAjustarLienzo = {
+                mostrarMasHerramientas = false
+                mostrarAjustarLienzo = true
+            },
+            alTransformar = {
+                mostrarMasHerramientas = false
+                mostrarTransformar = true
+            },
+            alExportar = {
+                mostrarMasHerramientas = false
+                mostrarExportar = true
+            },
+            alLimpiar = {
+                mostrarMasHerramientas = false
+                mostrarLimpiar = true
+            },
+            alAbrirConfig = {
+                mostrarMasHerramientas = false
+                alAbrirOpciones()
             },
         )
     }
@@ -775,11 +788,17 @@ fun PantallaDibujo(
 
 /**
  * Barra superior sobria: volver, título, deshacer/rehacer y centrar a la
- * vista; todo lo demás (enderezar, trazo asistido, guardar, importar, ajustar
- * lienzo, transformar, exportar, limpiar y configuración) vive en el menú de
- * "más opciones". Antes había cinco iconos sueltos y el título quedaba
- * aplastado ("Dib…", con el motor en una segunda línea). El título se acota a
- * una línea con elipsis por si igual falta espacio.
+ * vista. Todo lo demás (enderezar, trazo asistido, estabilizador, simetría,
+ * guardar, importar, ajustar lienzo, transformar, expandir, exportar, limpiar
+ * y configuración) vive en la hoja inferior **"Herramientas de la hoja"**, que
+ * se abre con el botón "…" de la barra de dibujo. Antes esas acciones estaban
+ * en un `DropdownMenu` ("más opciones") de la barra superior; ahora comparten
+ * un único lugar con el calco, el texto, la textura y la IA local, para que
+ * el usuario no tenga que buscarlas en dos sitios distintos.
+ *
+ * Antes había cinco iconos sueltos y el título quedaba aplastado ("Dib…",
+ * con el motor en una segunda línea). El título se acota a una línea con
+ * elipsis por si igual falta espacio.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -789,20 +808,7 @@ private fun BarraSuperior(
     alDeshacer: () -> Unit,
     alRehacer: () -> Unit,
     alCentrar: () -> Unit,
-    alEnderezar: () -> Unit,
-    alLimpiar: () -> Unit,
-    alGuardar: () -> Unit,
-    alExportar: () -> Unit,
-    alImportarImagen: () -> Unit,
-    alAjustarLienzo: () -> Unit,
-    alTransformar: () -> Unit,
-    alAlternarAsistencia: () -> Unit,
-    alAlternarEstabilizador: () -> Unit,
-    alAlternarSimetria: () -> Unit,
-    exportando: Boolean,
-    alAbrirConfig: () -> Unit,
 ) {
-    var menuAbierto by remember { mutableStateOf(false) }
     TopAppBar(
         modifier = Modifier.absorberToque(),
         navigationIcon = {
@@ -838,153 +844,6 @@ private fun BarraSuperior(
                 descripcion = stringResource(R.string.cd_centrar),
                 alPulsar = alCentrar,
             )
-            Box {
-                BotonIcono(
-                    icono = Icons.Rounded.MoreVert,
-                    descripcion = stringResource(R.string.cd_mas_opciones),
-                    alPulsar = { menuAbierto = true },
-                )
-                DropdownMenu(
-                    expanded = menuAbierto,
-                    onDismissRequest = { menuAbierto = false },
-                ) {
-                    // Vista: enderezar y trazo asistido.
-                    DropdownMenuItem(
-                        text = { Text(stringResource(R.string.cd_enderezar)) },
-                        leadingIcon = {
-                            Icon(Icons.Rounded.ScreenRotation, contentDescription = null)
-                        },
-                        enabled = estado.camara.rotacion != 0f,
-                        onClick = {
-                            menuAbierto = false
-                            alEnderezar()
-                        },
-                    )
-                    DropdownMenuItem(
-                        text = { Text(stringResource(R.string.cd_asistencia_recta)) },
-                        leadingIcon = {
-                            Icon(
-                                Icons.AutoMirrored.Rounded.TrendingFlat,
-                                contentDescription = null,
-                            )
-                        },
-                        trailingIcon = if (estado.asistenciaRecta) {
-                            { Icon(Icons.Rounded.Check, contentDescription = null) }
-                        } else {
-                            null
-                        },
-                        onClick = {
-                            menuAbierto = false
-                            alAlternarAsistencia()
-                        },
-                    )
-                    DropdownMenuItem(
-                        text = { Text(stringResource(R.string.cd_estabilizador)) },
-                        leadingIcon = {
-                            Icon(Icons.Rounded.Gesture, contentDescription = null)
-                        },
-                        trailingIcon = if (estado.estabilizador > 0f) {
-                            { Icon(Icons.Rounded.Check, contentDescription = null) }
-                        } else {
-                            null
-                        },
-                        onClick = {
-                            menuAbierto = false
-                            alAlternarEstabilizador()
-                        },
-                    )
-                    DropdownMenuItem(
-                        text = { Text(stringResource(R.string.cd_simetria)) },
-                        leadingIcon = {
-                            Icon(Icons.Rounded.Flip, contentDescription = null)
-                        },
-                        trailingIcon = if (estado.simetria != Simetria.NINGUNA) {
-                            { Icon(Icons.Rounded.Check, contentDescription = null) }
-                        } else {
-                            null
-                        },
-                        onClick = {
-                            menuAbierto = false
-                            alAlternarSimetria()
-                        },
-                    )
-                    HorizontalDivider()
-                    // Hoja: guardar, importar, tamaño y transformar.
-                    DropdownMenuItem(
-                        text = { Text(stringResource(R.string.guardar_en_app)) },
-                        leadingIcon = {
-                            Icon(Icons.Rounded.Save, contentDescription = null)
-                        },
-                        onClick = {
-                            menuAbierto = false
-                            alGuardar()
-                        },
-                    )
-                    DropdownMenuItem(
-                        text = { Text(stringResource(R.string.importar_imagen)) },
-                        leadingIcon = {
-                            Icon(Icons.Rounded.PhotoLibrary, contentDescription = null)
-                        },
-                        onClick = {
-                            menuAbierto = false
-                            alImportarImagen()
-                        },
-                    )
-                    DropdownMenuItem(
-                        text = { Text(stringResource(R.string.lienzo_ajustar_titulo)) },
-                        leadingIcon = {
-                            Icon(Icons.Rounded.AspectRatio, contentDescription = null)
-                        },
-                        onClick = {
-                            menuAbierto = false
-                            alAjustarLienzo()
-                        },
-                    )
-                    DropdownMenuItem(
-                        text = { Text(stringResource(R.string.transformar_titulo)) },
-                        leadingIcon = {
-                            Icon(Icons.Rounded.Transform, contentDescription = null)
-                        },
-                        onClick = {
-                            menuAbierto = false
-                            alTransformar()
-                        },
-                    )
-                    DropdownMenuItem(
-                        text = { Text(stringResource(R.string.cd_exportar)) },
-                        leadingIcon = {
-                            Icon(Icons.Rounded.SaveAlt, contentDescription = null)
-                        },
-                        enabled = !exportando,
-                        onClick = {
-                            menuAbierto = false
-                            alExportar()
-                        },
-                    )
-                    HorizontalDivider()
-                    // Acción destructiva y configuración, al final.
-                    DropdownMenuItem(
-                        text = { Text(stringResource(R.string.cd_limpiar)) },
-                        leadingIcon = {
-                            Icon(Icons.Rounded.Delete, contentDescription = null)
-                        },
-                        onClick = {
-                            menuAbierto = false
-                            alLimpiar()
-                        },
-                    )
-                    DropdownMenuItem(
-                        text = { Text(stringResource(R.string.config_titulo)) },
-                        leadingIcon = {
-                            Icon(Icons.Rounded.Settings, contentDescription = null)
-                        },
-                        onClick = {
-                            menuAbierto = false
-                            alAbrirConfig()
-                        },
-                    )
-                }
-            }
         },
         colors = TopAppBarDefaults.topAppBarColors(
             containerColor = MaterialTheme.colorScheme.surface,
@@ -2266,13 +2125,25 @@ private fun DialogoTexto(
 }
 
 /**
- * Hoja inferior con las acciones secundarias sobre la hoja: calco, texto,
- * textura del trazo, herramientas con IA local y expandir el lienzo.
+ * Hoja inferior con **todas** las herramientas de la hoja: calco, ayudas al
+ * trazo, texto, textura, IA local y las acciones sobre el lienzo (guardar,
+ * importar, ajustar, transformar, expandir, exportar, limpiar y configuración).
+ *
+ * Antes esas acciones vivían en el `DropdownMenu` ("más opciones") de la barra
+ * superior y el calco/texto/textura/IA en esta hoja: dos lugares distintos
+ * para lo mismo. Ahora está todo junto, ordenado en bloques y con scroll (son
+ * muchas más filas que antes, así que la hoja ocupa la pantalla y se
+ * desplaza).
+ *
+ * Las filas que sólo cambian un estado (toggles) dejan la hoja abierta para
+ * que se vea la tilde; las que abren un diálogo o el selector del sistema
+ * cierran la hoja primero.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun HojaHerramientasHoja(
     estado: DibujoEstado,
+    exportando: Boolean,
     alCerrar: () -> Unit,
     alElegirImagen: () -> Unit,
     alAlternarCalco: () -> Unit,
@@ -2281,11 +2152,29 @@ private fun HojaHerramientasHoja(
     alAbrirExpandir: () -> Unit,
     alAbrirTexto: () -> Unit,
     alAbrirTextura: () -> Unit,
+    alEnderezar: () -> Unit,
+    alAlternarAsistencia: () -> Unit,
+    alAlternarEstabilizador: () -> Unit,
+    alAlternarSimetria: () -> Unit,
+    alGuardar: () -> Unit,
+    alImportarImagen: () -> Unit,
+    alAjustarLienzo: () -> Unit,
+    alTransformar: () -> Unit,
+    alExportar: () -> Unit,
+    alLimpiar: () -> Unit,
+    alAbrirConfig: () -> Unit,
 ) {
-    ModalBottomSheet(onDismissRequest = alCerrar) {
+    val etiquetaActiva = stringResource(R.string.opcion_activa)
+    // La hoja es larga: se abre completa y el contenido se desplaza dentro.
+    val estadoHoja = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    ModalBottomSheet(
+        onDismissRequest = alCerrar,
+        sheetState = estadoHoja,
+    ) {
         Column(
             Modifier
                 .fillMaxWidth()
+                .verticalScroll(rememberScrollState())
                 .padding(horizontal = 12.dp)
                 .padding(bottom = 24.dp),
         ) {
@@ -2294,6 +2183,7 @@ private fun HojaHerramientasHoja(
                 style = MaterialTheme.typography.titleMedium,
                 modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
             )
+            // Calco: elegir la imagen, mostrarla/ocultarla y ajustarla.
             AccionHoja(
                 icono = Icons.Rounded.AddPhotoAlternate,
                 etiqueta = stringResource(R.string.cd_calco_elegir),
@@ -2316,6 +2206,36 @@ private fun HojaHerramientasHoja(
                 alPulsar = alAbrirCalco,
             )
             HorizontalDivider(Modifier.padding(vertical = 4.dp))
+            // Ayudas al trazo: enderezar la vista y los tres auxiliares.
+            AccionHoja(
+                icono = Icons.Rounded.ScreenRotation,
+                etiqueta = stringResource(R.string.cd_enderezar),
+                habilitado = estado.camara.rotacion != 0f,
+                alPulsar = alEnderezar,
+            )
+            AccionHoja(
+                icono = Icons.AutoMirrored.Rounded.TrendingFlat,
+                etiqueta = stringResource(R.string.cd_asistencia_recta),
+                marcada = estado.asistenciaRecta,
+                etiquetaActivada = etiquetaActiva,
+                alPulsar = alAlternarAsistencia,
+            )
+            AccionHoja(
+                icono = Icons.Rounded.Gesture,
+                etiqueta = stringResource(R.string.cd_estabilizador),
+                marcada = estado.estabilizador > 0f,
+                etiquetaActivada = etiquetaActiva,
+                alPulsar = alAlternarEstabilizador,
+            )
+            AccionHoja(
+                icono = Icons.Rounded.Flip,
+                etiqueta = stringResource(R.string.cd_simetria),
+                marcada = estado.simetria != Simetria.NINGUNA,
+                etiquetaActivada = etiquetaActiva,
+                alPulsar = alAlternarSimetria,
+            )
+            HorizontalDivider(Modifier.padding(vertical = 4.dp))
+            // Contenido de la hoja: texto, textura del trazo e IA local.
             AccionHoja(
                 icono = Icons.Rounded.TextFields,
                 etiqueta = stringResource(R.string.cd_texto),
@@ -2340,10 +2260,50 @@ private fun HojaHerramientasHoja(
                 etiqueta = stringResource(R.string.cd_ia_local),
                 alPulsar = alAbrirIa,
             )
+            HorizontalDivider(Modifier.padding(vertical = 4.dp))
+            // El lienzo: guardar, importar, tamaño, transformación y export.
+            AccionHoja(
+                icono = Icons.Rounded.Save,
+                etiqueta = stringResource(R.string.guardar_en_app),
+                alPulsar = alGuardar,
+            )
+            AccionHoja(
+                icono = Icons.Rounded.PhotoLibrary,
+                etiqueta = stringResource(R.string.importar_imagen),
+                alPulsar = alImportarImagen,
+            )
+            AccionHoja(
+                icono = Icons.Rounded.AspectRatio,
+                etiqueta = stringResource(R.string.lienzo_ajustar_titulo),
+                alPulsar = alAjustarLienzo,
+            )
+            AccionHoja(
+                icono = Icons.Rounded.Transform,
+                etiqueta = stringResource(R.string.transformar_titulo),
+                alPulsar = alTransformar,
+            )
             AccionHoja(
                 icono = Icons.Rounded.OpenInFull,
                 etiqueta = stringResource(R.string.cd_expandir),
                 alPulsar = alAbrirExpandir,
+            )
+            AccionHoja(
+                icono = Icons.Rounded.SaveAlt,
+                etiqueta = stringResource(R.string.cd_exportar),
+                habilitado = !exportando,
+                alPulsar = alExportar,
+            )
+            HorizontalDivider(Modifier.padding(vertical = 4.dp))
+            // Acción destructiva y configuración, al final.
+            AccionHoja(
+                icono = Icons.Rounded.Delete,
+                etiqueta = stringResource(R.string.cd_limpiar),
+                alPulsar = alLimpiar,
+            )
+            AccionHoja(
+                icono = Icons.Rounded.Settings,
+                etiqueta = stringResource(R.string.config_titulo),
+                alPulsar = alAbrirConfig,
             )
         }
     }
@@ -2357,6 +2317,8 @@ private fun AccionHoja(
     alPulsar: () -> Unit,
     habilitado: Boolean = true,
     vistaPrevia: (@Composable () -> Unit)? = null,
+    marcada: Boolean = false,
+    etiquetaActivada: String = "",
 ) {
     Row(
         Modifier
@@ -2364,7 +2326,13 @@ private fun AccionHoja(
             .clip(MaterialTheme.shapes.medium)
             .clickable(enabled = habilitado, onClick = alPulsar)
             .padding(horizontal = 12.dp, vertical = 14.dp)
-            .semantics { contentDescription = etiqueta },
+            .semantics {
+                contentDescription = if (marcada && etiquetaActivada.isNotEmpty()) {
+                    "$etiqueta, $etiquetaActivada"
+                } else {
+                    etiqueta
+                }
+            },
         verticalAlignment = Alignment.CenterVertically,
     ) {
         if (vistaPrevia != null) {
@@ -2389,7 +2357,15 @@ private fun AccionHoja(
             } else {
                 MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.38f)
             },
+            modifier = Modifier.weight(1f),
         )
+        if (marcada) {
+            Icon(
+                imageVector = Icons.Rounded.Check,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.primary,
+            )
+        }
     }
 }
 

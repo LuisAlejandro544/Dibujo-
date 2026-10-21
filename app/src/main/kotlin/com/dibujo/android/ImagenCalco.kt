@@ -3,6 +3,7 @@ package com.dibujo.android
 import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
+import android.graphics.BitmapRegionDecoder
 import android.net.Uri
 import com.dibujo.core.Colores
 import com.dibujo.core.FiltroImagen
@@ -10,6 +11,14 @@ import com.dibujo.core.FiltrosImagen
 
 /** Lado máximo al que se reduce la imagen de calco al decodificarla. */
 const val MAX_CALCO = 2048
+
+/**
+ * Presupuesto de píxeles de la región del calco que se relee del archivo
+ * original a resolución completa. Como la región es, como mucho, la parte de
+ * la imagen que se está viendo, el recorte queda cerca del tamaño de la
+ * pantalla (unos 10 MB) y no del archivo entero.
+ */
+const val MAX_PIXELES_REGION_CALCO = 4_000_000
 
 /**
  * Decodifica la imagen elegida reduciéndola si es muy grande ([MAX_CALCO] por
@@ -26,6 +35,56 @@ fun cargarBitmap(contexto: Context, uri: Uri): Bitmap? = runCatching {
     }
     val opciones = BitmapFactory.Options().apply { inSampleSize = escala }
     resolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, opciones) }
+}.getOrNull()
+
+/**
+ * Tamaño real de la imagen del calco en píxeles, sin reducir. La versión que
+ * se carga para la vista general está recortada a [MAX_CALCO]; con este dato
+ * se sabe cuánto detalle hay de más y si conviene releer la zona que se está
+ * viendo del archivo original (que se ve nítida donde la otra se ve pixelada).
+ */
+fun tamanoOriginalImagen(contexto: Context, uri: Uri): Pair<Int, Int>? = runCatching {
+    val limites = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+    contexto.contentResolver.openInputStream(uri)?.use {
+        BitmapFactory.decodeStream(it, null, limites)
+    }
+    if (limites.outWidth <= 0 || limites.outHeight <= 0) null
+    else limites.outWidth to limites.outHeight
+}.getOrNull()
+
+/**
+ * Decodifica **sólo** la región [region] (en píxeles de la imagen original) a
+ * resolución completa.
+ *
+ * Es lo que evita que el calco se vea pixelado al hacer mucho zoom: en vez de
+ * ampliar la versión reducida (que ya no tiene detalle), se vuelve a leer del
+ * archivo original únicamente la parte que se está viendo. El recorte se
+ * decodea con un muestreo para no pasar del presupuesto de
+ * [MAX_PIXELES_REGION_CALCO].
+ */
+fun decodificarRegionImagen(
+    contexto: Context,
+    uri: Uri,
+    region: android.graphics.Rect,
+    maxPixeles: Int = MAX_PIXELES_REGION_CALCO,
+): Bitmap? = runCatching {
+    if (region.width() <= 0 || region.height() <= 0) return@runCatching null
+    val descriptor = contexto.contentResolver.openFileDescriptor(uri, "r")
+        ?: return@runCatching null
+    descriptor.use {
+        val decoder = BitmapRegionDecoder.newInstance(it.fileDescriptor, false)
+        try {
+            var muestra = 1
+            while (
+                (region.width().toLong() / muestra) * (region.height().toLong() / muestra) > maxPixeles
+            ) {
+                muestra *= 2
+            }
+            decoder.decodeRegion(region, BitmapFactory.Options().apply { inSampleSize = muestra })
+        } finally {
+            decoder.recycle()
+        }
+    }
 }.getOrNull()
 
 /**

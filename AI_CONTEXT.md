@@ -594,6 +594,26 @@ Particularidades:
   muestra/oculta al instante (`calcoVisible`) y tiene opacidad ajustable. El
   `calcoUri` vive en el `ViewModel` (sobrevive rotaciones) y el `Bitmap` se
   decodifica reducido (`MAX_CALCO = 2048`) al componer.
+- **Calco con detalle real al hacer zoom**: la versión reducida no alcanza
+  cuando el usuario amplía mucho, y el calco se veía pixelado. `CapaCalco`
+  calcula cuántos píxeles de pantalla cubre un píxel de la imagen **original**
+  (`escala · zoom / factor`, con `factor = original / reducida`); si es ≥ 1,
+  relee del archivo **sólo la zona visible** con `BitmapRegionDecoder`
+  (`decodificarRegionImagen` en `ImagenCalco.kt`, presupuesto de
+  `MAX_PIXELES_REGION_CALCO` píxeles) y dibuja esa zona: al cerca se ve el
+  detalle real de la foto. La zona se recalcula con un anti-rebote de 120 ms
+  (`RETRASO_DETALLE_CALCO`) para no releer el archivo en cada cuadro de un
+  gesto; mientras tanto, el resto de la imagen se dibuja con la versión
+  reducida **recortada** en cuatro bandas (`dibujarCalcoFuera`) para que el
+  alfa del calco no se aplique dos veces en la misma zona. La cuenta de
+  coordenadas es la del motor: `hoja = R(−rot)·(pantalla + pan) / zoom`
+  (`regionVisibleHoja`).
+- **Botón directo del calco y aviso de modo** (issue 88): la barra superior
+  tiene un botón de ojo (`Visibility`/`VisibilityOff`) que muestra u oculta la
+  imagen de calco al instante, sin abrir el diálogo (sólo aparece si hay
+  imagen). Sobre el lienzo flota `IndicadorModo`, una pastilla que dice
+  "Dibujando" o "Moviendo" (icono + texto) para saber si el dedo pinta o
+  desplaza la vista; es sólo informativa y no intercepta toques.
 - **Calco reposicionable y escalable** (issue 35): además del ajuste natural, el
   usuario mueve (un dedo) y escala (dos dedos) la imagen. Al elegirla se
   **auto-centra SIEMPRE** (`calcoOffsetX/Y = 0`, `calcoEscala = 1`) y se entra en
@@ -842,6 +862,27 @@ corresponde.
   expone VAOs con sufijo `OES`).
 - `RenderizadorVulkan` monta instancia/dispositivo/swapchain/render pass y
   presenta; recrea la cadena ante `VK_ERROR_OUT_OF_DATE_KHR`.
+- **Estado triestado del cuadro** (`EstadoCuadro` en `RenderizadorGpu.h`):
+  `PRESENTADO` (0), `REINTENTAR` (1) y `FALLO` (2). Antes `render()` devolvía
+  `bool` y **cualquier** error transitorio (superficie 0×0 durante un cambio
+  brusco de interfaz, `VK_ERROR_OUT_OF_DATE_KHR`, formatos no disponibles)
+  terminaba en `gpuFracaso()` → la app caía **definitivamente** al render por
+  CPU (de ahí el "lag" que veía el usuario). Ahora sólo `FALLO` (dispositivo
+  perdido, fallo de `vkQueueSubmit`/`vkQueuePresentKHR`) cae a CPU; lo demás se
+  reintenta en el cuadro siguiente. La superficie 0×0 marca
+  `superficieInvalida_` y no es fatal; `VK_ERROR_SURFACE_LOST_KHR` reconstruye
+  la `VkSurfaceKHR` desde la `ANativeWindow`.
+- **Sin parada de la GPU al subir la hoja**: la copia `staging → hoja` se
+  graba en el **command buffer del propio cuadro** (`grabarSubidaHoja`) con sus
+  barreras de disposición, en vez de un command buffer propio con
+  `vkQueueWaitIdle` (que serializaba CPU y GPU en cada trazo). La subida
+  inicial (`subirHojaInicial`) sí usa `vkQueueWaitIdle`: ocurre una sola vez.
+- **Recursos por cuadro en vuelo** (`kMaxCuadrosEnVuelo = 2`): command buffer,
+  semáforos de adquisición/presentación, valla y buffer de subida son uno por
+  ranura, así un cuadro no pisa lo que el otro todavía está usando. Antes el
+  command buffer y el semáforo de adquisición eran únicos y se reutilizaban
+  con dos cuadros en vuelo (corrida de sincronización). `vw_`/`vh_` y
+  `reiniciarCadena_` son atómicos (los escribe el hilo de la interfaz).
 - Los shaders presentan la hoja como textura y resuelven la cámara en la GPU:
   `hoja = R(−rot)·(pantalla + pan) / zoom` (`rot` en el uniform `uRot`) con
   `texture()` y sampler `LINEAR` (muestreo bilineal; el centro del texel cae en
@@ -852,6 +893,8 @@ corresponde.
   `MotorTest` intacta); la GPU sólo presenta.
 - `GpuJni.cpp` expone `nativoGpuCrear/Render/Redimensionar/Nombre/Destruir` y
   guarda el `ANativeWindow` (`ANativeWindow_fromSurface`).
+  `nativoGpuRender` devuelve un `Int` con el `EstadoCuadro` (0/1/2), no un
+  booleano: el hilo de render necesita distinguir "reintentá" de "perdés".
 - Vulkan GLSL se compila a SPIR-V en configure (glslc del NDK) e incrusta en
   `shaders_vk_generado.h`; el CMake lo hace sólo bajo `if(ANDROID)`.
 
@@ -861,6 +904,11 @@ cuadros on-demand. El hilo presenta un primer cuadro **antes** de avisar
 `gpuListo`: así la pantalla de carga se retira con la hoja ya pintada y no se
 ve un destello negro. `DibujoEngine` expone `revision()`/`copiarHoja()`/
 `leerCamara()` con mutex para que el hilo GPU lea un snapshot coherente.
+`HiloRenderGpu` trata el estado del cuadro: `0` sigue, `1` reintenta con
+espera creciente (16→80 ms, para no martillear la GPU mientras la superficie
+tarda en estar lista) y `2` es el único que dispara `gpuFracaso()`. También
+reintenta la **creación** del renderizador (25 veces) por si la superficie
+todavía no está lista al abrir la pantalla.
 `PantallaDibujo` separa `AreaDibujo` en: hoja (`SuperficieGpu` si hay GPU, si
 no `LienzoCpu`) + `CapaGestos` encima (gestos y vista previa del trazo). El
 `Scaffold` y el `windowBackground` son transparentes para que se vea la

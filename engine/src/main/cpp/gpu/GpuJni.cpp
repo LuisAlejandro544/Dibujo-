@@ -14,6 +14,7 @@ namespace {
 
 using dibujo::DibujoEngine;
 using dibujo::gpu::Backend;
+using dibujo::gpu::EstadoCuadro;
 using dibujo::gpu::RenderizadorGpu;
 
 struct PeerGpu {
@@ -46,12 +47,14 @@ Java_com_dibujo_engine_NativeEngine_nativoGpuCrear(
     return static_cast<jlong>(reinterpret_cast<intptr_t>(new PeerGpu{r, ventana}));
 }
 
-JNIEXPORT jboolean JNICALL
-Java_com_dibujo_engine_NativeEngine_nativoGpuRender(JNIEnv*, jobject, jlong handle) {
-    PeerGpu* p = peer(handle);
-    if (p == nullptr || p->renderizador == nullptr) return JNI_FALSE;
-    return p->renderizador->render() ? JNI_TRUE : JNI_FALSE;
-}
+    JNIEXPORT jint JNICALL
+    Java_com_dibujo_engine_NativeEngine_nativoGpuRender(JNIEnv*, jobject, jlong handle) {
+        PeerGpu* p = peer(handle);
+        if (p == nullptr || p->renderizador == nullptr) {
+            return static_cast<jint>(dibujo::gpu::EstadoCuadro::FALLO);
+        }
+        return static_cast<jint>(p->renderizador->render());
+    }
 
 JNIEXPORT void JNICALL
 Java_com_dibujo_engine_NativeEngine_nativoGpuRedimensionar(

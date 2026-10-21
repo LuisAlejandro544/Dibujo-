@@ -238,8 +238,8 @@ void RenderizadorGL::subirHoja() {
     revision_ = rev;
 }
 
-bool RenderizadorGL::render() {
-    if (superficie_ == EGL_NO_SURFACE || motor_ == nullptr) return false;
+EstadoCuadro RenderizadorGL::render() {
+    if (superficie_ == EGL_NO_SURFACE || motor_ == nullptr) return EstadoCuadro::FALLO;
 
     if (vw_ <= 0 || vh_ <= 0) {
         EGLint w = 0;
@@ -249,7 +249,9 @@ bool RenderizadorGL::render() {
             vw_ = w;
             vh_ = h;
         }
-        if (vw_ <= 0 || vh_ <= 0) return true; // aún sin tamaño; reintentar luego
+        // La superficie todavía no tiene tamaño: es transitorio (igual que en
+        // Vulkan), no se pierde el contexto GPU.
+        if (vw_ <= 0 || vh_ <= 0) return EstadoCuadro::REINTENTAR;
     }
 
     if (motor_->revision() != revision_) subirHoja();
@@ -299,9 +301,9 @@ bool RenderizadorGL::render() {
     if (eglSwapBuffers(dpy_, superficie_) != EGL_TRUE) {
         const EGLint error = eglGetError();
         LOGE("eglSwapBuffers falló (0x%x)", error);
-        return false;
+        return EstadoCuadro::FALLO;
     }
-    return true;
+    return EstadoCuadro::PRESENTADO;
 }
 
 void RenderizadorGL::redimensionar(int ancho, int alto) {

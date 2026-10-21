@@ -146,7 +146,7 @@ private class HiloRenderGpu(
     private val candado = ReentrantLock()
     private val hayCuadro = candado.newCondition()
     private var pendiente = true
-    private var activo = true
+    @Volatile private var activo = true
 
     fun solicitar() {
         candado.withLock {
@@ -178,11 +178,33 @@ private class HiloRenderGpu(
         }
     }
 
+    /** Espera [ms]; devuelve false si el hilo debe detenerse mientras tanto. */
+    private fun dormir(ms: Long): Boolean {
+        try {
+            Thread.sleep(ms)
+        } catch (_: InterruptedException) {
+            Thread.currentThread().interrupt()
+            return false
+        }
+        return activo
+    }
+
     override fun run() {
-        val gpu = try {
-            NativeEngine.nativoGpuCrear(motor, surface, backend.ordinal)
-        } catch (_: Throwable) {
-            0L
+        // El renderizador puede no crearse si la superficie todavía no está
+        // lista (cambio brusco de interfaz, rotación): se reintenta un rato
+        // antes de dar por perdido el render GPU.
+        var gpu = 0L
+        var intentos = 0
+        while (gpu == 0L && intentos < INTENTOS_CREACION) {
+            gpu = try {
+                NativeEngine.nativoGpuCrear(motor, surface, backend.ordinal)
+            } catch (_: Throwable) {
+                0L
+            }
+            if (gpu == 0L) {
+                intentos++
+                if (intentos < INTENTOS_CREACION && !dormir(40)) return
+            }
         }
         if (gpu == 0L) {
             alFallo("no-disponible")
@@ -199,18 +221,35 @@ private class HiloRenderGpu(
 
             // Primer cuadro ANTES de avisar "listo": así la pantalla de carga se
             // retira con la hoja ya presentada y no se alcanza a ver un cuadro
-            // negro (sobre todo en Vulkan). Si falla, se cae a CPU.
-            val primerCuadro = try {
-                NativeEngine.nativoGpuRender(gpu)
-            } catch (_: Throwable) {
-                false
-            }
-            if (!primerCuadro) {
-                alFallo("contexto-perdido")
-                return
+            // negro (sobre todo en Vulkan). Un error transitorio (la
+            // superficie aún no está lista) se reintenta; sólo un fallo real
+            // hace caer a CPU.
+            var intentosCuadro = 0
+            while (true) {
+                val estado = try {
+                    NativeEngine.nativoGpuRender(gpu)
+                } catch (_: Throwable) {
+                    ESTADO_FALLO
+                }
+                when (estado) {
+                    ESTADO_PRESENTADO -> break
+                    ESTADO_REINTENTAR -> {
+                        intentosCuadro++
+                        if (intentosCuadro > INTENTOS_ESPERA) {
+                            alFallo("contexto-perdido")
+                            return
+                        }
+                        if (!dormir(30)) return
+                    }
+                    else -> {
+                        alFallo("contexto-perdido")
+                        return
+                    }
+                }
             }
             alListo(descripcion)
 
+            var intentosRetrazo = 0
             while (true) {
                 candado.withLock {
                     while (!pendiente && activo) {
@@ -219,18 +258,48 @@ private class HiloRenderGpu(
                     if (!activo) return
                     pendiente = false
                 }
-                val ok = try {
+                val estado = try {
                     NativeEngine.nativoGpuRender(gpu)
                 } catch (_: Throwable) {
-                    false
+                    ESTADO_FALLO
                 }
-                if (!ok) {
-                    alFallo("contexto-perdido")
-                    return
+                when (estado) {
+                    ESTADO_PRESENTADO -> intentosRetrazo = 0
+                    ESTADO_REINTENTAR -> {
+                        // Error transitorio (superficie o cadena de intercambio
+                        // en transición): NO se pierde el render GPU, se
+                        // reintenta en el cuadro siguiente. La espera crece un
+                        // poco para no martillear la GPU si la superficie
+                        // tarda en estar lista.
+                        intentosRetrazo = (intentosRetrazo + 1).coerceAtMost(5)
+                        if (!dormir(16L * intentosRetrazo)) return
+                        solicitar()
+                    }
+                    else -> {
+                        alFallo("contexto-perdido")
+                        return
+                    }
                 }
             }
         } finally {
             NativeEngine.nativoGpuDestruir(gpu)
         }
+    }
+
+    private companion object {
+        /** Cuadro presentado en pantalla. */
+        const val ESTADO_PRESENTADO = 0
+
+        /** Error transitorio: reintentar, el render GPU sigue vivo. */
+        const val ESTADO_REINTENTAR = 1
+
+        /** Fallo fatal: el render GPU se perdió. */
+        const val ESTADO_FALLO = 2
+
+        /** Intentos para crear el renderizador antes de caer a CPU. */
+        const val INTENTOS_CREACION = 10
+
+        /** Intentos de cuadro antes de dar por perdido el render. */
+        const val INTENTOS_ESPERA = 250
     }
 }

@@ -10,11 +10,15 @@ import com.dibujo.core.BackendRender
 import com.dibujo.core.Camara
 import com.dibujo.core.Colores
 import com.dibujo.core.Cuantizador
+import com.dibujo.core.EstabilizadorTrazo
+import com.dibujo.core.FiltroImagen
+import com.dibujo.core.FiltrosImagen
 import com.dibujo.core.Herramienta
 import com.dibujo.core.Lapiz
 import com.dibujo.core.Lienzo
 import com.dibujo.core.Modo
 import com.dibujo.core.MotorDibujo
+import com.dibujo.core.Simetria
 import com.dibujo.core.Textura
 import com.dibujo.engine.Motores
 import kotlinx.coroutines.Dispatchers
@@ -56,6 +60,16 @@ data class DibujoEstado(
     val calcoEscala: Float = 1f,
     /** Se están ajustando la posición y el tamaño del calco con los gestos. */
     val calcoEnEdicion: Boolean = false,
+    /**
+     * Filtro aplicado a la imagen de calco (grises, contraste, umbral, bordes,
+     * quitar fondo...). Sirve para que la foto sea calicable de verdad.
+     */
+    val calcoFiltro: FiltroImagen = FiltroImagen.NINGUNO,
+    /**
+     * Ajuste del filtro de calco: umbral, contraste o sensibilidad según el
+     * filtro elegido (el rango lo da `FiltrosImagen.rango`).
+     */
+    val calcoAjuste: Int = 0,
     /** Backend gráfico elegido por el usuario (persistido). */
     val backendSeleccionado: BackendRender = BackendRender.AUTOMATICO,
     /** Backend que realmente corre según la selección y el soporte del equipo. */
@@ -119,6 +133,16 @@ data class DibujoEstado(
     val cuentagotasActivo: Boolean = false,
     /** Trazo asistido: las líneas dibujadas a mano se enderezan al soltar. */
     val asistenciaRecta: Boolean = false,
+    /**
+     * Simetría del trazo: el motor dibuja el trazo y sus reflejos respecto del
+     * centro de la hoja (vertical, horizontal o en las cuatro esquinas).
+     */
+    val simetria: Simetria = Simetria.NINGUNA,
+    /**
+     * Estabilizador de mano (0 = apagado): suaviza el temblor de los dedos al
+     * dibujar. El nivel va de 0 a 0,95 (cuanto más alto, más suave).
+     */
+    val estabilizador: Float = 0f,
     /** Valores con los que arranca un dibujo nuevo (configurables). */
     val herramientaInicial: Herramienta = Herramienta.LAPIZ,
     val grosorInicial: Int = 2,
@@ -193,6 +217,9 @@ class DibujoViewModel(app: Application) : AndroidViewModel(app) {
     private val grosorInicialPreferido = leerGrosorInicial()
     private val texturaInicialPreferida = leerTexturaInicial()
     private val limiteHistorialPreferido = leerLimiteHistorial()
+    private val estabilizadorPreferido = leerEstabilizador()
+    /** Suaviza los puntos de entrada para quitar el temblor de la mano. */
+    private val estabilizadorTrazo = EstabilizadorTrazo(estabilizadorPreferido)
     private val _estado = MutableStateFlow(
         DibujoEstado(
             lapiz = Lapiz(
@@ -210,6 +237,7 @@ class DibujoViewModel(app: Application) : AndroidViewModel(app) {
             vibracionActiva = preferencias.getBoolean(CLAVE_VIBRACION, true),
             sonidosActivos = preferencias.getBoolean(CLAVE_SONIDOS, false),
             limiteHistorial = limiteHistorialPreferido,
+            estabilizador = estabilizadorPreferido,
         ),
     )
     val estado: StateFlow<DibujoEstado> = _estado.asStateFlow()
@@ -224,6 +252,7 @@ class DibujoViewModel(app: Application) : AndroidViewModel(app) {
             val m = Motores.crear(vw.coerceIn(1, MAX_LADO), vh.coerceIn(1, MAX_LADO))
             m.configurarLapiz(_estado.value.lapiz)
             m.asistenciaRecta(_estado.value.asistenciaRecta)
+            m.simetria(_estado.value.simetria)
             m.limiteHistorial(_estado.value.limiteHistorial)
             motor = m
             publicarContenido(m)
@@ -291,6 +320,7 @@ class DibujoViewModel(app: Application) : AndroidViewModel(app) {
         val nuevo = Motores.crear(ancho.coerceIn(1, MAX_LADO), alto.coerceIn(1, MAX_LADO))
         nuevo.configurarLapiz(_estado.value.lapiz)
         nuevo.asistenciaRecta(_estado.value.asistenciaRecta)
+        nuevo.simetria(_estado.value.simetria)
         nuevo.limiteHistorial(_estado.value.limiteHistorial)
         nuevo.reemplazarHoja(pixeles)
         motor = nuevo
@@ -505,7 +535,12 @@ class DibujoViewModel(app: Application) : AndroidViewModel(app) {
     fun iniciarTrazo(px: Float, py: Float) {
         val m = motor ?: return
         if (_estado.value.modo != Modo.EDICION) return
-        val (hx, hy) = aHoja(m, px, py)
+        // El estabilizador trabaja en espacio de pantalla (allí el temblor de
+        // la mano mide siempre lo mismo) y recién después se pasa a la hoja.
+        estabilizadorTrazo.suavizado = _estado.value.estabilizador
+        estabilizadorTrazo.reiniciar()
+        estabilizadorTrazo.estabilizar(px, py)
+        val (hx, hy) = aHoja(m, estabilizadorTrazo.x, estabilizadorTrazo.y)
         m.iniciarTrazo(hx, hy)
         _estado.update { it.copy(trazoEnCurso = listOf(hx, hy), marco = it.marco + 1) }
     }
@@ -513,7 +548,9 @@ class DibujoViewModel(app: Application) : AndroidViewModel(app) {
     fun continuarTrazo(px: Float, py: Float) {
         val m = motor ?: return
         if (_estado.value.trazoEnCurso == null) return
-        val (hx, hy) = aHoja(m, px, py)
+        estabilizadorTrazo.suavizado = _estado.value.estabilizador
+        estabilizadorTrazo.estabilizar(px, py)
+        val (hx, hy) = aHoja(m, estabilizadorTrazo.x, estabilizadorTrazo.y)
         m.continuarTrazo(hx, hy)
         _estado.update {
             it.copy(
@@ -671,6 +708,36 @@ class DibujoViewModel(app: Application) : AndroidViewModel(app) {
         val nuevo = !_estado.value.asistenciaRecta
         m.asistenciaRecta(nuevo)
         _estado.update { it.copy(asistenciaRecta = nuevo) }
+    }
+
+    /**
+     * Enciende o apaga el **estabilizador de mano** (suaviza el temblor de
+     * los dedos). Apagado queda en 0; encendido vuelve al nivel por defecto.
+     * El nivel se guarda (como el resto de la configuración).
+     */
+    fun alternarEstabilizador() {
+        val actual = _estado.value.estabilizador
+        elegirEstabilizador(if (actual > 0f) 0f else ESTABILIZADOR_POR_DEFECTO)
+    }
+
+    /** Nivel del estabilizador de mano (0 = apagado, 1 = muy suave). */
+    fun elegirEstabilizador(nivel: Float) {
+        val valor = nivel.coerceIn(0f, ESTABILIZADOR_MAX)
+        preferencias.edit().putFloat(CLAVE_ESTABILIZADOR, valor).apply()
+        _estado.update { it.copy(estabilizador = valor) }
+    }
+
+    /**
+     * Cambia la **simetría** del trazo: apagada, vertical, horizontal o en las
+     * cuatro esquinas. El motor dibuja el trazo y sus reflejos al terminar, así
+     * el gesto sigue siendo un solo paso del historial.
+     */
+    fun alternarSimetria() {
+        val m = motor ?: return
+        val modos = Simetria.entries
+        val siguiente = modos[(_estado.value.simetria.ordinal + 1) % modos.size]
+        m.simetria(siguiente)
+        _estado.update { it.copy(simetria = siguiente) }
     }
 
     fun elegirHerramienta(herramienta: Herramienta) =
@@ -1979,6 +2046,30 @@ class DibujoViewModel(app: Application) : AndroidViewModel(app) {
         _estado.update { it.copy(calcoAlfa = alfa.coerceIn(0f, 1f)) }
     }
 
+    /**
+     * Elige el filtro de la imagen de calco (grises, contraste, umbral,
+     * invertir, realce de bordes o quitar el fondo). Cada filtro arranca con
+     * su ajuste por defecto; el ajuste fino se cambia con [cambiarAjusteCalco].
+     */
+    fun elegirFiltroCalco(filtro: FiltroImagen) {
+        _estado.update {
+            it.copy(
+                calcoFiltro = filtro,
+                calcoAjuste = FiltrosImagen.valorPorDefecto(filtro),
+                marco = it.marco + 1,
+            )
+        }
+    }
+
+    /**
+     * Cambia el ajuste del filtro de calco (umbral, contraste o sensibilidad,
+     * según el filtro). Se recorta al rango válido del filtro.
+     */
+    fun cambiarAjusteCalco(valor: Int) {
+        val rango = FiltrosImagen.rango(_estado.value.calcoFiltro)
+        _estado.update { it.copy(calcoAjuste = valor.coerceIn(rango.first, rango.last)) }
+    }
+
     /** Activa/desactiva el ajuste del calco (mover/escalar con los gestos). */
     fun alternarEdicionCalco() {
         if (_estado.value.calcoUri == null) return
@@ -2330,6 +2421,10 @@ class DibujoViewModel(app: Application) : AndroidViewModel(app) {
         preferencias.getInt(CLAVE_LIMITE_HISTORIAL, HISTORIAL_POR_DEFECTO)
             .coerceIn(LIMITE_HISTORIAL_MIN, LIMITE_HISTORIAL_MAX)
 
+    private fun leerEstabilizador(): Float =
+        preferencias.getFloat(CLAVE_ESTABILIZADOR, 0f)
+            .coerceIn(0f, ESTABILIZADOR_MAX)
+
     private companion object {
         /** Coincide con el límite de Lienzo. */
         const val MAX_LADO = 4096
@@ -2339,6 +2434,10 @@ class DibujoViewModel(app: Application) : AndroidViewModel(app) {
         const val LIMITE_HISTORIAL_MIN = 5
         const val LIMITE_HISTORIAL_MAX = 100
 
+        /** Nivel del estabilizador de mano (0 = apagado). */
+        const val ESTABILIZADOR_MAX = 0.95f
+        const val ESTABILIZADOR_POR_DEFECTO = 0.5f
+
         const val PREFERENCIAS = "dibujo_config"
         const val CLAVE_BACKEND = "backend_render"
         const val CLAVE_HERRAMIENTA_INICIAL = "herramienta_inicial"
@@ -2347,6 +2446,7 @@ class DibujoViewModel(app: Application) : AndroidViewModel(app) {
         const val CLAVE_VIBRACION = "vibracion"
         const val CLAVE_SONIDOS = "sonidos"
         const val CLAVE_LIMITE_HISTORIAL = "limite_historial"
+        const val CLAVE_ESTABILIZADOR = "estabilizador"
 
         /** Colores que se sugieren al analizar el calco. */
         const val K_COLORES_CALCO = 8

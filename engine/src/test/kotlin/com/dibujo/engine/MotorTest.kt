@@ -4,6 +4,7 @@ import com.dibujo.core.Camara
 import com.dibujo.core.Colores
 import com.dibujo.core.Herramienta
 import com.dibujo.core.Lapiz
+import com.dibujo.core.Simetria
 import com.dibujo.core.Textura
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -168,6 +169,111 @@ class MotorNativoTest {
             assertTrue(!m.puedeRehacer(), "${m.nombre}: futuro vacío")
             m.close()
         }
+    }
+
+    /**
+     * El historial guarda instantáneas **comprimidas** (RLE) de la hoja: con
+     * una hoja grande cada paso ocupaba megabytes y la app se quedaba sin
+     * memoria. La compresión es sin pérdida, así que deshacer y rehacer tienen
+     * que devolver exactamente la misma hoja en C++ y en Kotlin.
+     */
+    @Test
+    fun historialComprimidoParidadNativoKotlin() {
+        if (!NativeEngine.disponible()) return
+
+        val trazos = listOf(
+            listOf(2f to 2f, 20f to 6f),
+            listOf(3f to 12f, 18f to 10f),
+            listOf(5f to 5f, 6f to 6f, 7f to 5f),
+        )
+        val nativo = MotorNativo(24, 16)
+        val kotlin = MotorKotlin(24, 16)
+        for (m in listOf(nativo, kotlin)) {
+            m.configurarLapiz(Lapiz(color = Colores.AZUL, grosor = 2))
+            for (trazo in trazos) {
+                m.iniciarTrazo(trazo[0].first, trazo[0].second)
+                for (p in trazo.drop(1)) m.continuarTrazo(p.first, p.second)
+                assertTrue(m.terminarTrazo(), "${m.nombre}: trazo terminado")
+            }
+        }
+        assertEquals(hojaDe(kotlin), hojaDe(nativo), "las hojas difieren tras dibujar")
+
+        // Deshacer y rehacer paso a paso: las hojas deben coincidir siempre.
+        repeat(trazos.size) {
+            assertTrue(nativo.deshacer(), "nativo: deshacer ${it + 1}")
+            assertTrue(kotlin.deshacer(), "kotlin: deshacer ${it + 1}")
+            assertEquals(hojaDe(kotlin), hojaDe(nativo), "discrepancia al deshacer ${it + 1}")
+        }
+        assertTrue(!nativo.puedeDeshacer(), "nativo: historial vacío")
+        assertTrue(!kotlin.puedeDeshacer(), "kotlin: historial vacío")
+
+        repeat(trazos.size) {
+            assertTrue(nativo.rehacer(), "nativo: rehacer ${it + 1}")
+            assertTrue(kotlin.rehacer(), "kotlin: rehacer ${it + 1}")
+            assertEquals(hojaDe(kotlin), hojaDe(nativo), "discrepancia al rehacer ${it + 1}")
+        }
+        nativo.close()
+        kotlin.close()
+    }
+
+    /** Copia la hoja de un motor como lista de píxeles (para comparar). */
+    private fun hojaDe(m: com.dibujo.core.MotorDibujo): List<Int> {
+        val buffer = IntArray(m.ancho * m.alto)
+        assertTrue(m.copiarHoja(buffer), "${m.nombre}: copiarHoja")
+        return buffer.toList()
+    }
+
+    /**
+     * La simetría dibuja el trazo y sus reflejos respecto del centro de la
+     * hoja: el motor tiene que hacerlo igual en C++ y en Kotlin (el reflejo es
+     * una resta, así que no hay diferencias de coma flotante).
+     */
+    @Test
+    fun simetriaParidadNativoKotlin() {
+        if (!NativeEngine.disponible()) return
+
+        for (modo in Simetria.entries) {
+            val nativo = MotorNativo(24, 16)
+            val kotlin = MotorKotlin(24, 16)
+            for (m in listOf(nativo, kotlin)) {
+                m.simetria(modo)
+                m.configurarLapiz(Lapiz(color = Colores.ROJO, grosor = 2))
+                m.iniciarTrazo(3f, 2f)
+                m.continuarTrazo(8f, 6f)
+                m.continuarTrazo(5f, 12f)
+                assertTrue(m.terminarTrazo(), "${m.nombre}: trazo terminado")
+            }
+            assertEquals(
+                hojaDe(kotlin),
+                hojaDe(nativo),
+                "discrepancia con simetría $modo",
+            )
+            nativo.close()
+            kotlin.close()
+        }
+    }
+
+    /** Sin simetría no hay reflejos; con simetría vertical, sí. */
+    @Test
+    fun simetriaDibujaElReflejoEnKotlin() {
+        val trazo = listOf(3f to 2f, 8f to 6f)
+        val normal = MotorKotlin(24, 16)
+        normal.configurarLapiz(Lapiz(color = Colores.ROJO, grosor = 2))
+        normal.iniciarTrazo(trazo[0].first, trazo[0].second)
+        normal.continuarTrazo(trazo[1].first, trazo[1].second)
+        assertTrue(normal.terminarTrazo())
+        assertEquals(Colores.BLANCO, normal.pixelHoja(20, 2), "sin simetría no hay reflejo")
+
+        val simetrico = MotorKotlin(24, 16)
+        simetrico.simetria(Simetria.VERTICAL)
+        simetrico.configurarLapiz(Lapiz(color = Colores.ROJO, grosor = 2))
+        simetrico.iniciarTrazo(trazo[0].first, trazo[0].second)
+        simetrico.continuarTrazo(trazo[1].first, trazo[1].second)
+        assertTrue(simetrico.terminarTrazo())
+        assertEquals(Colores.ROJO, simetrico.pixelHoja(20, 2), "el reflejo vertical se dibuja")
+        assertEquals(Colores.ROJO, simetrico.pixelHoja(3, 2), "el trazo original se dibuja")
+        normal.close()
+        simetrico.close()
     }
 
     @Test

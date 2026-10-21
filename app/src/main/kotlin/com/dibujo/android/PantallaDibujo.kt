@@ -66,11 +66,11 @@ import androidx.compose.material.icons.rounded.Delete
 import androidx.compose.material.icons.rounded.Draw
 import androidx.compose.material.icons.rounded.Edit
 import androidx.compose.material.icons.rounded.FormatColorFill
+import androidx.compose.material.icons.rounded.Flip
 import androidx.compose.material.icons.rounded.Gesture
 import androidx.compose.material.icons.rounded.Layers
 import androidx.compose.material.icons.rounded.Mode
 import androidx.compose.material.icons.rounded.MoreHoriz
-import androidx.compose.material.icons.rounded.MoreVert
 import androidx.compose.material.icons.rounded.OpenInFull
 import androidx.compose.material.icons.rounded.OpenWith
 import androidx.compose.material.icons.rounded.PanTool
@@ -90,8 +90,6 @@ import androidx.compose.material.icons.rounded.VisibilityOff
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilterChipDefaults
@@ -112,6 +110,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.lightColorScheme
+import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
@@ -121,6 +120,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
@@ -165,6 +165,7 @@ import com.dibujo.core.Herramienta
 import com.dibujo.core.Lapiz
 import com.dibujo.core.Modo
 import com.dibujo.core.Punta
+import com.dibujo.core.Simetria
 import com.dibujo.core.Textura
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -399,6 +400,41 @@ fun PantallaDibujo(
         if (!ok) Toast.makeText(contexto, textoCompartirError, Toast.LENGTH_SHORT).show()
     }
 
+    // Vectoriza el dibujo y lo comparte como SVG: el resultado son vectores
+    // editables (se pueden abrir y modificar en cualquier editor de dibujo).
+    // La vectorización es un trabajo pesado (recorre la hoja entera), así que
+    // corre fuera del hilo principal.
+    fun compartirSvg() {
+        val ancho = estadoState.value.hojaAncho
+        val alto = estadoState.value.hojaAlto
+        if (ancho <= 0 || alto <= 0) return
+        exportando = true
+        alcance.launch {
+            val svg = withContext(Dispatchers.Default) {
+                runCatching {
+                    val pixeles = IntArray(ancho * alto)
+                    if (!vm.copiarHojaConObjetosVivos(pixeles)) return@runCatching null
+                    com.dibujo.core.VectorizadorHoja.aSvg(pixeles, ancho, alto, Colores.BLANCO)
+                }.getOrNull()
+            }
+            exportando = false
+            mostrarExportar = false
+            if (svg == null) {
+                Toast.makeText(contexto, textoExportadoError, Toast.LENGTH_SHORT).show()
+                return@launch
+            }
+            val marca = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date())
+            val ok = ExportadorGaleria.compartirArchivo(
+                contexto,
+                svg.toByteArray(Charsets.UTF_8),
+                "dibujo_$marca",
+                "svg",
+                "image/svg+xml",
+            )
+            if (!ok) Toast.makeText(contexto, textoCompartirError, Toast.LENGTH_SHORT).show()
+        }
+    }
+
     // En API < 29 hace falta WRITE_EXTERNAL_STORAGE; desde Android 10 (Q) el
     // guardado por MediaStore no pide permisos. Compartir no usa permisos.
     val permisoEscritura = rememberLauncherForActivityResult(
@@ -414,8 +450,6 @@ fun PantallaDibujo(
             ).show()
         }
     }
-
-    val alExportar = { mostrarExportar = true }
 
     // Al abrir el diálogo o cambiar el interruptor de recorte se (re)arma el
     // PNG con ese ajuste. Se hace acá y no en el clic para que el interruptor
@@ -476,20 +510,6 @@ fun PantallaDibujo(
                 alDeshacer = vm::deshacer,
                 alRehacer = vm::rehacer,
                 alCentrar = vm::centrar,
-                alEnderezar = vm::enderezar,
-                alLimpiar = { mostrarLimpiar = true },
-                alGuardar = { guardarEnApp() },
-                alExportar = alExportar,
-                alImportarImagen = {
-                    elegirImagen.launch(
-                        PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly),
-                    )
-                },
-                alAjustarLienzo = { mostrarAjustarLienzo = true },
-                alTransformar = { mostrarTransformar = true },
-                alAlternarAsistencia = vm::alternarAsistenciaRecta,
-                exportando = exportando,
-                alAbrirConfig = alAbrirOpciones,
             )
         },
         bottomBar = {
@@ -556,6 +576,8 @@ fun PantallaDibujo(
             },
             alAlternar = vm::alternarCalco,
             alCambiarAlfa = vm::cambiarCalcoAlfa,
+            alElegirFiltro = vm::elegirFiltroCalco,
+            alCambiarAjuste = vm::cambiarAjusteCalco,
             alAlternarEdicion = {
                 vm.alternarEdicionCalco()
                 // Se cierra para poder mover/escalar la imagen con los gestos.
@@ -616,6 +638,7 @@ fun PantallaDibujo(
             },
             alGuardar = alGuardarEnGaleria,
             alCompartir = { compartirExportacion() },
+            alExportarSvg = { compartirSvg() },
             alCerrar = {
                 mostrarExportar = false
                 imagenLista = null
@@ -657,6 +680,7 @@ fun PantallaDibujo(
     if (mostrarMasHerramientas) {
         HojaHerramientasHoja(
             estado = estado,
+            exportando = exportando,
             alCerrar = { mostrarMasHerramientas = false },
             alElegirImagen = {
                 mostrarMasHerramientas = false
@@ -687,6 +711,38 @@ fun PantallaDibujo(
             alAbrirTextura = {
                 mostrarMasHerramientas = false
                 mostrarTextura = true
+            },
+            // Los interruptores dejan la hoja abierta para ver la tilde.
+            alEnderezar = vm::enderezar,
+            alAlternarAsistencia = vm::alternarAsistenciaRecta,
+            alAlternarEstabilizador = vm::alternarEstabilizador,
+            alAlternarSimetria = vm::alternarSimetria,
+            alGuardar = { guardarEnApp() },
+            alImportarImagen = {
+                mostrarMasHerramientas = false
+                elegirImagen.launch(
+                    PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly),
+                )
+            },
+            alAjustarLienzo = {
+                mostrarMasHerramientas = false
+                mostrarAjustarLienzo = true
+            },
+            alTransformar = {
+                mostrarMasHerramientas = false
+                mostrarTransformar = true
+            },
+            alExportar = {
+                mostrarMasHerramientas = false
+                mostrarExportar = true
+            },
+            alLimpiar = {
+                mostrarMasHerramientas = false
+                mostrarLimpiar = true
+            },
+            alAbrirConfig = {
+                mostrarMasHerramientas = false
+                alAbrirOpciones()
             },
         )
     }
@@ -732,11 +788,17 @@ fun PantallaDibujo(
 
 /**
  * Barra superior sobria: volver, título, deshacer/rehacer y centrar a la
- * vista; todo lo demás (enderezar, trazo asistido, guardar, importar, ajustar
- * lienzo, transformar, exportar, limpiar y configuración) vive en el menú de
- * "más opciones". Antes había cinco iconos sueltos y el título quedaba
- * aplastado ("Dib…", con el motor en una segunda línea). El título se acota a
- * una línea con elipsis por si igual falta espacio.
+ * vista. Todo lo demás (enderezar, trazo asistido, estabilizador, simetría,
+ * guardar, importar, ajustar lienzo, transformar, expandir, exportar, limpiar
+ * y configuración) vive en la hoja inferior **"Herramientas de la hoja"**, que
+ * se abre con el botón "…" de la barra de dibujo. Antes esas acciones estaban
+ * en un `DropdownMenu` ("más opciones") de la barra superior; ahora comparten
+ * un único lugar con el calco, el texto, la textura y la IA local, para que
+ * el usuario no tenga que buscarlas en dos sitios distintos.
+ *
+ * Antes había cinco iconos sueltos y el título quedaba aplastado ("Dib…",
+ * con el motor en una segunda línea). El título se acota a una línea con
+ * elipsis por si igual falta espacio.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -746,18 +808,7 @@ private fun BarraSuperior(
     alDeshacer: () -> Unit,
     alRehacer: () -> Unit,
     alCentrar: () -> Unit,
-    alEnderezar: () -> Unit,
-    alLimpiar: () -> Unit,
-    alGuardar: () -> Unit,
-    alExportar: () -> Unit,
-    alImportarImagen: () -> Unit,
-    alAjustarLienzo: () -> Unit,
-    alTransformar: () -> Unit,
-    alAlternarAsistencia: () -> Unit,
-    exportando: Boolean,
-    alAbrirConfig: () -> Unit,
 ) {
-    var menuAbierto by remember { mutableStateOf(false) }
     TopAppBar(
         modifier = Modifier.absorberToque(),
         navigationIcon = {
@@ -793,123 +844,6 @@ private fun BarraSuperior(
                 descripcion = stringResource(R.string.cd_centrar),
                 alPulsar = alCentrar,
             )
-            Box {
-                BotonIcono(
-                    icono = Icons.Rounded.MoreVert,
-                    descripcion = stringResource(R.string.cd_mas_opciones),
-                    alPulsar = { menuAbierto = true },
-                )
-                DropdownMenu(
-                    expanded = menuAbierto,
-                    onDismissRequest = { menuAbierto = false },
-                ) {
-                    // Vista: enderezar y trazo asistido.
-                    DropdownMenuItem(
-                        text = { Text(stringResource(R.string.cd_enderezar)) },
-                        leadingIcon = {
-                            Icon(Icons.Rounded.ScreenRotation, contentDescription = null)
-                        },
-                        enabled = estado.camara.rotacion != 0f,
-                        onClick = {
-                            menuAbierto = false
-                            alEnderezar()
-                        },
-                    )
-                    DropdownMenuItem(
-                        text = { Text(stringResource(R.string.cd_asistencia_recta)) },
-                        leadingIcon = {
-                            Icon(
-                                Icons.AutoMirrored.Rounded.TrendingFlat,
-                                contentDescription = null,
-                            )
-                        },
-                        trailingIcon = if (estado.asistenciaRecta) {
-                            { Icon(Icons.Rounded.Check, contentDescription = null) }
-                        } else {
-                            null
-                        },
-                        onClick = {
-                            menuAbierto = false
-                            alAlternarAsistencia()
-                        },
-                    )
-                    HorizontalDivider()
-                    // Hoja: guardar, importar, tamaño y transformar.
-                    DropdownMenuItem(
-                        text = { Text(stringResource(R.string.guardar_en_app)) },
-                        leadingIcon = {
-                            Icon(Icons.Rounded.Save, contentDescription = null)
-                        },
-                        onClick = {
-                            menuAbierto = false
-                            alGuardar()
-                        },
-                    )
-                    DropdownMenuItem(
-                        text = { Text(stringResource(R.string.importar_imagen)) },
-                        leadingIcon = {
-                            Icon(Icons.Rounded.PhotoLibrary, contentDescription = null)
-                        },
-                        onClick = {
-                            menuAbierto = false
-                            alImportarImagen()
-                        },
-                    )
-                    DropdownMenuItem(
-                        text = { Text(stringResource(R.string.lienzo_ajustar_titulo)) },
-                        leadingIcon = {
-                            Icon(Icons.Rounded.AspectRatio, contentDescription = null)
-                        },
-                        onClick = {
-                            menuAbierto = false
-                            alAjustarLienzo()
-                        },
-                    )
-                    DropdownMenuItem(
-                        text = { Text(stringResource(R.string.transformar_titulo)) },
-                        leadingIcon = {
-                            Icon(Icons.Rounded.Transform, contentDescription = null)
-                        },
-                        onClick = {
-                            menuAbierto = false
-                            alTransformar()
-                        },
-                    )
-                    DropdownMenuItem(
-                        text = { Text(stringResource(R.string.cd_exportar)) },
-                        leadingIcon = {
-                            Icon(Icons.Rounded.SaveAlt, contentDescription = null)
-                        },
-                        enabled = !exportando,
-                        onClick = {
-                            menuAbierto = false
-                            alExportar()
-                        },
-                    )
-                    HorizontalDivider()
-                    // Acción destructiva y configuración, al final.
-                    DropdownMenuItem(
-                        text = { Text(stringResource(R.string.cd_limpiar)) },
-                        leadingIcon = {
-                            Icon(Icons.Rounded.Delete, contentDescription = null)
-                        },
-                        onClick = {
-                            menuAbierto = false
-                            alLimpiar()
-                        },
-                    )
-                    DropdownMenuItem(
-                        text = { Text(stringResource(R.string.config_titulo)) },
-                        leadingIcon = {
-                            Icon(Icons.Rounded.Settings, contentDescription = null)
-                        },
-                        onClick = {
-                            menuAbierto = false
-                            alAbrirConfig()
-                        },
-                    )
-                }
-            }
         },
         colors = TopAppBarDefaults.topAppBarColors(
             containerColor = MaterialTheme.colorScheme.surface,
@@ -954,6 +888,7 @@ private fun DialogoExportar(
     alCambiarRecorte: (Boolean) -> Unit,
     alGuardar: () -> Unit,
     alCompartir: () -> Unit,
+    alExportarSvg: () -> Unit,
     alCerrar: () -> Unit,
 ) {
     AlertDialog(
@@ -991,10 +926,19 @@ private fun DialogoExportar(
                         Text(stringResource(R.string.exportar_calculando))
                     }
                 }
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    stringResource(R.string.exportar_svg_desc),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
             }
         },
         confirmButton = {
             Row {
+                TextButton(onClick = alExportarSvg, enabled = !calculando) {
+                    Text(stringResource(R.string.exportar_svg))
+                }
                 TextButton(onClick = alCompartir, enabled = peso != null) {
                     Text(stringResource(R.string.exportar_compartir))
                 }
@@ -1343,8 +1287,64 @@ private fun CapaGestos(
                     join = if (redonda) StrokeJoin.Round else StrokeJoin.Miter,
                 ),
             )
+            // Simetría: los reflejos se ven mientras se dibuja (el motor los
+            // dibuja al soltar). El reflejo es en coordenadas de hoja, igual
+            // que en el motor: `x' = (ancho - 1) - x`.
+            val simetria = estado.simetria
+            if (simetria != Simetria.NINGUNA &&
+                estado.hojaAncho > 0 && estado.hojaAlto > 0
+            ) {
+                val vertical = simetria == Simetria.VERTICAL || simetria == Simetria.CUADRADA
+                val horizontal = simetria == Simetria.HORIZONTAL || simetria == Simetria.CUADRADA
+                val reflejos = buildList {
+                    if (vertical) add(true to false)
+                    if (horizontal) add(false to true)
+                    if (vertical && horizontal) add(true to true)
+                }
+                reflejos.forEach { (ejeX, ejeY) ->
+                    val reflejo = Path()
+                    val inicio = puntoReflejado(trazo, 0, ejeX, ejeY, estado)
+                    val primero = aPantallaCamara(camara, inicio.first, inicio.second)
+                    reflejo.moveTo(primero.x, primero.y)
+                    var j = 2
+                    while (j + 1 < trazo.size) {
+                        val p = puntoReflejado(trazo, j, ejeX, ejeY, estado)
+                        val enPantalla = aPantallaCamara(camara, p.first, p.second)
+                        reflejo.lineTo(enPantalla.x, enPantalla.y)
+                        j += 2
+                    }
+                    drawPath(
+                        reflejo,
+                        color = colorTrazo,
+                        style = Stroke(
+                            width = grosorTrazo * camara.zoom,
+                            cap = if (redonda) StrokeCap.Round else StrokeCap.Butt,
+                            join = if (redonda) StrokeJoin.Round else StrokeJoin.Miter,
+                        ),
+                    )
+                }
+            }
         }
     }
+}
+
+/**
+ * Punto del trazo reflejado respecto del centro de la hoja: en vertical,
+ * `x' = (ancho - 1) - x`; en horizontal, `y' = (alto - 1) - y`. Es la misma
+ * cuenta que hace el motor (paridad).
+ */
+private fun puntoReflejado(
+    trazo: List<Float>,
+    indice: Int,
+    ejeX: Boolean,
+    ejeY: Boolean,
+    estado: DibujoEstado,
+): Pair<Float, Float> {
+    var x = trazo[indice]
+    var y = trazo[indice + 1]
+    if (ejeX) x = (estado.hojaAncho - 1) - x
+    if (ejeY) y = (estado.hojaAlto - 1) - y
+    return x to y
 }
 
 /** Punto de pantalla de una coordenada de hoja según la cámara (con rotación). */
@@ -1372,17 +1372,37 @@ private fun CapaCalco(
     val estado = estadoState.value
     val uri = estado.calcoUri
     val contexto = LocalContext.current
-    val bitmap = remember(uri) {
-        uri?.let { ruta -> cargarBitmap(contexto, Uri.parse(ruta)) }
+    val filtro = estado.calcoFiltro
+    val ajuste = estado.calcoAjuste
+    // La imagen se decodifica y se filtra fuera del hilo principal (filtrar
+    // una foto de 2048 px es un trabajo pesado). Mientras se recalcula se
+    // mantiene la imagen anterior: no parpadea la capa.
+    val bitmap by produceState<Bitmap?>(null, uri, filtro, ajuste) {
+        if (uri == null) {
+            value = null
+            return@produceState
+        }
+        val base = withContext(Dispatchers.IO) {
+            cargarBitmap(contexto, Uri.parse(uri))
+        } ?: return@produceState
+        value = if (filtro == com.dibujo.core.FiltroImagen.NINGUNO) {
+            base
+        } else {
+            withContext(Dispatchers.Default) {
+                filtrarBitmap(base, filtro, ajuste)
+            }
+        }
     }
-    if (bitmap == null || !estado.calcoVisible ||
+    // La imagen filtrada (o la original si no hay filtro).
+    val imagenBitmap = bitmap
+    if (imagenBitmap == null || !estado.calcoVisible ||
         estado.hojaAncho <= 0 || estado.hojaAlto <= 0
     ) {
         return
     }
     val descripcion = stringResource(R.string.cd_calco)
     Canvas(modifier.semantics { contentDescription = descripcion }) {
-        val imagen = bitmap.asImageBitmap()
+        val imagen = imagenBitmap.asImageBitmap()
         if (imagen.width <= 0 || imagen.height <= 0) return@Canvas
         val cam = estado.camara
         // Ajuste natural (encaja la imagen en la hoja) por la escala del usuario.
@@ -2105,13 +2125,25 @@ private fun DialogoTexto(
 }
 
 /**
- * Hoja inferior con las acciones secundarias sobre la hoja: calco, texto,
- * textura del trazo, herramientas con IA local y expandir el lienzo.
+ * Hoja inferior con **todas** las herramientas de la hoja: calco, ayudas al
+ * trazo, texto, textura, IA local y las acciones sobre el lienzo (guardar,
+ * importar, ajustar, transformar, expandir, exportar, limpiar y configuración).
+ *
+ * Antes esas acciones vivían en el `DropdownMenu` ("más opciones") de la barra
+ * superior y el calco/texto/textura/IA en esta hoja: dos lugares distintos
+ * para lo mismo. Ahora está todo junto, ordenado en bloques y con scroll (son
+ * muchas más filas que antes, así que la hoja ocupa la pantalla y se
+ * desplaza).
+ *
+ * Las filas que sólo cambian un estado (toggles) dejan la hoja abierta para
+ * que se vea la tilde; las que abren un diálogo o el selector del sistema
+ * cierran la hoja primero.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun HojaHerramientasHoja(
     estado: DibujoEstado,
+    exportando: Boolean,
     alCerrar: () -> Unit,
     alElegirImagen: () -> Unit,
     alAlternarCalco: () -> Unit,
@@ -2120,11 +2152,29 @@ private fun HojaHerramientasHoja(
     alAbrirExpandir: () -> Unit,
     alAbrirTexto: () -> Unit,
     alAbrirTextura: () -> Unit,
+    alEnderezar: () -> Unit,
+    alAlternarAsistencia: () -> Unit,
+    alAlternarEstabilizador: () -> Unit,
+    alAlternarSimetria: () -> Unit,
+    alGuardar: () -> Unit,
+    alImportarImagen: () -> Unit,
+    alAjustarLienzo: () -> Unit,
+    alTransformar: () -> Unit,
+    alExportar: () -> Unit,
+    alLimpiar: () -> Unit,
+    alAbrirConfig: () -> Unit,
 ) {
-    ModalBottomSheet(onDismissRequest = alCerrar) {
+    val etiquetaActiva = stringResource(R.string.opcion_activa)
+    // La hoja es larga: se abre completa y el contenido se desplaza dentro.
+    val estadoHoja = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    ModalBottomSheet(
+        onDismissRequest = alCerrar,
+        sheetState = estadoHoja,
+    ) {
         Column(
             Modifier
                 .fillMaxWidth()
+                .verticalScroll(rememberScrollState())
                 .padding(horizontal = 12.dp)
                 .padding(bottom = 24.dp),
         ) {
@@ -2133,6 +2183,7 @@ private fun HojaHerramientasHoja(
                 style = MaterialTheme.typography.titleMedium,
                 modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
             )
+            // Calco: elegir la imagen, mostrarla/ocultarla y ajustarla.
             AccionHoja(
                 icono = Icons.Rounded.AddPhotoAlternate,
                 etiqueta = stringResource(R.string.cd_calco_elegir),
@@ -2155,6 +2206,36 @@ private fun HojaHerramientasHoja(
                 alPulsar = alAbrirCalco,
             )
             HorizontalDivider(Modifier.padding(vertical = 4.dp))
+            // Ayudas al trazo: enderezar la vista y los tres auxiliares.
+            AccionHoja(
+                icono = Icons.Rounded.ScreenRotation,
+                etiqueta = stringResource(R.string.cd_enderezar),
+                habilitado = estado.camara.rotacion != 0f,
+                alPulsar = alEnderezar,
+            )
+            AccionHoja(
+                icono = Icons.AutoMirrored.Rounded.TrendingFlat,
+                etiqueta = stringResource(R.string.cd_asistencia_recta),
+                marcada = estado.asistenciaRecta,
+                etiquetaActivada = etiquetaActiva,
+                alPulsar = alAlternarAsistencia,
+            )
+            AccionHoja(
+                icono = Icons.Rounded.Gesture,
+                etiqueta = stringResource(R.string.cd_estabilizador),
+                marcada = estado.estabilizador > 0f,
+                etiquetaActivada = etiquetaActiva,
+                alPulsar = alAlternarEstabilizador,
+            )
+            AccionHoja(
+                icono = Icons.Rounded.Flip,
+                etiqueta = stringResource(R.string.cd_simetria),
+                marcada = estado.simetria != Simetria.NINGUNA,
+                etiquetaActivada = etiquetaActiva,
+                alPulsar = alAlternarSimetria,
+            )
+            HorizontalDivider(Modifier.padding(vertical = 4.dp))
+            // Contenido de la hoja: texto, textura del trazo e IA local.
             AccionHoja(
                 icono = Icons.Rounded.TextFields,
                 etiqueta = stringResource(R.string.cd_texto),
@@ -2179,10 +2260,50 @@ private fun HojaHerramientasHoja(
                 etiqueta = stringResource(R.string.cd_ia_local),
                 alPulsar = alAbrirIa,
             )
+            HorizontalDivider(Modifier.padding(vertical = 4.dp))
+            // El lienzo: guardar, importar, tamaño, transformación y export.
+            AccionHoja(
+                icono = Icons.Rounded.Save,
+                etiqueta = stringResource(R.string.guardar_en_app),
+                alPulsar = alGuardar,
+            )
+            AccionHoja(
+                icono = Icons.Rounded.PhotoLibrary,
+                etiqueta = stringResource(R.string.importar_imagen),
+                alPulsar = alImportarImagen,
+            )
+            AccionHoja(
+                icono = Icons.Rounded.AspectRatio,
+                etiqueta = stringResource(R.string.lienzo_ajustar_titulo),
+                alPulsar = alAjustarLienzo,
+            )
+            AccionHoja(
+                icono = Icons.Rounded.Transform,
+                etiqueta = stringResource(R.string.transformar_titulo),
+                alPulsar = alTransformar,
+            )
             AccionHoja(
                 icono = Icons.Rounded.OpenInFull,
                 etiqueta = stringResource(R.string.cd_expandir),
                 alPulsar = alAbrirExpandir,
+            )
+            AccionHoja(
+                icono = Icons.Rounded.SaveAlt,
+                etiqueta = stringResource(R.string.cd_exportar),
+                habilitado = !exportando,
+                alPulsar = alExportar,
+            )
+            HorizontalDivider(Modifier.padding(vertical = 4.dp))
+            // Acción destructiva y configuración, al final.
+            AccionHoja(
+                icono = Icons.Rounded.Delete,
+                etiqueta = stringResource(R.string.cd_limpiar),
+                alPulsar = alLimpiar,
+            )
+            AccionHoja(
+                icono = Icons.Rounded.Settings,
+                etiqueta = stringResource(R.string.config_titulo),
+                alPulsar = alAbrirConfig,
             )
         }
     }
@@ -2196,6 +2317,8 @@ private fun AccionHoja(
     alPulsar: () -> Unit,
     habilitado: Boolean = true,
     vistaPrevia: (@Composable () -> Unit)? = null,
+    marcada: Boolean = false,
+    etiquetaActivada: String = "",
 ) {
     Row(
         Modifier
@@ -2203,7 +2326,13 @@ private fun AccionHoja(
             .clip(MaterialTheme.shapes.medium)
             .clickable(enabled = habilitado, onClick = alPulsar)
             .padding(horizontal = 12.dp, vertical = 14.dp)
-            .semantics { contentDescription = etiqueta },
+            .semantics {
+                contentDescription = if (marcada && etiquetaActivada.isNotEmpty()) {
+                    "$etiqueta, $etiquetaActivada"
+                } else {
+                    etiqueta
+                }
+            },
         verticalAlignment = Alignment.CenterVertically,
     ) {
         if (vistaPrevia != null) {
@@ -2228,7 +2357,15 @@ private fun AccionHoja(
             } else {
                 MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.38f)
             },
+            modifier = Modifier.weight(1f),
         )
+        if (marcada) {
+            Icon(
+                imageVector = Icons.Rounded.Check,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.primary,
+            )
+        }
     }
 }
 
@@ -2479,16 +2616,29 @@ private fun DialogoCalco(
     alElegirImagen: () -> Unit,
     alAlternar: () -> Unit,
     alCambiarAlfa: (Float) -> Unit,
+    alElegirFiltro: (com.dibujo.core.FiltroImagen) -> Unit,
+    alCambiarAjuste: (Int) -> Unit,
     alAlternarEdicion: () -> Unit,
     alCentrar: () -> Unit,
     alQuitar: () -> Unit,
     alCerrar: () -> Unit,
 ) {
+    val filtros = listOf(
+        com.dibujo.core.FiltroImagen.NINGUNO to R.string.calco_filtro_ninguno,
+        com.dibujo.core.FiltroImagen.GRIS to R.string.calco_filtro_gris,
+        com.dibujo.core.FiltroImagen.CONTRASTE to R.string.calco_filtro_contraste,
+        com.dibujo.core.FiltroImagen.UMBRAL to R.string.calco_filtro_umbral,
+        com.dibujo.core.FiltroImagen.INVERTIR to R.string.calco_filtro_invertir,
+        com.dibujo.core.FiltroImagen.BORDES to R.string.calco_filtro_bordes,
+        com.dibujo.core.FiltroImagen.SIN_FONDO to R.string.calco_filtro_sin_fondo,
+    )
+    val rangoAjuste = com.dibujo.core.FiltrosImagen.rango(estado.calcoFiltro)
+    val hayAjuste = rangoAjuste.first != rangoAjuste.last
     AlertDialog(
         onDismissRequest = alCerrar,
         title = { Text(stringResource(R.string.calco_titulo)) },
         text = {
-            Column {
+            Column(Modifier.verticalScroll(rememberScrollState())) {
                 Text(
                     stringResource(R.string.calco_descripcion),
                     style = MaterialTheme.typography.bodySmall,
@@ -2501,6 +2651,41 @@ private fun DialogoCalco(
                     ),
                     style = MaterialTheme.typography.bodyMedium,
                 )
+                Spacer(Modifier.height(12.dp))
+                Text(
+                    stringResource(R.string.calco_filtro_titulo),
+                    style = MaterialTheme.typography.labelLarge,
+                )
+                Text(
+                    stringResource(R.string.calco_filtro_descripcion),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Row(
+                    Modifier.horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    filtros.forEach { (filtro, etiqueta) ->
+                        FilterChip(
+                            selected = estado.calcoFiltro == filtro,
+                            onClick = { alElegirFiltro(filtro) },
+                            enabled = estado.calcoUri != null,
+                            label = { Text(stringResource(etiqueta)) },
+                        )
+                    }
+                }
+                if (hayAjuste) {
+                    Text(
+                        stringResource(etiquetaAjusteCalco(estado.calcoFiltro), estado.calcoAjuste),
+                        style = MaterialTheme.typography.labelLarge,
+                    )
+                    Slider(
+                        value = estado.calcoAjuste.toFloat(),
+                        onValueChange = { alCambiarAjuste(it.roundToInt()) },
+                        valueRange = rangoAjuste.first.toFloat()..rangoAjuste.last.toFloat(),
+                        enabled = estado.calcoUri != null,
+                    )
+                }
                 Spacer(Modifier.height(8.dp))
                 Text(
                     stringResource(
@@ -2564,6 +2749,17 @@ private fun DialogoCalco(
             }
         },
     )
+}
+
+/**
+ * Etiqueta del ajuste del filtro de calco: cada filtro tiene su propio
+ * parámetro (umbral, contraste, sensibilidad o fondo).
+ */
+private fun etiquetaAjusteCalco(filtro: com.dibujo.core.FiltroImagen): Int = when (filtro) {
+    com.dibujo.core.FiltroImagen.CONTRASTE -> R.string.calco_ajuste_contraste
+    com.dibujo.core.FiltroImagen.BORDES -> R.string.calco_ajuste_bordes
+    com.dibujo.core.FiltroImagen.SIN_FONDO -> R.string.calco_ajuste_fondo
+    else -> R.string.calco_ajuste_umbral
 }
 
 /**

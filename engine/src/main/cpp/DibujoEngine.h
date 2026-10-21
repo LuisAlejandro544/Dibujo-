@@ -9,11 +9,39 @@
 
 namespace dibujo {
 
+// Instantánea de la hoja para el historial, **comprimida**.
+//
+// Antes cada paso guardaba una copia completa de la hoja (4 bytes por píxel):
+// con una hoja de 1080×2000 son ~8,6 MB por paso y 30 pasos son ~260 MB; con
+// una hoja de 4096×4096 son 64 MB por paso (el total pasa de 2 GB y la app se
+// queda sin memoria antes de poder deshacer).
+//
+// Ahora se guarda con RLE: rachas de píxeles iguales, en pares (cantidad,
+// color). En una hoja de dibujo —mucho fondo del mismo color— la reducción es
+// enorme y el resultado es **exactamente el mismo**: no se pierde ni un píxel.
+// Cuando el RLE no conviene (imagen ruidosa) se guarda la copia cruda, así el
+// historial nunca ocupa más memoria que antes.
+//
+// La compresión es sin pérdida: deshacer y rehacer devuelven la hoja tal cual.
+// Replica `InstantaneaHoja` de Kotlin (paridad en `MotorTest`).
+struct Instantanea {
+    // Datos crudos, o RLE (cantidad, color, cantidad, color, ...) si comprime.
+    std::vector<uint32_t> datos;
+    bool comprimido = false;
+    std::size_t pixeles = 0;
+};
+
+// Comprime la hoja para guardarla en el historial (sin pérdida).
+Instantanea comprimirHoja(const std::vector<uint32_t>& hoja);
+
+// Restaura una instantánea sobre la hoja (sobrescribe lo que haya).
+void restaurarHoja(const Instantanea& instantanea, std::vector<uint32_t>& hoja);
+
 // Núcleo nativo de la app (C++): hoja, trazos, historial y cámara.
 //
 // La hoja es un buffer ARGB (0xAARRGGBB) con fondo blanco. Los trazos se
-// rasterizan con Bresenham + disco grueso. El historial usa snapshots
-// limitados de la hoja. La cámara (pan/zoom/rotación) permite el "modo
+// rasterizan con Bresenham + disco grueso. El historial usa instantáneas
+// comprimidas de la hoja. La cámara (pan/zoom/rotación) permite el "modo
 // moverse libremente" sin alterar el contenido de la hoja.
 class DibujoEngine {
 public:
@@ -35,6 +63,12 @@ public:
     // dibuja una recta entre el primer y el último punto (PINTAR no cambia).
     void fijarAsistenciaRecta(bool activa) { asistenciaRecta_ = activa; }
     bool asistenciaRecta() const { return asistenciaRecta_; }
+
+    // Simetría del trazo: al terminar, se dibujan también los reflejos del
+    // trazo respecto del centro de la hoja. Replica `Simetria` de Kotlin
+    // (paridad): el reflejo es una resta, sin trigonometría.
+    void fijarSimetria(Simetria simetria) { simetria_ = simetria; }
+    Simetria simetria() const { return simetria_; }
 
     // --- Trazo en curso (modo edición) ---
     void iniciarTrazo(float x, float y);
@@ -145,6 +179,7 @@ private:
     Tool herramienta_ = Tool::LAPIZ;
     Textura textura_ = Textura::LISA;
     bool asistenciaRecta_ = false;
+    Simetria simetria_ = Simetria::NINGUNA;
 
     // Cámara.
     float panX_ = 0.0f;
@@ -157,9 +192,9 @@ private:
     static constexpr float kZoomMin = 0.05f;
     static constexpr float kZoomMax = 64.0f;
 
-    // Historial (snapshots de la hoja completa).
-    std::vector<std::vector<uint32_t>> pasado_;
-    std::vector<std::vector<uint32_t>> futuro_;
+    // Historial (instantáneas comprimidas de la hoja completa).
+    std::vector<Instantanea> pasado_;
+    std::vector<Instantanea> futuro_;
     // Igual que el límite de Historial en Kotlin: hojas grandes por snapshot.
     static constexpr std::size_t kMaxHistorialPorDefecto = 30;
     std::size_t maxHistorial_ = kMaxHistorialPorDefecto;

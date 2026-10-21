@@ -32,6 +32,16 @@ enum class Modo : int {
     MOVER = 1,
 };
 
+// Simetría del trazo: el motor dibuja el trazo y sus reflejos respecto del
+// centro de la hoja. El valor entero viaja por JNI y el orden debe coincidir
+// con `com.dibujo.core.Simetria`.
+enum class Simetria : int {
+    NINGUNA = 0,
+    VERTICAL = 1,
+    HORIZONTAL = 2,
+    CUADRADA = 3,
+};
+
 // Color ARGB (0xAARRGGBB) + utilidades.
 inline uint32_t argb(int a, int r, int g, int b) {
     return (static_cast<uint32_t>(a & 0xFF) << 24) |

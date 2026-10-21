@@ -5,6 +5,8 @@ import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.net.Uri
 import com.dibujo.core.Colores
+import com.dibujo.core.FiltroImagen
+import com.dibujo.core.FiltrosImagen
 
 /** Lado máximo al que se reduce la imagen de calco al decodificarla. */
 const val MAX_CALCO = 2048
@@ -25,6 +27,24 @@ fun cargarBitmap(contexto: Context, uri: Uri): Bitmap? = runCatching {
     val opciones = BitmapFactory.Options().apply { inSampleSize = escala }
     resolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, opciones) }
 }.getOrNull()
+
+/**
+ * Aplica un [FiltroImagen] a un bitmap y devuelve otro con el resultado (el
+ * original queda intacto). El filtro vive en `:core` (`FiltrosImagen`), que
+ * trabaja sobre buffers ARGB: acá sólo se traduce de y hacia el bitmap.
+ */
+fun filtrarBitmap(bitmap: Bitmap, filtro: FiltroImagen, ajuste: Int): Bitmap {
+    if (filtro == FiltroImagen.NINGUNO) return bitmap
+    val ancho = bitmap.width
+    val alto = bitmap.height
+    if (ancho <= 0 || alto <= 0) return bitmap
+    val pixeles = IntArray(ancho * alto)
+    bitmap.getPixels(pixeles, 0, ancho, 0, 0, ancho, alto)
+    val filtrados = FiltrosImagen.aplicar(pixeles, ancho, alto, filtro, ajuste)
+    val salida = Bitmap.createBitmap(ancho, alto, Bitmap.Config.ARGB_8888)
+    salida.setPixels(filtrados, 0, ancho, 0, 0, ancho, alto)
+    return salida
+}
 
 /**
  * Recorta [pixeles] (ancho × alto ARGB) al recuadro que contiene lo dibujado,

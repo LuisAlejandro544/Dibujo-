@@ -54,6 +54,9 @@ class MotorNativo(
     override fun asistenciaRecta(activa: Boolean) =
         NativeEngine.nativoAsistenciaRecta(handle, activa)
 
+    override fun simetria(modo: com.dibujo.core.Simetria) =
+        NativeEngine.nativoSimetria(handle, modo.ordinal)
+
     override fun iniciarTrazo(x: Float, y: Float) = NativeEngine.nativoIniciarTrazo(handle, x, y)
     override fun continuarTrazo(x: Float, y: Float) = NativeEngine.nativoContinuarTrazo(handle, x, y)
     override fun terminarTrazo(): Boolean = NativeEngine.nativoTerminarTrazo(handle)

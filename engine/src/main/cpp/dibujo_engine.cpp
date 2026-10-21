@@ -55,6 +55,14 @@ Java_com_dibujo_engine_NativeEngine_nativoAsistenciaRecta(
 }
 
 JNIEXPORT void JNICALL
+Java_com_dibujo_engine_NativeEngine_nativoSimetria(
+        JNIEnv*, jobject, jlong handle, jint modo) {
+    auto* e = peer(handle);
+    if (e == nullptr) return;
+    e->fijarSimetria(static_cast<dibujo::Simetria>(modo));
+}
+
+JNIEXPORT void JNICALL
 Java_com_dibujo_engine_NativeEngine_nativoIniciarTrazo(
         JNIEnv*, jobject, jlong handle, jfloat x, jfloat y) {
     peer(handle)->iniciarTrazo(x, y);

@@ -34,6 +34,7 @@ fun PantallaOpcionesDibujo(
     alElegirHerramienta: (Herramienta) -> Unit,
     alElegirGrosor: (Int) -> Unit,
     alElegirTextura: (Textura) -> Unit,
+    alElegirEstabilizador: (Float) -> Unit,
     alVolver: () -> Unit,
 ) {
     MarcoOpcion(
@@ -89,6 +90,25 @@ fun PantallaOpcionesDibujo(
                 )
             }
         }
+
+        TituloSeccion(stringResource(R.string.config_estabilizador_titulo))
+        TextoAyuda(stringResource(R.string.config_estabilizador_desc))
+        var estabilizadorLocal by remember(estado.estabilizador) {
+            mutableFloatStateOf(estado.estabilizador)
+        }
+        Text(
+            stringResource(
+                R.string.config_estabilizador_valor,
+                (estabilizadorLocal * 100f).roundToInt(),
+            ),
+            style = MaterialTheme.typography.bodyMedium,
+        )
+        Slider(
+            value = estabilizadorLocal,
+            onValueChange = { estabilizadorLocal = it },
+            onValueChangeFinished = { alElegirEstabilizador(estabilizadorLocal) },
+            valueRange = 0f..ESTABILIZADOR_MAX,
+        )
     }
 }
 
@@ -109,3 +129,6 @@ private val TEXTURAS = listOf(
     Textura.TRAMA to R.string.textura_trama,
     Textura.SALPICADA to R.string.textura_salpicada,
 )
+
+/** Tope del estabilizador de mano (coincide con `EstabilizadorTrazo`). */
+private const val ESTABILIZADOR_MAX = 0.95f

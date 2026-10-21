@@ -13,7 +13,7 @@ garantizada por tests). Dos front-ends: consola JVM (`:ui`) y Android Compose
 
 | Ruta | Contenido |
 |---|---|
-| `core/src/main/kotlin/com/dibujo/core/` | Dominio: `Lienzo` (hoja ARGB ≤4096×4096, disco con antialiasing, `limpiarTrazos` con Zhang-Suen), `MotorDibujo` (fachada: trazado, cámara con rotación, expandir, copiarHoja, reemplazarHoja, limpiarTrazos), `Lapiz` (herramientas LAPIZ/PORTAMINA/CARBONCILLO/BORRADOR/PINTAR/DOBLE), `Colores` (58 colores, con neón/metálicos), `Cuantizador` (k-medias para la paleta del calco), `Modo`, `Historial`, `BackendRender`, `ComandoLinea` (parser). |
+| `core/src/main/kotlin/com/dibujo/core/` | Dominio: `Lienzo` (hoja ARGB ≤4096×4096, disco con antialiasing, `limpiarTrazos` con Zhang-Suen), `MotorDibujo` (fachada: trazado, cámara con rotación, expandir, copiarHoja, reemplazarHoja, limpiarTrazos), `Lapiz` (herramientas LAPIZ/PORTAMINA/CARBONCILLO/BORRADOR/PINTAR/DOBLE), `Colores` (58 colores, con neón/metálicos), `Cuantizador` (k-medias para la paleta del calco), `FiltrosImagen` (filtros del calco), `VectorizadorHoja` (hoja raster → SVG), `EstabilizadorTrazo` (suaviza el temblor de la mano), `Simetria`, `Modo`, `Historial` (instantáneas comprimidas), `BackendRender`, `ComandoLinea` (parser). |
 | `engine/src/main/kotlin/com/dibujo/engine/` | `Motores.crear()` → `MotorNativo` (JNI) o `MotorKotlin` (respaldo); `NativeEngine` declara los `external`. |
 | `engine/src/main/cpp/` | C++17: `DibujoEngine` (núcleo, disco antialiased), `dibujo_engine.cpp` (JNI), `gpu/` (`RenderizadorGL`, `RenderizadorVulkan`, `GpuJni.cpp`, shaders; sólo Android), `CMakeLists.txt` (JDK en escritorio, NDK en Android). |
 | `ui/` | Consola ANSI: `Main.kt`, `ControladorConsola` (`r`/`,` giran la hoja), `VistaHoja`, `Menu`. |

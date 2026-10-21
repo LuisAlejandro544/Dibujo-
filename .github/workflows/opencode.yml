@@ -311,7 +311,7 @@ jobs:
         uses: anomalyco/opencode/github@latest
         with:
           use_github_token: true
-          model: "opencode/beam-free"
+          model: "opencode/minimax-m3.1-flash-free"
           prompt: ${{ steps.prompt_resolver.outputs.resolved_prompt }}
         env:
           GITHUB_TOKEN: ${{ secrets.PAT_TOKEN }}

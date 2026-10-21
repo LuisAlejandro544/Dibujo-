@@ -369,8 +369,58 @@ class LapizTest {
         assertEquals(6, Lapiz(herramienta = Herramienta.BORRADOR, grosor = 2).grosorEfectivo())
         // PINTAR no ajusta el grosor (rellena, no traza).
         assertEquals(5, Lapiz(herramienta = Herramienta.PINTAR, grosor = 5).grosorEfectivo())
-        // DOBLE usa el grosor para cada una de sus dos líneas.
+        // DOBLE usa el grosor del trazo principal.
         assertEquals(5, Lapiz(herramienta = Herramienta.DOBLE, grosor = 5).grosorEfectivo())
+    }
+
+    @Test
+    fun dobleUsaElGrosorDelTrazoPrincipal() {
+        val lapiz = Lapiz(
+            grosor = 6,
+            herramienta = Herramienta.DOBLE,
+            herramientaPrincipal = Herramienta.PORTAMINA,
+        )
+        assertEquals(3, lapiz.grosorEfectivo())
+        // El acompañante tiene su propia herramienta (el carbóncillo engorda).
+        assertEquals(8, lapiz.grosorEfectivo(HerramientaDoble.CARBONCILLO.herramienta))
+        assertEquals(3, lapiz.grosorEfectivo(HerramientaDoble.PORTAMINA.herramienta))
+        assertEquals(6, lapiz.grosorEfectivo(HerramientaDoble.LAPIZ.herramienta))
+    }
+}
+
+class TrazoDobleTest {
+    /** Trazo horizontal de (0,0) a (10,0): hacia la derecha. */
+    private val horizontal = floatArrayOf(0f, 0f, 10f, 0f)
+
+    @Test
+    fun mismoLadoDevuelveLosMismosPuntos() {
+        val salida = TrazoDoble.desplazar(horizontal, horizontal.size, 4f, LadoDoble.MISMO)
+        assertEquals(horizontal.toList(), salida.toList())
+    }
+
+    @Test
+    fun izquierdaYDerechaSonSimetricos() {
+        val izq = TrazoDoble.desplazar(horizontal, horizontal.size, 4f, LadoDoble.IZQUIERDA)
+        val der = TrazoDoble.desplazar(horizontal, horizontal.size, 4f, LadoDoble.DERECHA)
+        // Al ir hacia la derecha, la izquierda del trazo es hacia arriba.
+        assertEquals(-4f, izq[1], 0.001f)
+        assertEquals(4f, der[1], 0.001f)
+        // La x no se mueve (el desplazamiento es perpendicular).
+        assertEquals(0f, izq[0], 0.001f)
+        assertEquals(10f, izq[2], 0.001f)
+    }
+
+    @Test
+    fun separacionCreceConElGrosor() {
+        assertEquals(2.5f, TrazoDoble.separacion(3), 0.001f)
+        assertEquals(4.5f, TrazoDoble.separacion(7), 0.001f)
+    }
+
+    @Test
+    fun desplazamientoDeUnSoloPuntoNoMueveNada() {
+        val punto = floatArrayOf(3f, 4f)
+        val salida = TrazoDoble.desplazar(punto, punto.size, 4f, LadoDoble.IZQUIERDA)
+        assertEquals(punto.toList(), salida.toList())
     }
 }
 

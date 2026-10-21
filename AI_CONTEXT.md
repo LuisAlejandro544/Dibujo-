@@ -96,15 +96,38 @@ ulp de la libm. De ahí salen (ver `README_AI.md`):
 - Límites de zoom: `ZOOM_MIN = 0.05`, `ZOOM_MAX = 64` (antes 0.25..8), en
   Kotlin y C++ (`kZoomMin`/`kZoomMax`).
 
-### Herramienta DOBLE
+### Herramienta DOBLE (trazo doble configurable)
 `Herramienta.DOBLE` (ordinal 5, mismo orden que `Tool::DOBLE` en C++) dibuja
-**dos trazos paralelos** separados `separacion = (grosor + 2) * 0.5`. Ya no se
-calcula la normal segmento a segmento: `polilineaDoble` desplaza la
-**polilínea completa** con una normal suavizada por vértice (promedio de las
-direcciones de los segmentos vecinos), así las dos líneas no tiemblan en los
-empalmes. Luego cada lado se rasteriza con `polilineaGruesa`; un toque sin
-arrastre dibuja un único disco/bloque centrado. La paridad la cubre
-`MotorTest.dobleParidadNativoKotlin`.
+**dos trazos con un solo gesto**: el **principal** (con la herramienta
+`herramientaPrincipal`: lápiz, portamina o carbóncillo) y el **acompañante** o
+"la doble" (con `herramientaDoble`, su `colorDoble` = *color de sombra* y su
+`ladoDoble`). Todo eso vive en `Lapiz` (`core/.../Lapiz.kt`) y viaja al motor
+por JNI (`nativoConfigurarLapiz` gana cuatro parámetros: la herramienta
+principal, la del doble, el lado y el color de sombra).
+
+- **Lado** (`LadoDoble`): `MISMO` (el acompañante se dibuja **encima** del
+  principal: queda debajo, así se ve como sombra/contorno si es más grueso o
+  de otro color), `IZQUIERDA` y `DERECHA` (desplazado perpendicular al
+  sentido del gesto; la normal `(-dy, dx)` apunta a la derecha del sentido de
+  marcha en coordenadas de pantalla).
+- **Separación**: `separacion = (grosor + 2) / 2` px (`TrazoDoble.separacion`),
+  con el grosor **efectivo del trazo principal**. Antes el DOBLE pintaba dos
+  líneas simétricas respecto del gesto; ahora el principal queda **donde se
+  dibuja** y el acompañante va al lado elegido.
+- **Desplazamiento**: `TrazoDoble.desplazar` (`core/.../TrazoDoble.kt`) es la
+  **única** implementación: la normal se suaviza por vértice (dirección de la
+  cuerda entre vecinos) para que las dos líneas no tiemblan en los empalmes. El
+  C++ la replica (`desplazarTrazo` en `DibujoEngine.cpp`) y la app la usa para
+  la vista previa y para el doble vectorial.
+- **Pincel vectorial** (`HerramientaDoble.PLUMA`): el motor **no** lo dibuja
+  (los vectores son objetos vivos de `:app`); la app crea el `TrazoVectorial`
+  con la ruta desplazada, el color de sombra y el grosor, y lo registra en el
+  **mismo paso de historial** que los píxeles (`PasoHistorial.Ambos`).
+- Paridad: `MotorTest.dobleConfigurableNativoKotlin`,
+  `dobleMismoLadoParidadNativoKotlin`, `dobleDibujaElAcompananteConSuColor` y
+  `dobleConPincelVectorialNoLoDibujaElMotor`.
+- En la consola (`:ui`) el menú de lápices suma las opciones 9 (herramienta
+  del doble), 10 (lado) y 11 (color de sombra).
 
 ### Hoja
 `Lienzo` admite 1..4096 por lado, ARGB, fondo configurable (BLANCO por defecto).
@@ -677,6 +700,18 @@ Particularidades:
   opción con un **trazo de muestra** rasterizado con el mismo `Textura.aplicar`
   del motor y `DibujoViewModel.elegirTextura` actualiza el `Lapiz`; el valor se
   propaga a `MotorKotlin`/`MotorNativo` y al C++.
+- **Doble trazo configurable** (issue 78): la herramienta **Doble** se
+  configura en `DialogoDoble.kt` (archivo propio): con qué herramienta va el
+  trazo acompañante (lápiz, portamina, carbóncillo o **pincel vectorial**), de
+  qué lado (**sobre el trazo**, a la **izquierda** o a la **derecha** del
+  sentido del gesto) y de qué **color de sombra**. El diálogo se abre al elegir
+  la herramienta Doble por primera vez (después, desde *Herramientas de la
+  hoja* → "Configurar el doble trazo", que muestra el color de sombra) y la
+  configuración se aplica **al instante** (el motor se reconfigura). El color de
+  sombra sigue al del lápiz mientras el usuario no elija uno propio
+  (`DibujoEstado.colorDoblePropio`). La **vista previa** dibuja el doble
+  mientras se arrastra (`TrazoDoble.desplazar` + `rutaEnPantalla` en
+  `PantallaDibujo.kt`).
 - **Texto vivo** (issue 70): `TextoEnHoja` es un objeto del estado
   (`DibujoViewModel.insertarTexto`), no píxeles horneados. `CapaTextos` lo dibuja
   encima de la hoja siguiendo la cámara; un toque lo selecciona y los gestos lo

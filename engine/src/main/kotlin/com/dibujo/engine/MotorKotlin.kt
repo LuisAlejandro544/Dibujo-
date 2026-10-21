@@ -102,17 +102,32 @@ class MotorKotlin(
         }
         val cantidad = puntos * 2
         val redonda = lapiz.punta == com.dibujo.core.Punta.REDONDA
-        // Dibuja una polilínea con la herramienta actual (Doble hace las dos
-        // líneas paralelas; el resto, una línea gruesa con cobertura máxima
-        // por píxel y una sola mezcla).
+        // Trazo acompañante ("la doble"): su propia herramienta, su color de
+        // sombra y el lado donde se dibuja. Con el pincel vectorial el doble
+        // NO lo dibuja el motor (lo crea la app como objeto vivo).
+        val separacion = com.dibujo.core.TrazoDoble.separacion(grosor)
+        val grosorDoble = lapiz.grosorEfectivo(lapiz.herramientaDoble.herramienta)
+        val colorDoble = lapiz.colorDoble
+        val dibujarDoble = { ps: FloatArray, n: Int ->
+            if (lapiz.herramientaDoble != com.dibujo.core.HerramientaDoble.PLUMA) {
+                val desplazado = com.dibujo.core.TrazoDoble.desplazar(
+                    ps, n, separacion, lapiz.ladoDoble,
+                )
+                hoja.polilineaGruesa(desplazado, n, grosorDoble, redonda, colorDoble, textura)
+            }
+        }
+        val dibujarPrincipal = { ps: FloatArray, n: Int ->
+            hoja.polilineaGruesa(ps, n, grosor, redonda, color, textura)
+        }
+        // Dibuja una polilínea con la herramienta actual: en modo DOBLE se
+        // dibujan las dos líneas (la acompañante debajo, para que con
+        // LadoDoble.MISMO quede como sombra/contorno del principal).
         val dibujar = { ps: FloatArray, n: Int ->
             if (lapiz.herramienta == com.dibujo.core.Herramienta.DOBLE) {
-                hoja.polilineaDoble(
-                    ps, n, grosor, redonda, color,
-                    separacionDoble(grosor), textura,
-                )
+                dibujarDoble(ps, n)
+                dibujarPrincipal(ps, n)
             } else {
-                hoja.polilineaGruesa(ps, n, grosor, redonda, color, textura)
+                dibujarPrincipal(ps, n)
             }
         }
         dibujar(trazo, cantidad)
@@ -320,9 +335,6 @@ class MotorKotlin(
     }
 
     private fun grosorEfectivo(): Int = lapiz.grosorEfectivo()
-
-    /** Separación entre las dos líneas de la herramienta DOBLE (paridad C++). */
-    private fun separacionDoble(grosor: Int): Float = (grosor + 2) * 0.5f
 
     companion object {
         const val MAX_PUNTOS = 4096

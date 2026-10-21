@@ -59,6 +59,15 @@ public:
     Tool herramienta() const { return herramienta_; }
     Textura textura() const { return textura_; }
 
+    // --- Configuración del trazo doble (herramienta DOBLE) ---
+    // El gesto dibuja dos trazos: el principal (con `herramientaPrincipal_`) y
+    // el acompañante o "doble" (con `herramientaDoble_`, `colorDoble_` y
+    // `ladoDoble_`). Replica `com.dibujo.core.Lapiz` de Kotlin (paridad).
+    void fijarHerramientaPrincipal(Tool tool) { herramientaPrincipal_ = tool; }
+    void fijarHerramientaDoble(ToolDoble tool) { herramientaDoble_ = tool; }
+    void fijarLadoDoble(LadoDoble lado) { ladoDoble_ = lado; }
+    void fijarColorDoble(uint32_t color) { colorDoble_ = color; }
+
     // Trazo asistido: al terminar un trazo se descarta su recorrido y se
     // dibuja una recta entre el primer y el último punto (PINTAR no cambia).
     void fijarAsistenciaRecta(bool activa) { asistenciaRecta_ = activa; }
@@ -180,6 +189,12 @@ private:
     Textura textura_ = Textura::LISA;
     bool asistenciaRecta_ = false;
     Simetria simetria_ = Simetria::NINGUNA;
+
+    // Configuración del trazo doble (herramienta DOBLE).
+    Tool herramientaPrincipal_ = Tool::LAPIZ;
+    ToolDoble herramientaDoble_ = ToolDoble::LAPIZ;
+    LadoDoble ladoDoble_ = LadoDoble::IZQUIERDA;
+    uint32_t colorDoble_ = 0xFF000000u;
 
     // Cámara.
     float panX_ = 0.0f;

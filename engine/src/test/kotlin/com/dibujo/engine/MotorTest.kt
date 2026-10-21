@@ -3,6 +3,8 @@ package com.dibujo.engine
 import com.dibujo.core.Camara
 import com.dibujo.core.Colores
 import com.dibujo.core.Herramienta
+import com.dibujo.core.HerramientaDoble
+import com.dibujo.core.LadoDoble
 import com.dibujo.core.Lapiz
 import com.dibujo.core.Simetria
 import com.dibujo.core.Textura
@@ -670,8 +672,134 @@ class MotorNativoTest {
     }
 
     @Test
-    fun limpiarTrazosParidadNativoKotlin() {
+    fun dobleConfigurableParidadNativoKotlin() {
         if (!NativeEngine.disponible()) return
+        val nativo = MotorNativo(28, 28)
+        val kotlin = MotorKotlin(28, 28)
+        for (m in listOf(nativo, kotlin)) {
+            m.configurarLapiz(
+                Lapiz(
+                    color = Colores.AZUL,
+                    grosor = 3,
+                    herramienta = Herramienta.DOBLE,
+                    herramientaPrincipal = Herramienta.PORTAMINA,
+                    herramientaDoble = HerramientaDoble.CARBONCILLO,
+                    ladoDoble = LadoDoble.DERECHA,
+                    colorDoble = Colores.ROJO,
+                ),
+            )
+            m.iniciarTrazo(4f, 6f)
+            m.continuarTrazo(18f, 6f)
+            m.continuarTrazo(18f, 20f)
+            assertTrue(m.terminarTrazo(), "${m.nombre}: trazo doble configurable")
+        }
+        val a = IntArray(28 * 28)
+        val b = IntArray(28 * 28)
+        assertTrue(nativo.copiarHoja(a), "nativo: copiarHoja")
+        assertTrue(kotlin.copiarHoja(b), "kotlin: copiarHoja")
+        for (i in a.indices) {
+            assertEquals(b[i], a[i], "doble configurable: discrepancia en píxel $i")
+        }
+        nativo.close()
+        kotlin.close()
+    }
+
+    @Test
+    fun dobleMismoLadoParidadNativoKotlin() {
+        if (!NativeEngine.disponible()) return
+        val nativo = MotorNativo(20, 20)
+        val kotlin = MotorKotlin(20, 20)
+        for (m in listOf(nativo, kotlin)) {
+            m.configurarLapiz(
+                Lapiz(
+                    color = Colores.VERDE,
+                    grosor = 2,
+                    herramienta = Herramienta.DOBLE,
+                    herramientaDoble = HerramientaDoble.CARBONCILLO,
+                    ladoDoble = LadoDoble.MISMO,
+                    colorDoble = Colores.ROJO,
+                ),
+            )
+            m.iniciarTrazo(5f, 10f)
+            m.continuarTrazo(15f, 10f)
+            assertTrue(m.terminarTrazo(), "${m.nombre}: doble sobre el trazo")
+        }
+        val a = IntArray(20 * 20)
+        val b = IntArray(20 * 20)
+        assertTrue(nativo.copiarHoja(a), "nativo: copiarHoja")
+        assertTrue(kotlin.copiarHoja(b), "kotlin: copiarHoja")
+        for (i in a.indices) {
+            assertEquals(b[i], a[i], "doble mismo lado: discrepancia en píxel $i")
+        }
+        nativo.close()
+        kotlin.close()
+    }
+
+    @Test
+    fun dobleDibujaElAcompananteConSuColor() {
+        // Trazo horizontal hacia la derecha: la izquierda del trazo es arriba y
+        // la derecha es abajo.
+        val izquierda = MotorKotlin(24, 24)
+        izquierda.configurarLapiz(
+            Lapiz(
+                color = Colores.AZUL,
+                grosor = 2,
+                herramienta = Herramienta.DOBLE,
+                herramientaDoble = HerramientaDoble.PORTAMINA,
+                ladoDoble = LadoDoble.IZQUIERDA,
+                colorDoble = Colores.ROJO,
+            ),
+        )
+        izquierda.iniciarTrazo(4f, 12f)
+        izquierda.continuarTrazo(20f, 12f)
+        assertTrue(izquierda.terminarTrazo())
+        assertEquals(Colores.AZUL, izquierda.pixelHoja(12, 12), "trazo principal")
+        assertEquals(Colores.ROJO, izquierda.pixelHoja(12, 10), "doble a la izquierda")
+        assertEquals(Colores.BLANCO, izquierda.pixelHoja(12, 16), "lejos del doble")
+
+        val derecha = MotorKotlin(24, 24)
+        derecha.configurarLapiz(
+            Lapiz(
+                color = Colores.AZUL,
+                grosor = 2,
+                herramienta = Herramienta.DOBLE,
+                herramientaDoble = HerramientaDoble.PORTAMINA,
+                ladoDoble = LadoDoble.DERECHA,
+                colorDoble = Colores.ROJO,
+            ),
+        )
+        derecha.iniciarTrazo(4f, 12f)
+        derecha.continuarTrazo(20f, 12f)
+        assertTrue(derecha.terminarTrazo())
+        assertEquals(Colores.AZUL, derecha.pixelHoja(12, 12), "trazo principal")
+        assertEquals(Colores.ROJO, derecha.pixelHoja(12, 14), "doble a la derecha")
+        assertEquals(Colores.BLANCO, derecha.pixelHoja(12, 8), "lejos del doble")
+    }
+
+    @Test
+    fun dobleConPincelVectorialNoLoDibujaElMotor() {
+        // El pincel vectorial lo dibuja la capa de vectores de la app: el
+        // motor sólo pinta el trazo principal.
+        val m = MotorKotlin(24, 24)
+        m.configurarLapiz(
+            Lapiz(
+                color = Colores.AZUL,
+                grosor = 2,
+                herramienta = Herramienta.DOBLE,
+                herramientaDoble = HerramientaDoble.PLUMA,
+                ladoDoble = LadoDoble.IZQUIERDA,
+                colorDoble = Colores.ROJO,
+            ),
+        )
+        m.iniciarTrazo(4f, 12f)
+        m.continuarTrazo(20f, 12f)
+        assertTrue(m.terminarTrazo())
+        assertEquals(Colores.AZUL, m.pixelHoja(12, 12), "trazo principal")
+        assertEquals(Colores.BLANCO, m.pixelHoja(12, 10), "sin doble vectorial")
+    }
+
+    @Test
+    fun limpiarTrazosParidadNativoKotlin() {        if (!NativeEngine.disponible()) return
         val ancho = 28
         val alto = 20
         val nativo = MotorNativo(ancho, alto)

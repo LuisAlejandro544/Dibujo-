@@ -14,12 +14,16 @@ import com.dibujo.core.EstabilizadorTrazo
 import com.dibujo.core.FiltroImagen
 import com.dibujo.core.FiltrosImagen
 import com.dibujo.core.Herramienta
+import com.dibujo.core.HerramientaDoble
+import com.dibujo.core.LadoDoble
 import com.dibujo.core.Lapiz
 import com.dibujo.core.Lienzo
 import com.dibujo.core.Modo
 import com.dibujo.core.MotorDibujo
 import com.dibujo.core.Simetria
 import com.dibujo.core.Textura
+import com.dibujo.core.TrazoDoble
+import com.dibujo.core.esTrazo
 import com.dibujo.engine.Motores
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -129,6 +133,16 @@ data class DibujoEstado(
     val trazoVectorialEnCurso: TrazoVectorial? = null,
     /** Últimos colores elegidos (paleta, cuentagotas o rueda HSV), más nuevos primero. */
     val coloresRecientes: List<Int> = emptyList(),
+    /**
+     * El color de sombra del trazo doble ya fue elegido a mano: mientras no lo
+     * sea, sigue al color del lápiz principal.
+     */
+    val colorDoblePropio: Boolean = false,
+    /**
+     * El doble ya se configuró una vez (herramienta, lado y color de sombra):
+     * desde ahí, elegir la herramienta "Doble" no vuelve a abrir el diálogo.
+     */
+    val dobleConfigurado: Boolean = false,
     /** El cuentagotas está activo: el próximo toque de la hoja toma su color. */
     val cuentagotasActivo: Boolean = false,
     /** Trazo asistido: las líneas dibujadas a mano se enderezan al soltar. */
@@ -395,6 +409,12 @@ class DibujoViewModel(app: Application) : AndroidViewModel(app) {
                     herramienta = it.herramientaInicial,
                     grosor = it.grosorInicial,
                     textura = it.texturaInicial,
+                    // La configuración del doble (herramienta, lado y color de
+                    // sombra) se conserva: es del usuario, no del dibujo.
+                    herramientaPrincipal = it.lapiz.herramientaPrincipal,
+                    herramientaDoble = it.lapiz.herramientaDoble,
+                    ladoDoble = it.lapiz.ladoDoble,
+                    colorDoble = it.lapiz.colorDoble,
                 ),
                 motorNombre = "",
                 trazoEnCurso = null,
@@ -576,7 +596,15 @@ class DibujoViewModel(app: Application) : AndroidViewModel(app) {
             return
         }
         if (m.terminarTrazo()) {
-            registrarPasoPixeles()
+            // El doble con pincel vectorial no lo dibuja el motor (los
+            // vectores viven en la app): se crea el objeto vivo acá, en el
+            // mismo paso de historial que los píxeles.
+            val dobleVectorial = crearTrazoDobleVectorial(trazo)
+            if (dobleVectorial != null) {
+                registrarPasoAmbos(dobleVectorial.first, dobleVectorial.second)
+            } else {
+                registrarPasoPixeles()
+            }
             avisar(EventoRetroalimentacion.TRAZO)
         }
         _estado.update {
@@ -594,6 +622,57 @@ class DibujoViewModel(app: Application) : AndroidViewModel(app) {
         val m = motor ?: return
         m.cancelarTrazo()
         _estado.update { it.copy(trazoEnCurso = null, marco = it.marco + 1) }
+    }
+
+    /**
+     * Crea el trazo acompañante cuando el "doble" es el **pincel vectorial**.
+     *
+     * El motor no lo dibuja (los trazos vectoriales son objetos vivos de la
+     * app), así que acá se crea el vector con la ruta desplazada al lado
+     * elegido, el color de sombra y el grosor del pincel.
+     *
+     * Devuelve el par (vectores antes, vectores después) para que el paso
+     * quede en el historial junto con los píxeles del trazo principal, o null
+     * si no hay doble vectorial.
+     */
+    private fun crearTrazoDobleVectorial(
+        trazo: List<Float>?,
+    ): Pair<List<TrazoVectorial>, List<TrazoVectorial>>? {
+        val est = _estado.value
+        if (est.lapiz.herramienta != Herramienta.DOBLE) return null
+        if (est.lapiz.herramientaDoble != HerramientaDoble.PLUMA) return null
+        if (trazo == null || trazo.size < 2) return null
+        val m = motor ?: return null
+        val separacion = TrazoDoble.separacion(est.lapiz.grosorEfectivo())
+        val desplazado = TrazoDoble.desplazar(
+            trazo.toFloatArray(),
+            trazo.size,
+            separacion,
+            est.lapiz.ladoDoble,
+        )
+        val tolerancia = VECTOR_TOLERANCIA / m.camara().zoom.coerceAtLeast(0.01f)
+        val puntos = VectorHoja.simplificar(desplazado.toList(), tolerancia)
+        if (puntos.size < 2) return null
+        val objeto = TrazoVectorial(
+            id = siguienteIdVector++,
+            puntos = puntos,
+            color = est.lapiz.colorDoble,
+            grosor = est.lapiz.grosor.toFloat()
+                .coerceIn(VECTOR_GROSOR_MIN, VECTOR_GROSOR_MAX),
+            textura = est.lapiz.textura,
+        )
+        val antes = est.vectores
+        val despues = antes + objeto
+        _estado.update {
+            it.copy(
+                vectores = despues,
+                puedeDeshacer = hayDeshacer(),
+                puedeRehacer = hayRehacer(),
+                modificado = true,
+                marco = it.marco + 1,
+            )
+        }
+        return antes to despues
     }
 
     /** Pan con el dedo: el contenido sigue al dedo (dx, dy en px de pantalla). */
@@ -651,10 +730,11 @@ class DibujoViewModel(app: Application) : AndroidViewModel(app) {
 
     /**
      * Elige un color de la paleta, del calco o del cuentagotas: lo aplica al
-     * lápiz y lo guarda al frente de los colores recientes.
+     * lápiz y lo guarda al frente de los colores recientes. Si el color de
+     * sombra del doble no fue elegido a mano, sigue al del lápiz.
      */
     fun elegirColor(argb: Int) {
-        actualizarLapiz { it.copy(color = argb) }
+        actualizarLapiz { it.copy(color = argb, colorDoble = colorDobleSeguido(argb)) }
         aplicarColorVectorSeleccionado(argb)
         registrarReciente(argb)
     }
@@ -663,14 +743,38 @@ class DibujoViewModel(app: Application) : AndroidViewModel(app) {
      * Aplica un color de la rueda HSV mientras se arrastra (vista previa), sin
      * ensuciar la lista de recientes: recién [confirmarColorHsv] lo registra.
      */
-    fun previsualizarColorHsv(argb: Int) = actualizarLapiz { it.copy(color = argb) }
+    fun previsualizarColorHsv(argb: Int) =
+        actualizarLapiz { it.copy(color = argb, colorDoble = colorDobleSeguido(argb)) }
 
     /** Confirma el color elegido en la rueda HSV y lo guarda en recientes. */
     fun confirmarColorHsv(argb: Int) {
-        actualizarLapiz { it.copy(color = argb) }
+        actualizarLapiz { it.copy(color = argb, colorDoble = colorDobleSeguido(argb)) }
         aplicarColorVectorSeleccionado(argb)
         registrarReciente(argb)
     }
+
+    /**
+     * Color de sombra del trazo acompañante: si el usuario todavía no eligió
+     * uno propio, acompaña al color del lápiz principal.
+     */
+    private fun colorDobleSeguido(colorPrincipal: Int): Int =
+        if (_estado.value.colorDoblePropio) _estado.value.lapiz.colorDoble else colorPrincipal
+
+    /**
+     * Elige el color de sombra del trazo doble ("la doble"). Queda elegido a
+     * mano: deja de seguir al color del lápiz principal.
+     */
+    fun elegirColorDoble(argb: Int) {
+        actualizarLapiz { it.copy(colorDoble = argb) }
+        _estado.update { it.copy(colorDoblePropio = true, dobleConfigurado = true) }
+        registrarReciente(argb)
+    }
+
+    /** Previsualiza el color de sombra mientras se arrastra la rueda HSV. */
+    fun previsualizarColorDoble(argb: Int) = actualizarLapiz { it.copy(colorDoble = argb) }
+
+    /** Confirma el color de sombra elegido en la rueda HSV. */
+    fun confirmarColorDoble(argb: Int) = elegirColorDoble(argb)
 
     private fun registrarReciente(argb: Int) {
         _estado.update {
@@ -740,8 +844,44 @@ class DibujoViewModel(app: Application) : AndroidViewModel(app) {
         _estado.update { it.copy(simetria = siguiente) }
     }
 
+    /**
+     * Elige la herramienta activa. Si es un lápiz (lápiz, portamina o
+     * carbóncillo) también pasa a ser el trazo principal del modo DOBLE, así
+     * el doble sale con el lápiz que el usuario acaba de elegir.
+     */
     fun elegirHerramienta(herramienta: Herramienta) =
-        actualizarLapiz { it.copy(herramienta = herramienta) }
+        actualizarLapiz {
+            if (herramienta.esTrazo) {
+                it.copy(herramienta = herramienta, herramientaPrincipal = herramienta)
+            } else {
+                it.copy(herramienta = herramienta)
+            }
+        }
+
+    /**
+     * Configuración del trazo doble (herramienta DOBLE): el trazo principal,
+     * la herramienta del acompañante ("la doble"), el lado donde se dibuja y
+     * el color de sombra. Todo se aplica al instante (el motor se reconfigura).
+     */
+    fun elegirHerramientaPrincipal(herramienta: Herramienta) {
+        actualizarLapiz { it.copy(herramientaPrincipal = herramienta) }
+        marcarDobleConfigurado()
+    }
+
+    fun elegirHerramientaDoble(herramienta: HerramientaDoble) {
+        actualizarLapiz { it.copy(herramientaDoble = herramienta) }
+        marcarDobleConfigurado()
+    }
+
+    fun elegirLadoDoble(lado: LadoDoble) {
+        actualizarLapiz { it.copy(ladoDoble = lado) }
+        marcarDobleConfigurado()
+    }
+
+    /** Marca que el doble ya se configuró: elegir la herramienta no lo abre. */
+    fun marcarDobleConfigurado() {
+        _estado.update { it.copy(dobleConfigurado = true) }
+    }
 
     /**
      * Elige la textura del trazo (lisa, grano, rugosa, trama o salpicada). Si

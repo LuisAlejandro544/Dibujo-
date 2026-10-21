@@ -58,6 +58,10 @@ se implementa en C++ **y** Kotlin, y pasa `MotorTest` (paridad píxel a píxel).
 - `Lapiz.kt` — `Herramienta` (LAPIZ, PORTAMINA, CARBONCILLO, BORRADOR, PINTAR,
   DOBLE, PLUMA) y `grosorEfectivo()`. PLUMA es sólo para `:app`: el motor la
   acepta para conservar el ordinal de JNI, pero no la rasteriza.
+- `TrazoDoble.kt` — configuración del **doble trazo**: `HerramientaDoble`
+  (LAPIZ, PORTAMINA, CARBONCILLO, PLUMA), `LadoDoble` (MISMO, IZQUIERDA,
+  DERECHA) y `TrazoDoble.desplazar` (la normal suavizada por vértice que
+  define dónde va el trazo acompañante; la replica el C++).
 - `Color.kt` — `Color` y `Colores` (paleta fija). `Modo.kt` — EDICION/MOVER.
 - `Historial.kt` — undo/redo por instantáneas **comprimidas** (RLE sin
   pérdida), límite **30**. `InstantaneaHoja.kt` — la instantánea comprimida
@@ -118,6 +122,8 @@ Si tocás rasterizado, cámara, historial o herramientas: editá **los dos lados
   `DialogoTransformar` (voltear/escalar + ajuste libre por gestos),
   `DialogoColor`, etc.
 - `RuedaHsv.kt` — rueda de color HSV (`DialogoColor` + `RuedaHsv` privada).
+- `DialogoDoble.kt` — configuración del **doble trazo** (herramienta del
+  acompañante, lado y color de sombra).
 - `DibujoViewModel.kt` — **dueño del motor** y del estado (MVI estricto con
   `_estado.update { copy() }`): lápiz, paleta, recientes, cuentagotas,
   asistencia, transformar, historial, cámara, calco.

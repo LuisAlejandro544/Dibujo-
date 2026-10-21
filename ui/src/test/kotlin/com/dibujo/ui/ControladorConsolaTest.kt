@@ -1,6 +1,9 @@
 package com.dibujo.ui
 
 import com.dibujo.core.Colores
+import com.dibujo.core.Herramienta
+import com.dibujo.core.HerramientaDoble
+import com.dibujo.core.LadoDoble
 import com.dibujo.core.Modo
 import com.dibujo.engine.MotorKotlin
 import kotlin.test.Test
@@ -99,6 +102,29 @@ class ControladorConsolaTest {
         assertEquals(ControladorConsola.Accion.MENU_LAPICES, c.procesar("l"))
         c.menuLapices(listOf("3").iterator(), StringBuilder())
         assertEquals(4, c.lapiz.grosor)
+    }
+
+    @Test
+    fun menuLapicesConfiguraElDoble() {
+        val c = controlador()
+        c.procesar("l")
+        // 9) con qué herramienta; 3) carbóncillo.
+        c.menuLapices(listOf("9", "3").iterator(), StringBuilder())
+        assertEquals(HerramientaDoble.CARBONCILLO, c.lapiz.herramientaDoble)
+        // 10) de qué lado; 3) derecha.
+        c.menuLapices(listOf("10", "3").iterator(), StringBuilder())
+        assertEquals(LadoDoble.DERECHA, c.lapiz.ladoDoble)
+        // 11) color de sombra; 3) rojo de la paleta.
+        c.menuLapices(listOf("11", "3").iterator(), StringBuilder())
+        assertEquals(Colores.ROJO, c.lapiz.colorDoble)
+    }
+
+    @Test
+    fun menuLapicesEligeElDoble() {
+        val c = controlador()
+        c.procesar("l")
+        c.menuLapices(listOf("8").iterator(), StringBuilder())
+        assertEquals(Herramienta.DOBLE, c.lapiz.herramienta)
     }
 
     @Test

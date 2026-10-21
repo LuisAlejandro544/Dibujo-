@@ -170,6 +170,7 @@ import com.dibujo.core.Modo
 import com.dibujo.core.Punta
 import com.dibujo.core.Simetria
 import com.dibujo.core.Textura
+import com.dibujo.core.TrazoDoble
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -300,6 +301,9 @@ fun PantallaDibujo(
     var mostrarTextura by remember { mutableStateOf(false) }
     var mostrarTexto by remember { mutableStateOf(false) }
     var mostrarEditarTexto by remember { mutableStateOf(false) }
+    // Configuración del doble trazo (herramienta DOBLE) y su color de sombra.
+    var mostrarDoble by remember { mutableStateOf(false) }
+    var mostrarRuedaSombra by remember { mutableStateOf(false) }
 
     // Volver al menú principal (botón atrás del sistema o de la barra).
     BackHandler(onBack = alVolver)
@@ -547,6 +551,7 @@ fun PantallaDibujo(
                 },
                 alAbrirColor = { mostrarColor = true },
                 alAbrirMasHerramientas = { mostrarMasHerramientas = true },
+                alAbrirDoble = { mostrarDoble = true },
                 alEditarTexto = { mostrarEditarTexto = true },
                 alQuitarTexto = vm::quitarTextoSeleccionado,
                 alTerminarTexto = vm::terminarEdicionTexto,
@@ -689,6 +694,36 @@ fun PantallaDibujo(
         )
     }
 
+    if (mostrarDoble) {
+        DialogoDoble(
+            lapiz = estado.lapiz,
+            coloresRecientes = estado.coloresRecientes,
+            alElegirPrincipal = vm::elegirHerramientaPrincipal,
+            alElegirDoble = vm::elegirHerramientaDoble,
+            alElegirLado = vm::elegirLadoDoble,
+            alElegirColorDoble = vm::elegirColorDoble,
+            alAbrirRuedaColor = {
+                // La rueda se abre encima del diálogo del doble: al cerrarla
+                // se vuelve a él.
+                mostrarRuedaSombra = true
+            },
+            alCerrar = {
+                vm.marcarDobleConfigurado()
+                mostrarDoble = false
+            },
+        )
+    }
+
+    if (mostrarRuedaSombra) {
+        DialogoColor(
+            colorInicial = estado.lapiz.colorDoble,
+            recientes = estado.coloresRecientes,
+            alPrevisualizar = vm::previsualizarColorDoble,
+            alConfirmar = { vm.confirmarColorDoble(it) },
+            alCerrar = { mostrarRuedaSombra = false },
+        )
+    }
+
     if (mostrarMasHerramientas) {
         HojaHerramientasHoja(
             estado = estado,
@@ -723,6 +758,10 @@ fun PantallaDibujo(
             alAbrirTextura = {
                 mostrarMasHerramientas = false
                 mostrarTextura = true
+            },
+            alAbrirDoble = {
+                mostrarMasHerramientas = false
+                mostrarDoble = true
             },
             // Los interruptores dejan la hoja abierta para ver la tilde.
             alEnderezar = vm::enderezar,
@@ -1319,6 +1358,27 @@ private fun CapaGestos(
                 i += 2
             }
             val redonda = lapiz.punta == Punta.REDONDA
+            // Trazo doble: primero el acompañante (el "doble"), que queda
+            // debajo del principal, igual que en el motor.
+            if (lapiz.herramienta == Herramienta.DOBLE) {
+                val separacion = TrazoDoble.separacion(grosorTrazo)
+                val desplazado = TrazoDoble.desplazar(
+                    trazo.toFloatArray(),
+                    trazo.size,
+                    separacion,
+                    lapiz.ladoDoble,
+                )
+                val grosorDoble = lapiz.grosorEfectivo(lapiz.herramientaDoble.herramienta)
+                drawPath(
+                    rutaEnPantalla(camara, desplazado),
+                    color = Color(lapiz.colorDoble),
+                    style = Stroke(
+                        width = grosorDoble * camara.zoom,
+                        cap = if (redonda) StrokeCap.Round else StrokeCap.Butt,
+                        join = if (redonda) StrokeJoin.Round else StrokeJoin.Miter,
+                    ),
+                )
+            }
             drawPath(
                 path,
                 color = colorTrazo,
@@ -1395,6 +1455,25 @@ private fun aPantallaCamara(cam: Camara, hx: Float, hy: Float): Offset {
     val c = cos(cam.rotacion.toDouble()).toFloat()
     val s = sin(cam.rotacion.toDouble()).toFloat()
     return Offset(c * zx - s * zy - cam.panX, s * zx + c * zy - cam.panY)
+}
+
+/**
+ * Ruta en pantalla a partir de puntos de hoja (pares x, y). Se usa para la
+ * vista previa del trazo doble, que se calcula desplazado en coordenadas de
+ * hoja (igual que en el motor) y recién después se lleva a pantalla.
+ */
+private fun rutaEnPantalla(camara: Camara, puntos: FloatArray): Path {
+    val path = Path()
+    if (puntos.size < 2) return path
+    val primero = aPantallaCamara(camara, puntos[0], puntos[1])
+    path.moveTo(primero.x, primero.y)
+    var i = 2
+    while (i + 1 < puntos.size) {
+        val p = aPantallaCamara(camara, puntos[i], puntos[i + 1])
+        path.lineTo(p.x, p.y)
+        i += 2
+    }
+    return path
 }
 
 /**
@@ -1953,6 +2032,7 @@ private fun BarraHerramientas(
     alAbrirIa: () -> Unit,
     alAbrirColor: () -> Unit,
     alAbrirMasHerramientas: () -> Unit,
+    alAbrirDoble: () -> Unit,
     alEditarTexto: () -> Unit,
     alQuitarTexto: () -> Unit,
     alTerminarTexto: () -> Unit,
@@ -2107,7 +2187,7 @@ private fun BarraHerramientas(
                         .padding(4.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    Herramientas(estado, vm)
+                    Herramientas(estado, vm, alAbrirDoble)
                 }
             }
             // Franja 2: color actual, paleta y cuentagotas.
@@ -2463,6 +2543,7 @@ private fun HojaHerramientasHoja(
     alAbrirExpandir: () -> Unit,
     alAbrirTexto: () -> Unit,
     alAbrirTextura: () -> Unit,
+    alAbrirDoble: () -> Unit,
     alEnderezar: () -> Unit,
     alAlternarAsistencia: () -> Unit,
     alAlternarEstabilizador: () -> Unit,
@@ -2544,6 +2625,20 @@ private fun HojaHerramientasHoja(
                 marcada = estado.simetria != Simetria.NINGUNA,
                 etiquetaActivada = etiquetaActiva,
                 alPulsar = alAlternarSimetria,
+            )
+            // Doble trazo: con qué herramienta, de qué lado y de qué color.
+            AccionHoja(
+                icono = IconoTrazoDoble,
+                etiqueta = stringResource(R.string.doble_configurar),
+                alPulsar = alAbrirDoble,
+                vistaPrevia = {
+                    Box(
+                        Modifier
+                            .size(22.dp)
+                            .background(Color(estado.lapiz.colorDoble), CircleShape)
+                            .border(1.dp, MaterialTheme.colorScheme.outline, CircleShape),
+                    )
+                },
             )
             HorizontalDivider(Modifier.padding(vertical = 4.dp))
             // Contenido de la hoja: texto, textura del trazo e IA local.
@@ -3289,6 +3384,7 @@ private fun CabezaColor(
 private fun Herramientas(
     estado: DibujoEstado,
     vm: DibujoViewModel,
+    alAbrirDoble: () -> Unit,
 ) {
     // Cada herramienta lleva su nombre debajo del icono: sin etiqueta, el
     // borrador y sobre todo "Doble" (antes un icono de "copiar") no se
@@ -3322,7 +3418,15 @@ private fun Herramientas(
                             Color.Transparent
                         },
                     )
-                    .clickable(onClick = { vm.elegirHerramienta(herramienta) })
+                    .clickable {
+                        vm.elegirHerramienta(herramienta)
+                        // El doble tiene configuración propia (con qué
+                        // herramienta, de qué lado y de qué color): la primera
+                        // vez que se elige se abre para poder ajustarla.
+                        if (herramienta == Herramienta.DOBLE && !estado.dobleConfigurado) {
+                            alAbrirDoble()
+                        }
+                    }
                     .semantics { contentDescription = etiqueta }
                     .padding(vertical = 6.dp, horizontal = 2.dp),
                 horizontalAlignment = Alignment.CenterHorizontally,

@@ -602,6 +602,9 @@ fun PantallaDibujo(
             },
             alCentrar = vm::centrarCalco,
             alQuitar = { vm.elegirCalco(null) },
+            alAlternarRecomendacionGrosor = vm::alternarRecomendacionGrosor,
+            alRecomendarGrosor = vm::recomendarGrosorCalco,
+            alAplicarGrosorRecomendado = vm::aplicarGrosorRecomendado,
             alCerrar = { mostrarCalco = false },
         )
     }
@@ -3041,6 +3044,9 @@ private fun DialogoCalco(
     alAlternarEdicion: () -> Unit,
     alCentrar: () -> Unit,
     alQuitar: () -> Unit,
+    alAlternarRecomendacionGrosor: () -> Unit,
+    alRecomendarGrosor: () -> Unit,
+    alAplicarGrosorRecomendado: () -> Unit,
     alCerrar: () -> Unit,
 ) {
     val filtros = listOf(
@@ -3138,6 +3144,49 @@ private fun DialogoCalco(
                         onCheckedChange = { alAlternarEdicion() },
                         enabled = estado.calcoUri != null,
                     )
+                }
+                Spacer(Modifier.height(8.dp))
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        Text(
+                            stringResource(R.string.recomendacion_grosor_titulo),
+                            style = MaterialTheme.typography.labelLarge,
+                        )
+                        Text(
+                            stringResource(R.string.recomendacion_grosor_desc),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    Switch(
+                        checked = estado.recomendacionGrosorActiva,
+                        onCheckedChange = { alAlternarRecomendacionGrosor() },
+                    )
+                }
+                if (estado.recomendacionGrosorActiva && estado.calcoUri != null) {
+                    Spacer(Modifier.height(8.dp))
+                    if (estado.analizandoGrosorCalco) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            CircularProgressIndicator(Modifier.size(20.dp))
+                            Spacer(Modifier.width(8.dp))
+                            Text(stringResource(R.string.recomendacion_grosor_analizando))
+                        }
+                    } else {
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            TextButton(onClick = alRecomendarGrosor) {
+                                Text(stringResource(R.string.recomendacion_grosor_calcular))
+                            }
+                            estado.grosorRecomendado?.let { g ->
+                                Text(
+                                    stringResource(R.string.recomendacion_grosor_resultado, g),
+                                    style = MaterialTheme.typography.bodyMedium,
+                                )
+                                TextButton(onClick = alAplicarGrosorRecomendado) {
+                                    Text(stringResource(R.string.recomendacion_grosor_usar))
+                                }
+                            }
+                        }
+                    }
                 }
             }
         },

@@ -300,4 +300,13 @@
     <string name="fuente_mono">Mono</string>
     <string name="fuente_cursiva">Cursiva</string>
     <string name="fuente_casual">Casual</string>
+
+    <!-- Recomendación de grosor al calcar -->
+    <string name="recomendacion_grosor_titulo">Recomendar grosor al calcar</string>
+    <string name="recomendacion_grosor_desc">Analiza los trazos de la imagen y sugiere un grosor de lápiz acorde. Se puede activar o desactivar.</string>
+    <string name="recomendacion_grosor_calcular">Calcular grosor recomendado</string>
+    <string name="recomendacion_grosor_analizando">Calculando grosor…</string>
+    <string name="recomendacion_grosor_resultado">Grosor recomendado: %1$d</string>
+    <string name="recomendacion_grosor_usar">Usar</string>
+
 </resources>

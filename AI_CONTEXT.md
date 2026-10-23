@@ -407,6 +407,15 @@ es determinista) para sacar los colores dominantes de una imagen. La app
 tocar uno se elige y la herramienta pasa a PINTAR. Es aprendizaje no supervisado
 local: **0 MB** y ninguna dependencia nueva.
 
+### Recomendación de grosor al calcar
+`RecomendadorGrosor` (`:core`) estima el ancho medio de los trazos de la imagen
+de calco: binariza la tinta, la esqueletiza (Zhang-Suen) y mide la distancia
+al fondo más cercano por píxel del esqueleto; el grosor sugerido es `2 × radio`
+medio, acotado al rango de `Lapiz`. Se activa manualmente desde el diálogo de
+calco (persistido, apagado por defecto); al calcular se muestra el valor y el
+usuario decide si lo aplica al lápiz. Es trabajo de imagen, no toca el motor ni
+la paridad C++/Kotlin.
+
 ### Historial
 Undo/redo por **instantáneas comprimidas** de la hoja (RLE de píxeles iguales,
 sin pérdida). El tope es **configurable**

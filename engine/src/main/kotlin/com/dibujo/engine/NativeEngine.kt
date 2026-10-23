@@ -15,6 +15,15 @@ object NativeEngine {
 
     external fun nativoCrear(ancho: Int, alto: Int): Long
     external fun nativoDestruir(handle: Long)
+
+    /**
+     * Configura el lápiz del motor.
+     *
+     * Los últimos cuatro parámetros son la configuración del trazo doble
+     * (herramienta DOBLE): la herramienta del trazo principal, la del trazo
+     * acompañante (ordinal de `com.dibujo.core.HerramientaDoble`), el lado
+     * (ordinal de `com.dibujo.core.LadoDoble`) y el color de sombra.
+     */
     external fun nativoConfigurarLapiz(
         handle: Long,
         color: Int,
@@ -22,6 +31,10 @@ object NativeEngine {
         puntaRedonda: Boolean,
         herramienta: Int,
         textura: Int,
+        herramientaPrincipal: Int,
+        herramientaDoble: Int,
+        ladoDoble: Int,
+        colorDoble: Int,
     )
     external fun nativoAsistenciaRecta(handle: Long, activa: Boolean)
 

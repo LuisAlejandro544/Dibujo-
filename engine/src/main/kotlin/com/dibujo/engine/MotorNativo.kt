@@ -48,6 +48,10 @@ class MotorNativo(
             lapiz.punta == Punta.REDONDA,
             lapiz.herramienta.ordinal,
             lapiz.textura.ordinal,
+            lapiz.herramientaPrincipal.ordinal,
+            lapiz.herramientaDoble.ordinal,
+            lapiz.ladoDoble.ordinal,
+            lapiz.colorDoble,
         )
     }
 

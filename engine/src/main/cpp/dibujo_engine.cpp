@@ -36,7 +36,8 @@ JNIEXPORT void JNICALL
 Java_com_dibujo_engine_NativeEngine_nativoConfigurarLapiz(
         JNIEnv*, jobject, jlong handle,
         jint color, jint grosor, jboolean puntaRedonda, jint herramienta,
-        jint textura) {
+        jint textura, jint herramientaPrincipal, jint herramientaDoble,
+        jint ladoDoble, jint colorDoble) {
     auto* e = peer(handle);
     if (e == nullptr) return;
     e->fijarColor(static_cast<uint32_t>(color));
@@ -44,6 +45,11 @@ Java_com_dibujo_engine_NativeEngine_nativoConfigurarLapiz(
     e->fijarPuntaRedonda(puntaRedonda == JNI_TRUE);
     e->fijarHerramienta(static_cast<dibujo::Tool>(herramienta));
     e->fijarTextura(static_cast<dibujo::Textura>(textura));
+    // Configuración del trazo doble (herramienta DOBLE).
+    e->fijarHerramientaPrincipal(static_cast<dibujo::Tool>(herramientaPrincipal));
+    e->fijarHerramientaDoble(static_cast<dibujo::ToolDoble>(herramientaDoble));
+    e->fijarLadoDoble(static_cast<dibujo::LadoDoble>(ladoDoble));
+    e->fijarColorDoble(static_cast<uint32_t>(colorDoble));
 }
 
 JNIEXPORT void JNICALL

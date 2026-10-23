@@ -16,6 +16,29 @@ enum class Tool : int {
     PLUMA = 6,        // pluma vectorial (la dibuja la app; el motor no la usa)
 };
 
+// Herramienta del trazo acompañante ("la doble") de la herramienta DOBLE.
+// El valor entero viaja por JNI y el orden debe coincidir con
+// `com.dibujo.core.HerramientaDoble`.
+enum class ToolDoble : int {
+    LAPIZ = 0,        // lápiz clásico
+    PORTAMINA = 1,    // trazo fino
+    CARBONCILLO = 2,  // trazo grueso y suave
+    PLUMA = 3,        // pincel vectorial (lo dibuja la app, no el motor)
+};
+
+// Lado donde se dibuja el trazo acompañante de la herramienta DOBLE. El valor
+// entero viaja por JNI y el orden debe coincidir con
+// `com.dibujo.core.LadoDoble`.
+//
+// El acompañante va AL REVÉS del gesto (nace donde termina el trazo y vuelve
+// hacia donde empezaste), así que el lado se mide respecto del propio
+// acompañante.
+enum class LadoDoble : int {
+    MISMO = 0,       // encima del trazo principal (sombra/contorno)
+    IZQUIERDA = 1,   // a la izquierda del sentido en que se dibuja
+    DERECHA = 2,     // a la derecha del sentido en que se dibuja
+};
+
 // Texturas del trazo. El valor entero viaja por JNI y el orden debe coincidir
 // con `com.dibujo.core.Textura` (el C++ replica el mismo patrón determinista).
 enum class Textura : int {

@@ -87,9 +87,22 @@ inline int grosorHerramienta(Tool tool, int grosor) {
     }
 }
 
-// Separación entre las dos líneas paralelas de la herramienta DOBLE: crece con
-// el grosor para que el hueco entre ambas sea visible. La fórmula la replica
-// `MotorKotlin` (mantener en paridad).
+// Herramienta real que usa el trazo acompañante ("la doble"). El pincel
+// vectorial no lo dibuja el motor (lo crea la app como objeto vivo), pero
+// conserva su grosor base.
+inline Tool herramientaDeDoble(ToolDoble tool) {
+    switch (tool) {
+        case ToolDoble::PORTAMINA: return Tool::PORTAMINA;
+        case ToolDoble::CARBONCILLO: return Tool::CARBONCILLO;
+        case ToolDoble::PLUMA: return Tool::PLUMA;
+        case ToolDoble::LAPIZ:
+        default: return Tool::LAPIZ;
+    }
+}
+
+// Separación entre el trazo principal y el acompañante de la herramienta
+// DOBLE: crece con el grosor para que el hueco entre ambos sea visible. La
+// fórmula la replica `TrazoDoble.separacion` de Kotlin (paridad).
 inline float separacionDoble(int grosor) {
     return static_cast<float>(grosor + 2) * 0.5f;
 }
@@ -599,65 +612,51 @@ void lineaGruesa(std::vector<uint32_t>& hoja, int ancho, int alto,
     polilineaGruesa(hoja, ancho, alto, puntos, 4, radio, true, color, textura);
 }
 
-// Línea gruesa doble: dibuja dos líneas paralelas separadas `separacion` px
-// respecto a la normal del segmento. La herramienta DOBLE usa esto para trazar
-// dos plumas a la vez. Misma aritmética que `Lienzo.lineaDoble` en Kotlin.
-void lineaDoble(std::vector<uint32_t>& hoja, int ancho, int alto,
-                float x0, float y0, float x1, float y1,
-                float radio, bool redonda, uint32_t color, float separacion,
-                Textura textura = Textura::LISA) {
-    const float dx = x1 - x0;
-    const float dy = y1 - y0;
-    const double largo = std::sqrt(static_cast<double>(dx) * dx +
-                                   static_cast<double>(dy) * dy);
-    if (largo < 1e-6) return;
-    const float nx = static_cast<float>(-dy / largo);
-    const float ny = static_cast<float>(dx / largo);
-    const float ox = nx * separacion;
-    const float oy = ny * separacion;
-    lineaGruesa(hoja, ancho, alto, x0 + ox, y0 + oy, x1 + ox, y1 + oy,
-                radio, redonda, color, textura);
-    lineaGruesa(hoja, ancho, alto, x0 - ox, y0 - oy, x1 - ox, y1 - oy,
-                radio, redonda, color, textura);
-}
-
-// Polilínea doble: desplaza la polilínea completa con una normal suavizada por
-// vértice (promedio de las direcciones vecinas). Evita el "temblor" de calcular
-// la normal segmento a segmento. Replica `Lienzo.polilineaDoble` (paridad).
-void polilineaDoble(std::vector<uint32_t>& hoja, int ancho, int alto,
-                    const float* puntos, int cantidad, float radio,
-                    bool redonda, uint32_t color, float separacion,
-                    Textura textura = Textura::LISA) {
-    if (cantidad < 2) return;
-    if (cantidad == 2) {
-        if (redonda) {
-            pintarDisco(hoja, ancho, alto, puntos[0], puntos[1], radio, color, textura);
-        } else {
-            const int px = static_cast<int>(std::lround(puntos[0]));
-            const int py = static_cast<int>(std::lround(puntos[1]));
-            const int r = static_cast<int>(std::lround(radio));
-            for (int oy = -r; oy <= r; ++oy) {
-                for (int ox = -r; ox <= r; ++ox) {
-                    const int xx = px + ox;
-                    const int yy = py + oy;
-                    pintarMezcla(hoja, ancho, alto, xx, yy, color,
-                                 aplicarTextura(textura, 255, xx, yy));
-                }
-            }
-        }
-        return;
+// Trazo acompañante ("la doble"): la polilínea que acompaña al gesto.
+//
+// El acompañante va **al revés** del gesto (nace donde termina el trazo y
+// vuelve hacia donde empezó) y desplazado hacia el lado elegido. La normal se
+// suaviza por vértice (se usa la dirección de la cuerda que une los vecinos),
+// así las dos líneas no tiemblan en los empalmes. Con `LadoDoble::MISMO` el
+// acompañante se dibuja encima del principal (pero igual al revés).
+//
+// Replica `TrazoDoble.acompanante` de Kotlin (paridad píxel a píxel).
+std::vector<float> trazoAcompanante(const std::vector<float>& puntos,
+                                    float separacion, LadoDoble lado) {
+    const std::size_t cantidad = puntos.size();
+    std::vector<float> salida(cantidad, 0.0f);
+    const int vertices = static_cast<int>(cantidad) / 2;
+    // Con un solo vértice no hay dirección: no hay nada que invertir.
+    if (vertices < 2) {
+        for (std::size_t i = 0; i < cantidad; ++i) salida[i] = puntos[i];
+        return salida;
     }
-    const int n = cantidad / 2;
-    std::vector<float> ladoA(static_cast<std::size_t>(cantidad), 0.0f);
-    std::vector<float> ladoB(static_cast<std::size_t>(cantidad), 0.0f);
-    for (int i = 0; i < n; ++i) {
+    // El acompañante va al revés: el vértice i del gesto ocupa el lugar
+    // (vertices - 1 - i) de la polilínea acompañante.
+    if (lado == LadoDoble::MISMO || separacion == 0.0f) {
+        for (int i = 0; i < vertices; ++i) {
+            const int base = i * 2;
+            const int destino = (vertices - 1 - i) * 2;
+            salida[static_cast<std::size_t>(destino)] =
+                puntos[static_cast<std::size_t>(base)];
+            salida[static_cast<std::size_t>(destino + 1)] =
+                puntos[static_cast<std::size_t>(base + 1)];
+        }
+        return salida;
+    }
+    // La normal (-dy, dx) apunta a la derecha del sentido del trazo (en
+    // coordenadas de pantalla, con la y hacia abajo); la izquierda es la
+    // opuesta. Como el acompañante va al revés, su normal es la opuesta a la
+    // del gesto.
+    const float signo = (lado == LadoDoble::IZQUIERDA) ? -1.0f : 1.0f;
+    for (int i = 0; i < vertices; ++i) {
         const int base = i * 2;
         float dx;
         float dy;
         if (i == 0) {
             dx = puntos[2] - puntos[0];
             dy = puntos[3] - puntos[1];
-        } else if (i == n - 1) {
+        } else if (i == vertices - 1) {
             dx = puntos[base] - puntos[base - 2];
             dy = puntos[base + 1] - puntos[base - 1];
         } else {
@@ -675,15 +674,15 @@ void polilineaDoble(std::vector<uint32_t>& hoja, int ancho, int alto,
             nx = static_cast<float>(-dy / largo);
             ny = static_cast<float>(dx / largo);
         }
-        const float ox = nx * separacion;
-        const float oy = ny * separacion;
-        ladoA[static_cast<std::size_t>(base)] = puntos[base] + ox;
-        ladoA[static_cast<std::size_t>(base + 1)] = puntos[base + 1] + oy;
-        ladoB[static_cast<std::size_t>(base)] = puntos[base] - ox;
-        ladoB[static_cast<std::size_t>(base + 1)] = puntos[base + 1] - oy;
+        const float ox = -nx * separacion * signo;
+        const float oy = -ny * separacion * signo;
+        const int destino = (vertices - 1 - i) * 2;
+        salida[static_cast<std::size_t>(destino)] =
+            puntos[static_cast<std::size_t>(base)] + ox;
+        salida[static_cast<std::size_t>(destino + 1)] =
+            puntos[static_cast<std::size_t>(base + 1)] + oy;
     }
-    polilineaGruesa(hoja, ancho, alto, ladoA.data(), cantidad, radio, redonda, color, textura);
-    polilineaGruesa(hoja, ancho, alto, ladoB.data(), cantidad, radio, redonda, color, textura);
+    return salida;
 }
 
 } // namespace
@@ -740,7 +739,11 @@ bool DibujoEngine::terminarTrazo() {
 
     const bool borrar = herramienta_ == Tool::BORRADOR;
     const uint32_t color = borrar ? fondo_ : color_;
-    const int grosor = grosorHerramienta(herramienta_, grosor_);
+    // En modo DOBLE el grosor del gesto es el del trazo principal.
+    const Tool herramientaTrazo = (herramienta_ == Tool::DOBLE)
+        ? herramientaPrincipal_
+        : herramienta_;
+    const int grosor = grosorHerramienta(herramientaTrazo, grosor_);
     const float radio = static_cast<float>(grosor) * 0.5f;
     // El borrador borra uniforme (sin textura); el resto usa la elegida.
     const Textura textura = borrar ? Textura::LISA : textura_;
@@ -751,21 +754,29 @@ bool DibujoEngine::terminarTrazo() {
                  static_cast<int>(std::lround(trazo_[0])),
                  static_cast<int>(std::lround(trazo_[1])), color_);
     } else {
-        // Dibuja una polilínea con la herramienta actual (Doble hace las dos
-        // líneas paralelas; el resto, una línea gruesa con cobertura máxima
-        // por píxel y una sola mezcla).
+        // Trazo acompañante ("la doble"): su propia herramienta, su color de
+        // sombra y el lado donde se dibuja. Con el pincel vectorial el doble
+        // NO lo dibuja el motor (lo crea la app como objeto vivo).
+        const float separacion = separacionDoble(grosor);
+        const int grosorDoble = grosorHerramienta(
+            herramientaDeDoble(herramientaDoble_), grosor_);
+        // Dibuja una polilínea con la herramienta actual: en modo DOBLE se
+        // dibujan las dos líneas (la acompañante debajo, para que con
+        // LadoDoble::MISMO quede como sombra/contorno del principal).
         const auto dibujar = [&](const std::vector<float>& puntos) {
             if (herramienta_ == Tool::DOBLE) {
-                // Doble lápiz: dos líneas paralelas con normal suavizada.
-                const float separacion = separacionDoble(grosor);
-                polilineaDoble(hoja_, ancho_, alto_, puntos.data(),
-                               static_cast<int>(puntos.size()), radio,
-                               puntaRedonda_, color, separacion, textura);
-            } else {
-                polilineaGruesa(hoja_, ancho_, alto_, puntos.data(),
-                                static_cast<int>(puntos.size()), radio,
-                                puntaRedonda_, color, textura);
+                if (herramientaDoble_ != ToolDoble::PLUMA) {
+                    const std::vector<float> desplazado =
+                        trazoAcompanante(puntos, separacion, ladoDoble_);
+                    polilineaGruesa(hoja_, ancho_, alto_, desplazado.data(),
+                                    static_cast<int>(desplazado.size()),
+                                    static_cast<float>(grosorDoble) * 0.5f,
+                                    puntaRedonda_, colorDoble_, textura);
+                }
             }
+            polilineaGruesa(hoja_, ancho_, alto_, puntos.data(),
+                            static_cast<int>(puntos.size()), radio,
+                            puntaRedonda_, color, textura);
         };
         dibujar(trazo_);
         // Simetría: el trazo se dibuja también en sus reflejos respecto del

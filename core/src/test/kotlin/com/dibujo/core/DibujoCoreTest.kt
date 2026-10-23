@@ -369,8 +369,71 @@ class LapizTest {
         assertEquals(6, Lapiz(herramienta = Herramienta.BORRADOR, grosor = 2).grosorEfectivo())
         // PINTAR no ajusta el grosor (rellena, no traza).
         assertEquals(5, Lapiz(herramienta = Herramienta.PINTAR, grosor = 5).grosorEfectivo())
-        // DOBLE usa el grosor para cada una de sus dos líneas.
+        // DOBLE usa el grosor del trazo principal.
         assertEquals(5, Lapiz(herramienta = Herramienta.DOBLE, grosor = 5).grosorEfectivo())
+    }
+
+    @Test
+    fun dobleUsaElGrosorDelTrazoPrincipal() {
+        val lapiz = Lapiz(
+            grosor = 6,
+            herramienta = Herramienta.DOBLE,
+            herramientaPrincipal = Herramienta.PORTAMINA,
+        )
+        assertEquals(3, lapiz.grosorEfectivo())
+        // El acompañante tiene su propia herramienta (el carbóncillo engorda).
+        assertEquals(8, lapiz.grosorEfectivo(HerramientaDoble.CARBONCILLO.herramienta))
+        assertEquals(3, lapiz.grosorEfectivo(HerramientaDoble.PORTAMINA.herramienta))
+        assertEquals(6, lapiz.grosorEfectivo(HerramientaDoble.LAPIZ.herramienta))
+    }
+}
+
+class TrazoDobleTest {
+    /** Trazo horizontal de (0,0) a (10,0): hacia la derecha. */
+    private val horizontal = floatArrayOf(0f, 0f, 10f, 0f)
+
+    @Test
+    fun elAcompananteVaAlRevesDelGesto() {
+        val salida = TrazoDoble.acompanante(horizontal, horizontal.size, 4f, LadoDoble.MISMO)
+        // Nace donde termina el gesto y vuelve hacia donde empezó.
+        assertEquals(10f, salida[0], 0.001f)
+        assertEquals(0f, salida[1], 0.001f)
+        assertEquals(0f, salida[2], 0.001f)
+        assertEquals(0f, salida[3], 0.001f)
+    }
+
+    @Test
+    fun mismoLadoMantieneLaRutaDelGesto() {
+        val salida = TrazoDoble.acompanante(horizontal, horizontal.size, 4f, LadoDoble.MISMO)
+        // Sobre el trazo: los mismos puntos, pero recorridos al revés.
+        assertEquals(listOf(10f, 0f, 0f, 0f), salida.toList())
+    }
+
+    @Test
+    fun izquierdaYDerechaSonSimetricos() {
+        val izq = TrazoDoble.acompanante(horizontal, horizontal.size, 4f, LadoDoble.IZQUIERDA)
+        val der = TrazoDoble.acompanante(horizontal, horizontal.size, 4f, LadoDoble.DERECHA)
+        // El doble va al revés (hacia la izquierda), así que su izquierda es
+        // abajo: el acompañante queda debajo del gesto.
+        assertEquals(4f, izq[1], 0.001f)
+        assertEquals(-4f, der[1], 0.001f)
+        // La x no se mueve (el desplazamiento es perpendicular) y el orden de
+        // los vértices está invertido.
+        assertEquals(10f, izq[0], 0.001f)
+        assertEquals(0f, izq[2], 0.001f)
+    }
+
+    @Test
+    fun separacionCreceConElGrosor() {
+        assertEquals(2.5f, TrazoDoble.separacion(3), 0.001f)
+        assertEquals(4.5f, TrazoDoble.separacion(7), 0.001f)
+    }
+
+    @Test
+    fun desplazamientoDeUnSoloPuntoNoMueveNada() {
+        val punto = floatArrayOf(3f, 4f)
+        val salida = TrazoDoble.acompanante(punto, punto.size, 4f, LadoDoble.IZQUIERDA)
+        assertEquals(punto.toList(), salida.toList())
     }
 }
 

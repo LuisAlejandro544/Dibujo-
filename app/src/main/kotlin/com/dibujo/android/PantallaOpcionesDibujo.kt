@@ -128,6 +128,13 @@ private val TEXTURAS = listOf(
     Textura.RUGOSA to R.string.textura_rugosa,
     Textura.TRAMA to R.string.textura_trama,
     Textura.SALPICADA to R.string.textura_salpicada,
+    Textura.PAPEL to R.string.textura_papel,
+    Textura.TELA to R.string.textura_tela,
+    Textura.ACUARELA to R.string.textura_acuarela,
+    Textura.CARBON to R.string.textura_carbon,
+    Textura.MANCHA to R.string.textura_mancha,
+    Textura.PUNTILLES to R.string.textura_puntilles,
+    Textura.RAYAS to R.string.textura_rayas,
 )
 
 /** Tope del estabilizador de mano (coincide con `EstabilizadorTrazo`). */

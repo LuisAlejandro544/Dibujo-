@@ -8,6 +8,13 @@ name: OpenCode Assistant (Zen & Muse Spark)
 #   (c) timeout-minutes: 100 para fallar rápido si algo vuelve a atascarse,
 #   (d) cancel-in-progress: true para que un comando humano nuevo cancele
 #   un run zombie en vez de encolarse detrás de él para siempre.
+#
+# Corrección "Arreglo interno 4":
+# - FIX 128 TOOLS: la API rechazaba "maximum number of items is 128" porque
+#   REA anuncia 139 tools + ~20 built-in de opencode. permission/tools:false
+#   NO quita tools de la petición (sólo bloquea ejecución), así que se
+#   filtra el tools/list en la fuente con scripts/ci/rea-mcp-filter.mjs,
+#   dejando sólo las herramientas Android de REA.
 
 on:
   issues:
@@ -103,12 +110,7 @@ jobs:
     name: OpenCode Agent (Muse Spark 1.3 Multimodal)
     needs: guard
     if: needs.guard.outputs.should_run == 'true'
-    # (c) Si el agente vuelve a atascarse, el run falla a los 100 min en vez
-    # de consumir las 6 h por defecto de GitHub y bloquear el grupo.
     timeout-minutes: 100
-    # (d) Un comando humano nuevo cancela el run anterior del mismo issue
-    # (antes se encolaba detrás de un run zombie para siempre).
-    # La deduplicación por PR sigue protegiendo contra duplicados.
     concurrency:
       group: opencode-${{ github.event.issue.number || github.event.pull_request.number }}
       cancel-in-progress: true
@@ -130,12 +132,6 @@ jobs:
           git config --global user.name "${{ github.repository_owner }}"
           git config --global user.email "${{ secrets.PAT_EMAIL }}"
 
-      # ---------------------------------------------------------------------
-      # (b) FIX HANG — Red de respaldo: config global headless. Aunque el
-      # opencode.json del repo ya trae el bloque "permission", este archivo
-      # garantiza que NINGÚN permiso quede en "ask" en el runner, sin importar
-      # qué versión del config del repo se haya hecho checkout.
-      # ---------------------------------------------------------------------
       - name: Configurar permisos headless de OpenCode (anti-hang)
         run: |
           mkdir -p "$HOME/.config/opencode"
@@ -185,16 +181,11 @@ jobs:
         run: |
           gh api "repos/${REPO}/issues/comments/${COMMENT_ID}/reactions" -f content='eyes' || true
 
-      # REA (Reverse Engineer Anything) es un MCP local que corre con Node.
-      # Exige Node 22.19+ (no funciona en Node 20), por eso el runtime del
-      # agente sube a 22. El servidor se registra en opencode.json.
       - name: Configurar Node.js (Runtime oficial de OpenCode + REA)
         uses: actions/setup-node@v4
         with:
           node-version: '22'
 
-      # JADX headless es el motor que usa REA para APKs. Se cachea porque el
-      # JAR pesa ~41 MB y se verifica contra el SHA-256 fijado por REA.
       - name: Cache de JADX para REA
         if: steps.dedupe.outputs.skip != 'true'
         continue-on-error: true
@@ -205,7 +196,6 @@ jobs:
 
       - name: Preparar REA + JADX (análisis estático de APK)
         if: steps.dedupe.outputs.skip != 'true'
-        # Si falla la descarga, el agente sigue trabajando sin REA.
         continue-on-error: true
         env:
           REA_VERSION: 6.7.0
@@ -222,10 +212,15 @@ jobs:
           fi
           echo "${JADX_SHA256}  ${JAR}" | sha256sum -c -
           echo "REA_JADX_MCP_JAR=$JAR" >> "$GITHUB_ENV"
-          # Precalienta el caché de npx para que el primer tools/list del MCP
-          # no agote el timeout de arranque (el paquete se baja una sola vez).
           npx -y "rea-agents@${REA_VERSION}" --help >/dev/null
           npx -y "rea-agents@${REA_VERSION}" doctor || true
+
+      # Self-test del filtro MCP: arranca REA, hace tools/list y muestra
+      # cuántas herramientas quedarán visibles para el modelo (debe ser << 128).
+      - name: Verificar filtro de herramientas REA (anti 128-tools)
+        if: steps.dedupe.outputs.skip != 'true'
+        continue-on-error: true
+        run: node scripts/ci/rea-mcp-filter.mjs --self-test
 
       - name: Resolver Prompt y Descargar Imágenes para OpenCode Multimodal
         id: prompt_resolver
@@ -311,15 +306,15 @@ jobs:
         uses: anomalyco/opencode/github@latest
         with:
           use_github_token: true
-          model: "opencode/minimax-m3.1-flash-free"
+          model: "opencode/beam-free"
           prompt: ${{ steps.prompt_resolver.outputs.resolved_prompt }}
         env:
           GITHUB_TOKEN: ${{ secrets.PAT_TOKEN }}
           OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}
           PROMPT: ${{ steps.prompt_resolver.outputs.resolved_prompt }}
-          # Alternativa si prefieres NO tocar el opencode.json del repo:
-          # esta variable inyecta el config completo inline solo en el runner.
-          # OPENCODE_CONFIG_CONTENT: '{"permission":{"*":"allow","external_directory":"allow","doom_loop":"allow","question":"allow"}}'
+          # Arreglo interno 4: ruta del proxy que filtra las 139 tools de REA
+          # a solo Android para no superar el límite de 128 de la API.
+          REA_FILTER_SCRIPT: ${{ github.workspace }}/scripts/ci/rea-mcp-filter.mjs
           GIT_AUTHOR_NAME: ${{ github.repository_owner }}
           GIT_AUTHOR_EMAIL: ${{ secrets.PAT_EMAIL }}
           GIT_COMMITTER_NAME: ${{ github.repository_owner }}

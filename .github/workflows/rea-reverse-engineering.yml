@@ -1,0 +1,207 @@
+# REA — Reverse Engineer Anything (ejecución manual)
+#
+# Workflow de ingeniería inversa para que el agente (o el usuario) pueda
+# analizar artefactos propios o autorizados (APK, binarios nativos, JS/Electron,
+# pcaps, etc.) en un runner con todas las herramientas que REA necesita.
+#
+# IMPORTANTE: este workflow NO se dispara por push ni por pull request.
+# Solo se activa manualmente (workflow_dispatch), desde la UI de GitHub o con:
+#   gh workflow run rea-reverse-engineering.yml -f modo=full
+#
+# Incluye: JDK 17+, Node 22, Python 3.11, REA + jadx-headless-mcp, apktool,
+# adb, binutils (objdump), gdb, rizin, tshark y Ghidra (headless).
+
+name: "REA — Ingeniería inversa (manual)"
+
+on:
+  workflow_dispatch:
+    inputs:
+      modo:
+        description: "Modo de análisis: android | nativo | web | full"
+        required: false
+        default: "full"
+        type: choice
+        options: [android, nativo, web, full]
+      artefacto:
+        description: "Ruta o URL del artefacto a analizar (opcional)"
+        required: false
+        default: ""
+        type: string
+      script_py:
+        description: "Script .py a ejecutar (ruta relativa al repo, opcional)"
+        required: false
+        default: ""
+        type: string
+      script_js:
+        description: "Script .js a ejecutar (ruta relativa al repo, opcional)"
+        required: false
+        default: ""
+        type: string
+      subir_artefactos:
+        description: "Subir resultados como artefacto del run"
+        required: false
+        default: "true"
+        type: boolean
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+
+concurrency:
+  group: rea-manual
+  cancel-in-progress: false
+
+jobs:
+  rea:
+    name: Preparar entorno REA completo
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    env:
+      REA_VERSION: "6.7.0"
+      JADX_VERSION: "0.7.1"
+      JADX_SHA256: "6e5eacf500b64292bfb73c49797c1958f6ee44646e43e868039ae7feb573ff75"
+      APKTOOL_VERSION: "2.9.3"
+      GHIDRA_VERSION: "11.2.1"
+      GHIDRA_DATE: "20241105"
+      GHIDRA_TAG: "Ghidra_11.2.1_build"
+    steps:
+      - name: Checkout del código
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Configurar Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Configurar Node.js 22 (runtime de OpenCode + REA)
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Configurar JDK 17 (Temurin, completo)
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - name: Verificar módulo jdk.compiler (JDK completo)
+        run: |
+          java --list-modules | grep -q "jdk.compiler" || { echo "Falta jdk.compiler: se necesita JDK completo, no JRE"; exit 1; }
+          java -version
+
+      - name: Instalar herramientas del sistema (objdump, gdb, rizin, adb, tshark, apktool deps)
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            binutils gdb rizin tshark android-tools-adb unzip wget curl file \
+            python3-pip
+          echo "objdump: $(which objdump)"; objdump --version | head -1
+          echo "gdb: $(which gdb)"; gdb --version | head -1
+          echo "rizin: $(which rizin)"; rizin -v | head -1
+          echo "adb: $(which adb)"; adb version | head -1
+          echo "tshark: $(which tshark)"; tshark --version | head -1
+
+      - name: Cache de JADX para REA
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/rea-android
+          key: rea-jadx-${{ runner.os }}-${{ env.JADX_VERSION }}
+
+      - name: Preparar REA + jadx-headless-mcp (análisis de APK)
+        env:
+          REA_JADX_MCP_JAR: ""
+        run: |
+          set -euo pipefail
+          DIR="$HOME/.cache/rea-android"
+          JAR="$DIR/jadx-headless-mcp-${JADX_VERSION}-all.jar"
+          mkdir -p "$DIR"
+          if [ ! -f "$JAR" ]; then
+            curl -fL --retry 3 --retry-delay 2 -o "$JAR" \
+              "https://github.com/1013503897/jadx-headless-mcp/releases/download/v${JADX_VERSION}/jadx-headless-mcp-${JADX_VERSION}-all.jar"
+          fi
+          echo "${JADX_SHA256}  ${JAR}" | sha256sum -c -
+          echo "REA_JADX_MCP_JAR=$JAR" >> "$GITHUB_ENV"
+          npx -y "rea-agents@${REA_VERSION}" --help >/dev/null
+          npx -y "rea-agents@${REA_VERSION}" doctor || true
+
+      - name: Instalar apktool
+        run: |
+          set -euo pipefail
+          DIR="$HOME/.cache/rea-android"
+          JAR="$DIR/apktool_${APKTOOL_VERSION}.jar"
+          mkdir -p "$DIR"
+          if [ ! -f "$JAR" ]; then
+            curl -fL --retry 3 -o "$JAR" \
+              "https://github.com/iBotPeaches/Apktool/releases/download/v${APKTOOL_VERSION}/apktool_${APKTOOL_VERSION}.jar"
+          fi
+          mkdir -p "$HOME/.local/bin"
+          printf '#!/usr/bin/env sh\nexec java -jar "%s" "$@"\n' "$JAR" > "$HOME/.local/bin/apktool"
+          chmod +x "$HOME/.local/bin/apktool"
+          export PATH="$HOME/.local/bin:$PATH"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          apktool --version
+
+      - name: Instalar Ghidra (headless, si es necesario)
+        if: inputs.modo == 'nativo' || inputs.modo == 'full'
+        run: |
+          set -euo pipefail
+          DIR="$HOME/.cache/ghidra"
+          ZIP="$DIR/ghidra_${GHIDRA_VERSION}_PUBLIC_${GHIDRA_DATE}.zip"
+          EXTRACT="$DIR/ghidra_${GHIDRA_VERSION}_PUBLIC"
+          mkdir -p "$DIR"
+          if [ ! -d "$EXTRACT" ]; then
+            if [ ! -f "$ZIP" ]; then
+              curl -fL --retry 3 -o "$ZIP" \
+                "https://github.com/NationalSecurityAgency/ghidra/releases/download/${GHIDRA_TAG}/ghidra_${GHIDRA_VERSION}_PUBLIC_${GHIDRA_DATE}.zip"
+            fi
+            unzip -q "$ZIP" -d "$DIR"
+          fi
+          GHIDRA_HOME="$EXTRACT"
+          echo "GHIDRA_HOME=$GHIDRA_HOME" >> "$GITHUB_ENV"
+          echo "$GHIDRA_HOME/support" >> "$GITHUB_PATH"
+          "$GHIDRA_HOME/support/analyzeHeadless" -help 2>&1 | head -5 || true
+
+      - name: Verificar filtro MCP de REA (anti 128 tools)
+        run: node scripts/ci/rea-mcp-filter.mjs --self-test
+
+      - name: Ejecutar script Python (si se indicó)
+        if: inputs.script_py != ''
+        run: |
+          set -euo pipefail
+          test -f "${{ inputs.script_py }}" || { echo "No existe el script Python: ${{ inputs.script_py }}"; exit 1; }
+          python "${{ inputs.script_py }}"
+
+      - name: Ejecutar script JavaScript (si se indicó)
+        if: inputs.script_js != ''
+        run: |
+          set -euo pipefail
+          test -f "${{ inputs.script_js }}" || { echo "No existe el script JS: ${{ inputs.script_js }}"; exit 1; }
+          node "${{ inputs.script_js }}"
+
+      - name: Ejecutar REA doctor
+        run: npx -y "rea-agents@${REA_VERSION}" doctor || true
+
+      - name: Resumen de entorno REA
+        run: |
+          echo "=== REA / herramientas disponibles ==="
+          echo "JDK: $(java -version 2>&1 | head -1)"
+          echo "Node: $(node --version)"
+          echo "Python: $(python --version)"
+          echo "REA_JADX_MCP_JAR: $REA_JADX_MCP_JAR"
+          echo "GHIDRA_HOME: ${GHIDRA_HOME:-no instalado}"
+          echo "APKTOOL: $(which apktool)"
+          echo "Modo: ${{ inputs.modo }}"
+          echo "Artefacto: ${{ inputs.artefacto }}"
+
+      - name: Subir resultados (si se solicita)
+        if: inputs.subir_artefactos == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: rea-entorno-${{ github.run_id }}
+          path: |
+            ~/.cache/rea-android
+          if-no-files-found: ignore

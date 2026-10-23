@@ -72,8 +72,9 @@ implementaciones y pasar `MotorTest` (paridad píxel a píxel). Las diferencias:
 - BORRADOR pinta con el color de fondo de la hoja; la vista previa de Compose
   lo imita (fondo + grosor efectivo) para que el borrado se vea al instante.
 - **Textura del trazo**: `Textura` (`LISA`, `GRANO`, `RUGOSA`, `TRAMA`,
-  `SALPICADA`) modula el alpha final de cada píxel con `factor(x, y)` (255 fijo
-  para LISA). El ruido es entero determinista (mezcla de 32 bits + máscaras),
+  `SALPICADA`, `PAPEL`, `TELA`, `ACUARELA`, `CARBON`, `MANCHA`,
+  `PUNTILLES`, `RAYAS`) modula el alpha final de cada píxel con `factor(x, y)`
+  (255 fijo para LISA). El ruido es entero determinista (mezcla de 32 bits + máscaras),
   idéntico en `Textura.kt` y `DibujoEngine.cpp`; el ordinal viaja por JNI y
   debe conservar el orden. Nunca se aplica a BORRADOR ni PINTAR. La paridad la
   cubre `MotorTest.texturaParidadNativoKotlin`.

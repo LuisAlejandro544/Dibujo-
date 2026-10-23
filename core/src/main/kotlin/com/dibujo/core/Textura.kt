@@ -23,6 +23,27 @@ enum class Textura {
 
     /** Salpicado con huecos pequeños, como tiza o grafito suelto. */
     SALPICADA,
+
+    /** Grano de papel: variación suave, como lápiz sobre papel prensado. */
+    PAPEL,
+
+    /** Tela o lienzo: trama cruzada (urdimbre y trama). */
+    TELA,
+
+    /** Acuarela: manchas suaves y bordes difusos. */
+    ACUARELA,
+
+    /** Carbón: grano grueso y oscuro, como carboncillo. */
+    CARBON,
+
+    /** Manchas de tinta: gotas dispersas sobre el trazo. */
+    MANCHA,
+
+    /** Puntilleo: puntos separados, estilo stippling. */
+    PUNTILLES,
+
+    /** Rayas finas diagonales, como papel rayado. */
+    RAYAS,
     ;
 
     /**
@@ -36,6 +57,13 @@ enum class Textura {
         RUGOSA -> 120 + ruido(x shr 2, y shr 2) * 135 / 255
         TRAMA -> if ((x + y) % 7 < 2) 255 else 165
         SALPICADA -> if (ruido(x, y) < 38) 70 else 255
+        PAPEL -> 195 + ruido(x, y) * 60 / 255
+        TELA -> if ((x % 4 == 0) || (y % 4 == 0)) 175 else 245
+        ACUARELA -> 150 + ruido(x shr 3, y shr 3) * 105 / 255
+        CARBON -> 95 + ruido(x shr 3, y shr 3) * 160 / 255
+        MANCHA -> if (ruido(x, y) < 22) 55 else if (ruido(x, y) > 232) 195 else 255
+        PUNTILLES -> if (ruido(x, y) < 30) 80 else 255
+        RAYAS -> if ((x + y) % 6 < 2) 170 else 255
     }
 
     /**

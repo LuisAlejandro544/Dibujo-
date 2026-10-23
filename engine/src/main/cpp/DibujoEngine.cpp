@@ -383,6 +383,28 @@ inline int factorTextura(Textura textura, int x, int y) {
             return (((x + y) % 7) < 2) ? 255 : 165;
         case Textura::SALPICADA:
             return (ruidoTextura(x, y) < 38u) ? 70 : 255;
+        case Textura::PAPEL:
+            return 195 + static_cast<int>(ruidoTextura(x, y)) * 60 / 255;
+        case Textura::TELA:
+            return (((x % 4) == 0) || ((y % 4) == 0)) ? 175 : 245;
+        case Textura::ACUARELA: {
+            const int n = static_cast<int>(ruidoTextura(x >> 3, y >> 3));
+            return 150 + n * 105 / 255;
+        }
+        case Textura::CARBON: {
+            const int n = static_cast<int>(ruidoTextura(x >> 3, y >> 3));
+            return 95 + n * 160 / 255;
+        }
+        case Textura::MANCHA: {
+            const uint32_t n = ruidoTextura(x, y);
+            if (n < 22u) return 55;
+            if (n > 232u) return 195;
+            return 255;
+        }
+        case Textura::PUNTILLES:
+            return (ruidoTextura(x, y) < 30u) ? 80 : 255;
+        case Textura::RAYAS:
+            return (((x + y) % 6) < 2) ? 170 : 255;
         default:
             return 255;
     }

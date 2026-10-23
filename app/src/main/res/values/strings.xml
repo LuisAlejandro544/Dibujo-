@@ -265,6 +265,13 @@
     <string name="textura_rugosa">Rugosa</string>
     <string name="textura_trama">Trama</string>
     <string name="textura_salpicada">Salpicada</string>
+    <string name="textura_papel">Papel</string>
+    <string name="textura_tela">Tela</string>
+    <string name="textura_acuarela">Acuarela</string>
+    <string name="textura_carbon">Carbón</string>
+    <string name="textura_mancha">Mancha</string>
+    <string name="textura_puntilles">Puntilles</string>
+    <string name="textura_rayas">Rayas</string>
     <string name="textura_seleccionada">seleccionada</string>
 
     <!-- Pluma vectorial -->

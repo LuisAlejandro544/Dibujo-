@@ -47,6 +47,13 @@ enum class Textura : int {
     RUGOSA = 2,
     TRAMA = 3,
     SALPICADA = 4,
+    PAPEL = 5,
+    TELA = 6,
+    ACUARELA = 7,
+    CARBON = 8,
+    MANCHA = 9,
+    PUNTILLES = 10,
+    RAYAS = 11,
 };
 
 // Modos de interacción: editar (dibujar) o moverse libremente por la hoja.

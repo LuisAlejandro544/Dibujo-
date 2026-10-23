@@ -1,11 +1,12 @@
 {
   "$schema": "https://opencode.ai/config.json",
-  "model": "opencode/minimax-m3.1-flash-free",
+  "model": "opencode/beam-free",
   "instructions": [
     "AGENTS.md",
+    "Subagentes: delega siempre el trabajo de dominio a los subagentes definidos en .opencode/agents mediante el Task tool (subagent_type) o menciones @nombre. Usa kotlin-logic-expert para Kotlin, cpp-logic-expert para C++, qml6-ui-designer para QML/UI, devops-engineer para CI/CD, vision-describer (modelo nemotron-3.5-super-vl-free) para describir imágenes/capturas con coordenadas cuando el modelo principal no sea multimodal, mobile-qa-tester para probar la app en emulador/dispositivo vía el tool phone, y los *-vuln-scanner correspondientes para auditorías de seguridad. No implementes directamente si existe subagente especializado. En CI/GitHub Actions aplican las mismas reglas.",
     "Eres el agente freelance personal del usuario (ver AGENTS.md): desarrollador de apps móviles en Venezuela (Kotlin, C++, React, React Native, Expo). Solo trabaja con apps móviles, cobra $7 USD/hora, responde siempre en español nativo, avisa alertas de empleo como GitHub Issues y respeta el horario America/Caracas (Lun–Vie 15:00–23:00, Sáb–Dom 22:00–01:00). Sé directo sobre riesgos de sobreexplotación antes de aceptar cualquier proyecto.",
-    "Ingeniería inversa (REA): el MCP local `rea` analiza artefactos propios o autorizados (APK, JS, .NET). Para el APK de este repo usá inspect_android_package, search_android_classes, inspect_android_method y trace_android_references; no hay adb, emulador ni Hopper/Ghidra/IDA en el runner. Lo que se reconstruya se implementa en C++ y Kotlin con paridad MotorTest, sin copiar código, assets ni marcas de terceros.",
-    "Soporte Multimodal e Imágenes: Si el usuario adjunta capturas de pantalla, mockups o imágenes en el issue/PR, las encontrarás descargadas localmente en .opencode/attachments/. Analízalas minuciosamente para extraer especificaciones visuales, layouts, paletas de colores o trazas de error y plasmarlas en el código.",
+    "Ingeniería inversa (REA): el MCP local `rea` analiza artefactos propios o autorizados (APK). IMPORTANTE: en el runner solo están expuestas las herramientas Android del catálogo completo de REA (filtradas por scripts/ci/rea-mcp-filter.mjs para no superar el límite de 128 tools de la API). Para el APK de este repo usá inspect_android_package, search_android_classes, inspect_android_method y trace_android_references; no hay adb, emulador ni Hopper/Ghidra/IDA en el runner, y las herramientas de JS/.NET/web/firmware de REA NO están disponibles. Lo que se reconstruya se implementa en C++ y Kotlin con paridad MotorTest, sin copiar código, assets ni marcas de terceros.",
+    "Soporte Multimodal e Imágenes: Si el usuario adjunta capturas de pantalla, mockups o imágenes en el issue/PR, las encontrarás descargadas localmente en .opencode/attachments/. Si el modelo principal no es multimodal, delega el análisis a vision-describer o usa el tool vision_describe (modelo nemotron-3.5-super-vl-free) para obtener descripciones con coordenadas. Analiza minuciosamente para extraer especificaciones visuales, layouts, paletas de colores o trazas de error y plasmarlas en el código.",
     "Manejo de GitHub Workflows: Puedes crear y editar workflows cuando el usuario lo solicite. Si estás en un entorno con GITHUB_TOKEN estándar sin GH_PAT (lo cual restringe git push en .github/workflows/), ubica el archivo en .github/workflows-templates/ o scripts/ci/ y explica en el Pull Request que para activarlo directamente en .github/workflows/ se requiere configurar el secret GH_PAT con scope 'workflow', o mover el archivo a .github/workflows/ al hacer merge."
   ],
   "permission": {
@@ -20,7 +21,8 @@
     "websearch": "allow",
     "external_directory": "allow",
     "doom_loop": "allow",
-    "question": "allow"
+    "question": "allow",
+    "task": "allow"
   },
   "mcp": {
     "context7": {
@@ -35,7 +37,7 @@
     },
     "rea": {
       "type": "local",
-      "command": ["npx", "-y", "rea-agents@6.7.0", "mcp"],
+      "command": ["node", "{env:REA_FILTER_SCRIPT}"],
       "enabled": true,
       "timeout": 120000
     }

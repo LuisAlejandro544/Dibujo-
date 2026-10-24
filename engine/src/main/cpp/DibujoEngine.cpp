@@ -255,16 +255,84 @@ bool rellenar(std::vector<uint32_t>& hoja, int ancho, int alto,
     const uint32_t origen = hoja[static_cast<std::size_t>(semilla)];
     if (origen == color) return false;
 
-    std::vector<uint8_t> marca;
-    if (!inundar(hoja, ancho, alto, semilla, origen, nullptr, marca)) {
-        for (std::size_t i = 0; i < marca.size(); ++i) {
-            if (marca[i]) hoja[i] = color;
+    // Conjunto de píxeles del color de origen conectados al borde (región
+    // "abierta"). Si la semilla no está en él, la región ya está cerrada y se
+    // pintan todos los píxeles del color de origen que no estén conectados al
+    // borde (así no quedan líneas diminutas ni bolsillos).
+    auto exteriorDirecto = [&]() -> std::vector<uint8_t> {
+        std::vector<uint8_t> afuera(hoja.size(), 0);
+        std::vector<int> cola;
+        for (int xx = 0; xx < ancho; ++xx) {
+            for (int yy : {0, alto - 1}) {
+                const int i = yy * ancho + xx;
+                if (i < 0 || i >= static_cast<int>(hoja.size())) continue;
+                if (!afuera[static_cast<std::size_t>(i)] && hoja[static_cast<std::size_t>(i)] == origen) {
+                    afuera[static_cast<std::size_t>(i)] = 1;
+                    cola.push_back(i);
+                }
+            }
         }
-        return true;
+        for (int yy = 0; yy < alto; ++yy) {
+            for (int xx : {0, ancho - 1}) {
+                const int i = yy * ancho + xx;
+                if (i < 0 || i >= static_cast<int>(hoja.size())) continue;
+                if (!afuera[static_cast<std::size_t>(i)] && hoja[static_cast<std::size_t>(i)] == origen) {
+                    afuera[static_cast<std::size_t>(i)] = 1;
+                    cola.push_back(i);
+                }
+            }
+        }
+        while (!cola.empty()) {
+            const int i = cola.back();
+            cola.pop_back();
+            const int cy = i / ancho;
+            const int cx = i % ancho;
+            if (cx > 0) {
+                const int j = i - 1;
+                if (!afuera[static_cast<std::size_t>(j)] && hoja[static_cast<std::size_t>(j)] == origen) {
+                    afuera[static_cast<std::size_t>(j)] = 1;
+                    cola.push_back(j);
+                }
+            }
+            if (cx < ancho - 1) {
+                const int j = i + 1;
+                if (!afuera[static_cast<std::size_t>(j)] && hoja[static_cast<std::size_t>(j)] == origen) {
+                    afuera[static_cast<std::size_t>(j)] = 1;
+                    cola.push_back(j);
+                }
+            }
+            if (cy > 0) {
+                const int j = i - ancho;
+                if (!afuera[static_cast<std::size_t>(j)] && hoja[static_cast<std::size_t>(j)] == origen) {
+                    afuera[static_cast<std::size_t>(j)] = 1;
+                    cola.push_back(j);
+                }
+            }
+            if (cy < alto - 1) {
+                const int j = i + ancho;
+                if (!afuera[static_cast<std::size_t>(j)] && hoja[static_cast<std::size_t>(j)] == origen) {
+                    afuera[static_cast<std::size_t>(j)] = 1;
+                    cola.push_back(j);
+                }
+            }
+        }
+        return afuera;
+    };
+    const std::vector<uint8_t> afueraDirecto = exteriorDirecto();
+    if (!afueraDirecto[static_cast<std::size_t>(semilla)]) {
+        bool pinto = false;
+        for (std::size_t i = 0; i < hoja.size(); ++i) {
+            if (!afueraDirecto[i] && hoja[i] == origen) {
+                hoja[i] = color;
+                pinto = true;
+            }
+        }
+        return pinto;
     }
 
     std::vector<uint8_t> bloqueado;
     cerrarHuecos(hoja, ancho, alto, origen, bloqueado);
+    std::vector<uint8_t> marca;
     if (inundar(hoja, ancho, alto, semilla, origen, &bloqueado, marca)) return false;
     bool pinto = false;
     for (std::size_t i = 0; i < marca.size(); ++i) {

@@ -53,6 +53,7 @@ private:
     void limpiarCadena();
     void subirHojaInicial();
     void grabarSubidaHoja(VkCommandBuffer cmd, uint32_t slot);
+    void generarMipmaps(VkCommandBuffer cmd);
 
     uint32_t buscarFamiliaCola(VkPhysicalDevice fisico) const;
     uint32_t buscarTipoMemoria(uint32_t filtro, VkMemoryPropertyFlags props) const;
@@ -110,6 +111,7 @@ private:
 
     int anchoHoja_ = 0;
     int altoHoja_ = 0;
+    uint32_t nivelesMipmap_ = 1;
     // El tamaño lo escribe el hilo de la interfaz y lo lee el de render:
     // son atómicos para que no haya carreras.
     std::atomic<int> vw_{0};

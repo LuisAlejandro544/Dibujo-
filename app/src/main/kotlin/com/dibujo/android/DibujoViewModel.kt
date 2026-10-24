@@ -10,6 +10,7 @@ import com.dibujo.core.BackendRender
 import com.dibujo.core.Camara
 import com.dibujo.core.Colores
 import com.dibujo.core.Cuantizador
+import com.dibujo.core.RecomendadorGrosor
 import com.dibujo.core.EstabilizadorTrazo
 import com.dibujo.core.FiltroImagen
 import com.dibujo.core.FiltrosImagen
@@ -100,6 +101,12 @@ data class DibujoEstado(
     val coloresCalco: List<Int> = emptyList(),
     /** Se está analizando la imagen de calco para sacar su paleta. */
     val analizandoCalco: Boolean = false,
+    /** Recomendación de grosor al calcar: activada manualmente por el usuario. */
+    val recomendacionGrosorActiva: Boolean = false,
+    /** Se está calculando el grosor recomendado del calco. */
+    val analizandoGrosorCalco: Boolean = false,
+    /** Grosor recomendado para el calco (null si no se calculó o no hay imagen). */
+    val grosorRecomendado: Int? = null,
     /** Hay cambios sin guardar desde el último autoguardado o "Guardar". */
     val modificado: Boolean = false,
     /** Se está recortando o redimensionando el lienzo (operación pesada). */
@@ -250,6 +257,7 @@ class DibujoViewModel(app: Application) : AndroidViewModel(app) {
             texturaInicial = texturaInicialPreferida,
             vibracionActiva = preferencias.getBoolean(CLAVE_VIBRACION, true),
             sonidosActivos = preferencias.getBoolean(CLAVE_SONIDOS, false),
+            recomendacionGrosorActiva = preferencias.getBoolean(CLAVE_RECOMENDACION_GROSOR, false),
             limiteHistorial = limiteHistorialPreferido,
             estabilizador = estabilizadorPreferido,
         ),
@@ -1626,6 +1634,48 @@ class DibujoViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    /** Activa o desactiva la recomendación de grosor al calcar (persistido). */
+    fun alternarRecomendacionGrosor() {
+        val nuevo = !_estado.value.recomendacionGrosorActiva
+        preferencias.edit().putBoolean(CLAVE_RECOMENDACION_GROSOR, nuevo).apply()
+        _estado.update { it.copy(recomendacionGrosorActiva = nuevo) }
+    }
+
+    /**
+     * Calcula el grosor recomendado a partir de los trazos de la imagen de
+     * calco (grosor medio de sus líneas) y lo deja en el estado para que el
+     * usuario decida si lo aplica. No cambia el lápiz por sí solo.
+     */
+    fun recomendarGrosorCalco() {
+        val ruta = _estado.value.calcoUri ?: return
+        if (_estado.value.analizandoGrosorCalco) return
+        _estado.update { it.copy(analizandoGrosorCalco = true, grosorRecomendado = null) }
+        viewModelScope.launch {
+            val grosor = withContext(Dispatchers.Default) {
+                runCatching {
+                    val bmp = cargarBitmap(aplicacion, Uri.parse(ruta)) ?: return@runCatching null
+                    val maxLado = 384
+                    val escala = maxOf(1, maxOf(bmp.width, bmp.height) / maxLado)
+                    val ancho = (bmp.width / escala).coerceAtLeast(1)
+                    val alto = (bmp.height / escala).coerceAtLeast(1)
+                    val escalado = Bitmap.createScaledBitmap(bmp, ancho, alto, true)
+                    val pixeles = IntArray(ancho * alto)
+                    escalado.getPixels(pixeles, 0, ancho, 0, 0, ancho, alto)
+                    bmp.recycle()
+                    escalado.recycle()
+                    RecomendadorGrosor.grosorRecomendado(pixeles, ancho, alto)
+                }.getOrNull()
+            }
+            _estado.update { it.copy(analizandoGrosorCalco = false, grosorRecomendado = grosor) }
+        }
+    }
+
+    /** Aplica el grosor recomendado al lápiz actual. */
+    fun aplicarGrosorRecomendado() {
+        val g = _estado.value.grosorRecomendado ?: return
+        actualizarLapiz { it.copy(grosor = g) }
+    }
+
     /** Usa un color sugerido del calco y cambia a la herramienta PINTAR. */
     fun usarColorCalco(argb: Int) {
         actualizarLapiz { it.copy(color = argb, herramienta = Herramienta.PINTAR) }
@@ -2587,6 +2637,7 @@ class DibujoViewModel(app: Application) : AndroidViewModel(app) {
         const val CLAVE_SONIDOS = "sonidos"
         const val CLAVE_LIMITE_HISTORIAL = "limite_historial"
         const val CLAVE_ESTABILIZADOR = "estabilizador"
+        const val CLAVE_RECOMENDACION_GROSOR = "recomendacion_grosor"
 
         /** Colores que se sugieren al analizar el calco. */
         const val K_COLORES_CALCO = 8

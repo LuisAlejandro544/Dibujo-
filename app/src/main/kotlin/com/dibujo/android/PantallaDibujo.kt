@@ -302,6 +302,7 @@ fun PantallaDibujo(
     var mostrarTexto by remember { mutableStateOf(false) }
     var mostrarEditarTexto by remember { mutableStateOf(false) }
     // Configuración del doble trazo (herramienta DOBLE) y su color de sombra.
+    var mostrarCapas by remember { mutableStateOf(false) }
     var mostrarDoble by remember { mutableStateOf(false) }
     var mostrarRuedaSombra by remember { mutableStateOf(false) }
 
@@ -526,6 +527,7 @@ fun PantallaDibujo(
                 alRehacer = vm::rehacer,
                 alCentrar = vm::centrar,
                 alAlternarCalco = vm::alternarCalco,
+                alAbrirCapas = { mostrarCapas = true },
             )
         },
         bottomBar = {
@@ -758,6 +760,10 @@ fun PantallaDibujo(
                 mostrarMasHerramientas = false
                 mostrarTexto = true
             },
+            alAbrirCapas = {
+                mostrarMasHerramientas = false
+                mostrarCapas = true
+            },
             alAbrirTextura = {
                 mostrarMasHerramientas = false
                 mostrarTextura = true
@@ -806,6 +812,18 @@ fun PantallaDibujo(
             actual = estado.lapiz.textura,
             alElegir = { vm.elegirTextura(it) },
             alCerrar = { mostrarTextura = false },
+        )
+    }
+
+    if (mostrarCapas) {
+        DialogoCapas(
+            estado = estado,
+            alCerrar = { mostrarCapas = false },
+            alSeleccionar = vm::seleccionarCapa,
+            alAgregar = vm::agregarCapa,
+            alEliminar = vm::eliminarCapa,
+            alVisibilidad = vm::visibilidadCapa,
+            alOpacidad = vm::opacidadCapa,
         )
     }
 
@@ -863,6 +881,7 @@ private fun BarraSuperior(
     alRehacer: () -> Unit,
     alCentrar: () -> Unit,
     alAlternarCalco: () -> Unit,
+    alAbrirCapas: () -> Unit,
 ) {
     TopAppBar(
         modifier = Modifier.absorberToque(),
@@ -914,6 +933,11 @@ private fun BarraSuperior(
                     alPulsar = alAlternarCalco,
                 )
             }
+            BotonIcono(
+                icono = Icons.Rounded.Layers,
+                descripcion = stringResource(R.string.cd_capas),
+                alPulsar = alAbrirCapas,
+            )
             BotonIcono(
                 icono = Icons.Rounded.CenterFocusWeak,
                 descripcion = stringResource(R.string.cd_centrar),
@@ -2445,6 +2469,115 @@ private fun OpcionTextura(
     }
 }
 
+/** Gestión de capas raster (máximo 3): seleccionar, visibilidad, opacidad,
+ *  agregar y eliminar. */
+@Composable
+private fun DialogoCapas(
+    estado: DibujoEstado,
+    alCerrar: () -> Unit,
+    alSeleccionar: (Int) -> Boolean,
+    alAgregar: () -> Boolean,
+    alEliminar: (Int) -> Boolean,
+    alVisibilidad: (Int, Boolean) -> Unit,
+    alOpacidad: (Int, Float) -> Unit,
+) {
+    AlertDialog(
+        onDismissRequest = alCerrar,
+        title = { Text(stringResource(R.string.capas_titulo)) },
+        text = {
+            Column(Modifier.verticalScroll(rememberScrollState())) {
+                Text(
+                    stringResource(R.string.capas_desc),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Spacer(Modifier.height(12.dp))
+                for (i in 0 until estado.numeroCapas) {
+                    val activa = i == estado.capaActiva
+                    val visible = estado.capasVisibles.getOrElse(i) { true }
+                    val opacidad = estado.capasOpacidad.getOrElse(i) { 1f }
+                    Surface(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(vertical = 4.dp),
+                        shape = MaterialTheme.shapes.medium,
+                        color = if (activa) MaterialTheme.colorScheme.primaryContainer
+                        else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                        border = if (activa) BorderStroke(2.dp, MaterialTheme.colorScheme.primary) else null,
+                    ) {
+                        Column(Modifier.padding(12.dp)) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text(
+                                    stringResource(R.string.capas_nombre, i + 1),
+                                    style = MaterialTheme.typography.labelLarge,
+                                    modifier = Modifier.weight(1f),
+                                )
+                                if (activa) {
+                                    Text(
+                                        stringResource(R.string.capas_activa),
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.primary,
+                                    )
+                                }
+                            }
+                            Spacer(Modifier.height(6.dp))
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                TextButton(
+                                    onClick = { alSeleccionar(i) },
+                                    enabled = !activa,
+                                ) {
+                                    Text(stringResource(R.string.capas_seleccionar))
+                                }
+                                Spacer(Modifier.weight(1f))
+                                IconButton(onClick = { alVisibilidad(i, !visible) }) {
+                                    Icon(
+                                        if (visible) Icons.Rounded.Visibility else Icons.Rounded.VisibilityOff,
+                                        contentDescription = if (visible) stringResource(R.string.capas_visible)
+                                        else stringResource(R.string.capas_oculta),
+                                    )
+                                }
+                            }
+                            Text(
+                                stringResource(R.string.capas_opacidad),
+                                style = MaterialTheme.typography.labelSmall,
+                            )
+                            Slider(
+                                value = opacidad,
+                                onValueChange = { alOpacidad(i, it) },
+                                valueRange = 0f..1f,
+                            )
+                        }
+                    }
+                }
+                Spacer(Modifier.height(8.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Button(
+                        onClick = { alAgregar() },
+                        enabled = estado.numeroCapas < 3,
+                    ) {
+                        Icon(Icons.Rounded.Add, contentDescription = null)
+                        Spacer(Modifier.width(4.dp))
+                        Text(stringResource(R.string.capas_agregar))
+                    }
+                    TextButton(
+                        onClick = { alEliminar(estado.capaActiva) },
+                        enabled = estado.numeroCapas > 1,
+                    ) {
+                        Icon(Icons.Rounded.Delete, contentDescription = null)
+                        Spacer(Modifier.width(4.dp))
+                        Text(stringResource(R.string.capas_eliminar))
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = alCerrar) {
+                Text(stringResource(R.string.cerrar))
+            }
+        },
+    )
+}
+
 /** Inserta o edita un texto con una de las cinco tipografías del sistema. */
 @Composable
 private fun DialogoTexto(
@@ -2559,6 +2692,7 @@ private fun HojaHerramientasHoja(
     alAbrirIa: () -> Unit,
     alAbrirExpandir: () -> Unit,
     alAbrirTexto: () -> Unit,
+    alAbrirCapas: () -> Unit,
     alAbrirTextura: () -> Unit,
     alAbrirDoble: () -> Unit,
     alEnderezar: () -> Unit,
@@ -2658,6 +2792,12 @@ private fun HojaHerramientasHoja(
                 },
             )
             HorizontalDivider(Modifier.padding(vertical = 4.dp))
+            // Capas raster (máximo 3): gestión de capas del dibujo.
+            AccionHoja(
+                icono = Icons.Rounded.Layers,
+                etiqueta = stringResource(R.string.cd_capas),
+                alPulsar = alAbrirCapas,
+            )
             // Contenido de la hoja: texto, textura del trazo e IA local.
             AccionHoja(
                 icono = Icons.Rounded.TextFields,

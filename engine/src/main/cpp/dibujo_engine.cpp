@@ -253,6 +253,69 @@ Java_com_dibujo_engine_NativeEngine_nativoPixelHoja(
     return static_cast<jint>(e->pixelHoja(x, y));
 }
 
+JNIEXPORT jint JNICALL
+Java_com_dibujo_engine_NativeEngine_nativoNumeroCapas(JNIEnv*, jobject, jlong handle) {
+    auto* e = peer(handle);
+    if (e == nullptr) return 1;
+    return static_cast<jint>(e->numeroCapas());
+}
+
+JNIEXPORT jint JNICALL
+Java_com_dibujo_engine_NativeEngine_nativoCapaActiva(JNIEnv*, jobject, jlong handle) {
+    auto* e = peer(handle);
+    if (e == nullptr) return 0;
+    return static_cast<jint>(e->capaActiva());
+}
+
+JNIEXPORT jboolean JNICALL
+Java_com_dibujo_engine_NativeEngine_nativoAgregarCapa(JNIEnv*, jobject, jlong handle) {
+    auto* e = peer(handle);
+    if (e == nullptr) return JNI_FALSE;
+    return e->agregarCapa() ? JNI_TRUE : JNI_FALSE;
+}
+
+JNIEXPORT jboolean JNICALL
+Java_com_dibujo_engine_NativeEngine_nativoEliminarCapa(JNIEnv*, jobject, jlong handle, jint indice) {
+    auto* e = peer(handle);
+    if (e == nullptr) return JNI_FALSE;
+    return e->eliminarCapa(indice) ? JNI_TRUE : JNI_FALSE;
+}
+
+JNIEXPORT jboolean JNICALL
+Java_com_dibujo_engine_NativeEngine_nativoSeleccionarCapa(JNIEnv*, jobject, jlong handle, jint indice) {
+    auto* e = peer(handle);
+    if (e == nullptr) return JNI_FALSE;
+    return e->seleccionarCapa(indice) ? JNI_TRUE : JNI_FALSE;
+}
+
+JNIEXPORT void JNICALL
+Java_com_dibujo_engine_NativeEngine_nativoVisibilidadCapa(JNIEnv*, jobject, jlong handle, jint indice, jboolean visible) {
+    auto* e = peer(handle);
+    if (e == nullptr) return;
+    e->visibilidadCapa(indice, visible == JNI_TRUE);
+}
+
+JNIEXPORT void JNICALL
+Java_com_dibujo_engine_NativeEngine_nativoOpacidadCapa(JNIEnv*, jobject, jlong handle, jint indice, jfloat alfa) {
+    auto* e = peer(handle);
+    if (e == nullptr) return;
+    e->opacidadCapa(indice, alfa);
+}
+
+JNIEXPORT jboolean JNICALL
+Java_com_dibujo_engine_NativeEngine_nativoEsCapaVisible(JNIEnv*, jobject, jlong handle, jint indice) {
+    auto* e = peer(handle);
+    if (e == nullptr) return JNI_TRUE;
+    return e->esCapaVisible(indice) ? JNI_TRUE : JNI_FALSE;
+}
+
+JNIEXPORT jfloat JNICALL
+Java_com_dibujo_engine_NativeEngine_nativoOpacidadDeCapa(JNIEnv*, jobject, jlong handle, jint indice) {
+    auto* e = peer(handle);
+    if (e == nullptr) return 1.0f;
+    return e->opacidadDeCapa(indice);
+}
+
 JNIEXPORT jstring JNICALL
 Java_com_dibujo_engine_NativeEngine_nativoVersion(JNIEnv* env, jobject) {
     return env->NewStringUTF("dibujo-engine-c++/1.0");

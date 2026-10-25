@@ -125,6 +125,21 @@ class MotorNativo(
 
     override fun pixelHoja(x: Int, y: Int): Int = NativeEngine.nativoPixelHoja(handle, x, y)
 
+    // --- Capas raster (máximo 3) ---
+    override val numeroCapas: Int get() = NativeEngine.nativoNumeroCapas(handle)
+    override val capaActiva: Int get() = NativeEngine.nativoCapaActiva(handle)
+    override fun agregarCapa(): Boolean = NativeEngine.nativoAgregarCapa(handle)
+    override fun eliminarCapa(indice: Int): Boolean = NativeEngine.nativoEliminarCapa(handle, indice)
+    override fun seleccionarCapa(indice: Int): Boolean = NativeEngine.nativoSeleccionarCapa(handle, indice)
+    override fun visibilidadCapa(indice: Int, visible: Boolean) =
+        NativeEngine.nativoVisibilidadCapa(handle, indice, visible)
+    override fun opacidadCapa(indice: Int, alfa: Float) =
+        NativeEngine.nativoOpacidadCapa(handle, indice, alfa)
+    override fun esCapaVisible(indice: Int): Boolean =
+        NativeEngine.nativoEsCapaVisible(handle, indice)
+    override fun opacidadDeCapa(indice: Int): Float =
+        NativeEngine.nativoOpacidadDeCapa(handle, indice)
+
     override fun close() {
         NativeEngine.nativoDestruir(handle)
     }

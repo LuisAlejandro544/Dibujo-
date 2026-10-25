@@ -424,9 +424,8 @@ capa activa. `renderizar`/`copiarHoja`/`pixelHoja` componen las capas de
 abajo a arriba (source-over) con alpha. El historial guarda snapshot de la
 capa activa. API: `numeroCapas`, `capaActiva`, `agregarCapa`, `eliminarCapa`,
 `seleccionarCapa`, `visibilidadCapa`, `opacidadCapa`, `esCapaVisible`,
-`opacidadDeCapa`. El backend nativo (C++) sigue con una sola capa (el
-respaldo Kotlin soporta las N); por eso el sistema de capas corre completo
-sólo con el motor Kotlin.
+`opacidadDeCapa`. Ambos backends (Kotlin y C++) soportan las N capas y se
+mantienen en paridad píxel a píxel.
 
 ### Historial
 Undo/redo por **instantáneas comprimidas** de la hoja (RLE de píxeles iguales,

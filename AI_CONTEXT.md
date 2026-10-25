@@ -416,6 +416,17 @@ calco (persistido, apagado por defecto); al calcular se muestra el valor y el
 usuario decide si lo aplica al lápiz. Es trabajo de imagen, no toca el motor ni
 la paridad C++/Kotlin.
 
+### Capas (layers) raster
+Motor soporta hasta `MotorDibujo.MAXIMO_CAPAS` (=3) capas raster por motor.
+Cada capa es un `Lienzo` con visibilidad y opacidad; las operaciones de
+dibujo (trazo, relleno, limpiar, transformar, reemplazar) actúan sobre la
+capa activa. `renderizar`/`copiarHoja`/`pixelHoja` componen las capas de
+abajo a arriba (source-over) con alpha. El historial guarda snapshot de la
+capa activa. API: `numeroCapas`, `capaActiva`, `agregarCapa`, `eliminarCapa`,
+`seleccionarCapa`, `visibilidadCapa`, `opacidadCapa`, `esCapaVisible`,
+`opacidadDeCapa`. Ambos backends (Kotlin y C++) soportan las N capas y se
+mantienen en paridad píxel a píxel.
+
 ### Historial
 Undo/redo por **instantáneas comprimidas** de la hoja (RLE de píxeles iguales,
 sin pérdida). El tope es **configurable**

@@ -778,8 +778,13 @@ std::vector<float> trazoAcompanante(const std::vector<float>& puntos,
 } // namespace
 
 DibujoEngine::DibujoEngine(int ancho, int alto, uint32_t fondo)
-    : ancho_(ancho), alto_(alto), fondo_(fondo),
-      hoja_(static_cast<std::size_t>(ancho) * static_cast<std::size_t>(alto), fondo) {}
+    : ancho_(ancho), alto_(alto), fondo_(fondo) {
+    Capa c;
+    c.lienzo.assign(static_cast<std::size_t>(ancho) * static_cast<std::size_t>(alto), fondo);
+    c.visible = true;
+    c.opacidad = 1.0f;
+    capas_.push_back(c);
+}
 
 void DibujoEngine::iniciarTrazo(float x, float y) {
     cancelarTrazo();
@@ -809,7 +814,7 @@ bool DibujoEngine::terminarTrazo() {
     // La hoja la lee también el hilo de render GPU: bloquear la mutación.
     std::lock_guard<std::mutex> bloqueo(mutex_);
     // Snapshot para undo antes de aplicar el trazo.
-    pasado_.push_back(comprimirHoja(hoja_));
+    pasado_.push_back({capaActiva_, comprimirHoja(capas_[capaActiva_].lienzo)});
     if (pasado_.size() > maxHistorial_) pasado_.erase(pasado_.begin());
     futuro_.clear();
 
@@ -840,7 +845,7 @@ bool DibujoEngine::terminarTrazo() {
 
     if (herramienta_ == Tool::PINTAR) {
         // Balde: rellena la región donde se tocó con el color del lápiz.
-        rellenar(hoja_, ancho_, alto_,
+        rellenar(capas_[capaActiva_].lienzo, ancho_, alto_,
                  static_cast<int>(std::lround(trazo_[0])),
                  static_cast<int>(std::lround(trazo_[1])), color_);
     } else {
@@ -858,13 +863,13 @@ bool DibujoEngine::terminarTrazo() {
                 if (herramientaDoble_ != ToolDoble::PLUMA) {
                     const std::vector<float> desplazado =
                         trazoAcompanante(puntos, separacion, ladoDoble_);
-                    polilineaGruesa(hoja_, ancho_, alto_, desplazado.data(),
+                    polilineaGruesa(capas_[capaActiva_].lienzo, ancho_, alto_, desplazado.data(),
                                     static_cast<int>(desplazado.size()),
                                     static_cast<float>(grosorDoble) * 0.5f,
                                     puntaRedonda_, colorDoble_, textura);
                 }
             }
-            polilineaGruesa(hoja_, ancho_, alto_, puntos.data(),
+            polilineaGruesa(capas_[capaActiva_].lienzo, ancho_, alto_, puntos.data(),
                             static_cast<int>(puntos.size()), radio,
                             puntaRedonda_, color, textura);
         };
@@ -909,8 +914,16 @@ void DibujoEngine::fijarLimiteHistorial(std::size_t maximo) {
 bool DibujoEngine::deshacer() {
     std::lock_guard<std::mutex> bloqueo(mutex_);
     if (pasado_.empty()) return false;
-    futuro_.push_back(comprimirHoja(hoja_));
-    restaurarHoja(pasado_.back(), hoja_);
+    {
+        Paso actual; actual.capa = capaActiva_;
+        actual.snap = comprimirHoja(capas_[capaActiva_].lienzo);
+        futuro_.push_back(actual);
+    }
+    {
+        int ci = pasado_.back().capa;
+        if (ci < 0 || ci >= (int)capas_.size()) ci = capaActiva_;
+        restaurarHoja(pasado_.back().snap, capas_[ci].lienzo);
+    }
     pasado_.pop_back();
     ++revision_;
     return true;
@@ -919,8 +932,16 @@ bool DibujoEngine::deshacer() {
 bool DibujoEngine::rehacer() {
     std::lock_guard<std::mutex> bloqueo(mutex_);
     if (futuro_.empty()) return false;
-    pasado_.push_back(comprimirHoja(hoja_));
-    restaurarHoja(futuro_.back(), hoja_);
+    {
+        Paso actual; actual.capa = capaActiva_;
+        actual.snap = comprimirHoja(capas_[capaActiva_].lienzo);
+        pasado_.push_back(actual);
+    }
+    {
+        int ci = futuro_.back().capa;
+        if (ci < 0 || ci >= (int)capas_.size()) ci = capaActiva_;
+        restaurarHoja(futuro_.back().snap, capas_[ci].lienzo);
+    }
     futuro_.pop_back();
     ++revision_;
     return true;
@@ -928,20 +949,20 @@ bool DibujoEngine::rehacer() {
 
 void DibujoEngine::limpiarHoja() {
     std::lock_guard<std::mutex> bloqueo(mutex_);
-    pasado_.push_back(comprimirHoja(hoja_));
+    pasado_.push_back({capaActiva_, comprimirHoja(capas_[capaActiva_].lienzo)});
     if (pasado_.size() > maxHistorial_) pasado_.erase(pasado_.begin());
     futuro_.clear();
-    std::fill(hoja_.begin(), hoja_.end(), fondo_);
+    std::fill(capas_[capaActiva_].lienzo.begin(), capas_[capaActiva_].lienzo.end(), fondo_);
     ++revision_;
 }
 
 bool DibujoEngine::limpiarTrazos(float radio) {
     std::lock_guard<std::mutex> bloqueo(mutex_);
-    const std::size_t n = hoja_.size();
+    const std::size_t n = capas_[capaActiva_].lienzo.size();
     std::vector<uint8_t> tinta(n, 0);
     bool hay = false;
     for (std::size_t i = 0; i < n; ++i) {
-        if (hoja_[i] != fondo_) {
+        if (capas_[capaActiva_].lienzo[i] != fondo_) {
             tinta[i] = 1;
             hay = true;
         }
@@ -950,18 +971,18 @@ bool DibujoEngine::limpiarTrazos(float radio) {
 
     // Snapshot para undo y copia de colores: el esqueleto es un subconjunto de
     // la tinta, así que cada píxel conserva el color que tenía (`origen`).
-    std::vector<uint32_t> origen = hoja_;
-    pasado_.push_back(comprimirHoja(hoja_));
+    std::vector<uint32_t> origen = capas_[capaActiva_].lienzo;
+    pasado_.push_back({capaActiva_, comprimirHoja(capas_[capaActiva_].lienzo)});
     if (pasado_.size() > maxHistorial_) pasado_.erase(pasado_.begin());
     futuro_.clear();
 
     adelgazar(tinta, ancho_, alto_);
-    std::fill(hoja_.begin(), hoja_.end(), fondo_);
+    std::fill(capas_[capaActiva_].lienzo.begin(), capas_[capaActiva_].lienzo.end(), fondo_);
     for (int y = 0; y < alto_; ++y) {
         for (int x = 0; x < ancho_; ++x) {
             const std::size_t i = static_cast<std::size_t>(y) * ancho_ + x;
             if (tinta[i]) {
-                pintarDisco(hoja_, ancho_, alto_,
+                pintarDisco(capas_[capaActiva_].lienzo, ancho_, alto_,
                             static_cast<float>(x), static_cast<float>(y), radio,
                             origen[i]);
             }
@@ -973,11 +994,11 @@ bool DibujoEngine::limpiarTrazos(float radio) {
 
 bool DibujoEngine::reemplazarHoja(const uint32_t* datos, std::size_t n) {
     std::lock_guard<std::mutex> bloqueo(mutex_);
-    if (datos == nullptr || n != hoja_.size()) return false;
-    pasado_.push_back(comprimirHoja(hoja_));
+    if (datos == nullptr || n != capas_[capaActiva_].lienzo.size()) return false;
+    pasado_.push_back({capaActiva_, comprimirHoja(capas_[capaActiva_].lienzo)});
     if (pasado_.size() > maxHistorial_) pasado_.erase(pasado_.begin());
     futuro_.clear();
-    std::copy(datos, datos + n, hoja_.begin());
+    std::copy(datos, datos + n, capas_[capaActiva_].lienzo.begin());
     ++revision_;
     return true;
 }
@@ -993,7 +1014,7 @@ bool DibujoEngine::transformar(bool voltearHorizontal, bool voltearVertical,
     // Copia para muestrear y para el historial (se comprime al final, así el
     // historial no guarda una copia completa de la hoja por paso). El mapeo
     // inverso por píxel destino evita huecos al ampliar.
-    std::vector<uint32_t> fuente = hoja_;
+    std::vector<uint32_t> fuente = capas_[capaActiva_].lienzo;
     const double cx = (ancho_ - 1) / 2.0;
     const double cy = (alto_ - 1) / 2.0;
     const double e = static_cast<double>(escala);
@@ -1008,13 +1029,13 @@ bool DibujoEngine::transformar(bool voltearHorizontal, bool voltearVertical,
         for (int x = 0; x < ancho_; ++x) {
             const double u = static_cast<double>(x) - cx;
             const int sx = static_cast<int>(std::floor(cx + fx * ((u - tx) / e) + 0.5));
-            hoja_[fila + x] =
+            capas_[capaActiva_].lienzo[fila + x] =
                 (sx >= 0 && sy >= 0 && sx < ancho_ && sy < alto_)
                     ? fuente[static_cast<std::size_t>(sy) * ancho_ + sx]
                     : fondo_;
         }
     }
-    pasado_.push_back(comprimirHoja(fuente));
+    pasado_.push_back({capaActiva_, comprimirHoja(fuente)});
     if (pasado_.size() > maxHistorial_) pasado_.erase(pasado_.begin());
     futuro_.clear();
     ++revision_;
@@ -1038,14 +1059,18 @@ void DibujoEngine::expandir(int izquierda, int arriba, int derecha, int abajo) {
                                 fondo_);
     const int copiaAncho = std::max(0, std::min(ancho_, nuevoAncho - izq));
     const int copiaAlto = std::max(0, std::min(alto_, nuevoAlto - arr));
-    for (int y = 0; y < copiaAlto; ++y) {
-        for (int x = 0; x < copiaAncho; ++x) {
-            nuevo[static_cast<std::size_t>(y + arr) * nuevoAncho + (x + izq)] =
-                hoja_[static_cast<std::size_t>(y) * ancho_ + x];
+    for (auto& capa : capas_) {
+        std::vector<uint32_t> n2(static_cast<std::size_t>(nuevoAncho) *
+                                     static_cast<std::size_t>(nuevoAlto),
+                                 fondo_);
+        for (int y = 0; y < copiaAlto; ++y) {
+            for (int x = 0; x < copiaAncho; ++x) {
+                n2[static_cast<std::size_t>(y + arr) * nuevoAncho + (x + izq)] =
+                    capa.lienzo[static_cast<std::size_t>(y) * ancho_ + x];
+            }
         }
+        capa.lienzo.swap(n2);
     }
-
-    hoja_.swap(nuevo);
     ancho_ = nuevoAncho;
     alto_ = nuevoAlto;
     pasado_.clear();
@@ -1088,9 +1113,10 @@ void DibujoEngine::centrarVista() {
 
 void DibujoEngine::renderizar(uint32_t* destino, int vw, int vh) const {
     if (destino == nullptr || vw <= 0 || vh <= 0) return;
-    // Este camino corre en el hilo de la UI (el mismo que muta la hoja), así
-    // que no necesita bloqueo; lee `hoja_` directamente para no bloquear por
-    // píxel. El hilo de render GPU usa `copiarHoja`, que sí bloquea.
+    // Compone todas las capas en un buffer temporal (source-over) y muestrea
+    // desde él, igual que MotorKotlin (paridad).
+    std::vector<uint32_t> compuesto(static_cast<std::size_t>(ancho_) * alto_, fondo_);
+    componerHoja_(compuesto);
     const float c = static_cast<float>(std::cos(static_cast<double>(rotacion_)));
     const float s = static_cast<float>(std::sin(static_cast<double>(rotacion_)));
     for (int y = 0; y < vh; ++y) {
@@ -1115,10 +1141,10 @@ void DibujoEngine::renderizar(uint32_t* destino, int vw, int vh) const {
             const int iy1 = (iy + 1 < alto_) ? iy + 1 : iy;
             const std::size_t fila0 = static_cast<std::size_t>(iy) * ancho_;
             const std::size_t fila1 = static_cast<std::size_t>(iy1) * ancho_;
-            const uint32_t c00 = hoja_[fila0 + ix];
-            const uint32_t c10 = hoja_[fila0 + ix1];
-            const uint32_t c01 = hoja_[fila1 + ix];
-            const uint32_t c11 = hoja_[fila1 + ix1];
+            const uint32_t c00 = compuesto[fila0 + ix];
+            const uint32_t c10 = compuesto[fila0 + ix1];
+            const uint32_t c01 = compuesto[fila1 + ix];
+            const uint32_t c11 = compuesto[fila1 + ix1];
             const int a = canalBilineal(static_cast<int>((c00 >> 24) & 0xFFu),
                                         static_cast<int>((c10 >> 24) & 0xFFu),
                                         static_cast<int>((c01 >> 24) & 0xFFu),
@@ -1151,8 +1177,11 @@ uint64_t DibujoEngine::revision() const {
 uint64_t DibujoEngine::copiarHoja(uint32_t* destino, std::size_t capacidad) const {
     if (destino == nullptr) return 0;
     std::lock_guard<std::mutex> bloqueo(mutex_);
-    if (capacidad < hoja_.size()) return 0;
-    std::copy(hoja_.begin(), hoja_.end(), destino);
+    const std::size_t n = capas_.empty() ? 0 : capas_[0].lienzo.size();
+    if (capacidad < n) return 0;
+    std::vector<uint32_t> compuesto(n, fondo_);
+    componerHoja_(compuesto);
+    std::copy(compuesto.begin(), compuesto.end(), destino);
     return revision_;
 }
 
@@ -1163,5 +1192,132 @@ void DibujoEngine::leerCamara(float& panX, float& panY, float& zoom, float& rota
     zoom = zoom_;
     rotacion = rotacion_;
 }
+
+uint32_t DibujoEngine::pixelCompuesto_(int x, int y) const {
+    const std::size_t idx = static_cast<std::size_t>(y) * ancho_ + x;
+    uint32_t dst = fondo_;
+    for (const auto& c : capas_) {
+        if (!c.visible) continue;
+        float op = c.opacidad;
+        if (op < 0.0f) op = 0.0f;
+        if (op > 1.0f) op = 1.0f;
+        uint32_t src = (idx < c.lienzo.size()) ? c.lienzo[idx] : fondo_;
+        int sa = static_cast<int>(((src >> 24) & 0xFFu) * op);
+        if (sa < 0) sa = 0; if (sa > 255) sa = 255;
+        if (sa == 0) continue;
+        int da = (dst >> 24) & 0xFFu;
+        int inv = 255 - sa;
+        int na = sa + (da * inv) / 255;
+        if (na == 0) { dst = 0; continue; }
+        int sr = (src >> 16) & 0xFFu;
+        int sg = (src >> 8) & 0xFFu;
+        int sb = src & 0xFFu;
+        int dr = (dst >> 16) & 0xFFu;
+        int dg = (dst >> 8) & 0xFFu;
+        int db = dst & 0xFFu;
+        int outA = na;
+        int outR = (sr * sa + dr * da * inv / 255) / (outA > 0 ? outA : 1);
+        int outG = (sg * sa + dg * da * inv / 255) / (outA > 0 ? outA : 1);
+        int outB = (sb * sa + db * da * inv / 255) / (outA > 0 ? outA : 1);
+        if (outR < 0) outR = 0; if (outR > 255) outR = 255;
+        if (outG < 0) outG = 0; if (outG > 255) outG = 255;
+        if (outB < 0) outB = 0; if (outB > 255) outB = 255;
+        if (outA < 0) outA = 0; if (outA > 255) outA = 255;
+        dst = (static_cast<uint32_t>(outA) << 24) |
+              (static_cast<uint32_t>(outR) << 16) |
+              (static_cast<uint32_t>(outG) << 8) |
+              static_cast<uint32_t>(outB);
+    }
+    return dst;
+}
+
+void DibujoEngine::componerHoja_(std::vector<uint32_t>& destino) const {
+    const std::size_t n = destino.size();
+    // fondo base: capa 0 fondo
+    for (std::size_t i = 0; i < n; ++i) destino[i] = fondo_;
+    for (const auto& c : capas_) {
+        if (!c.visible) continue;
+        float op = c.opacidad;
+        if (op < 0.0f) op = 0.0f;
+        if (op > 1.0f) op = 1.0f;
+        for (std::size_t i = 0; i < n; ++i) {
+            uint32_t src = (i < c.lienzo.size()) ? c.lienzo[i] : fondo_;
+            int sa = static_cast<int>(((src >> 24) & 0xFFu) * op);
+            if (sa < 0) sa = 0; if (sa > 255) sa = 255;
+            if (sa == 0) continue;
+            uint32_t dst = destino[i];
+            int da = (dst >> 24) & 0xFFu;
+            int inv = 255 - sa;
+            int na = sa + (da * inv) / 255;
+            if (na == 0) { destino[i] = 0; continue; }
+            int sr = (src >> 16) & 0xFFu;
+            int sg = (src >> 8) & 0xFFu;
+            int sb = src & 0xFFu;
+            int dr = (dst >> 16) & 0xFFu;
+            int dg = (dst >> 8) & 0xFFu;
+            int db = dst & 0xFFu;
+            int outA = na;
+            int outR = (sr * sa + dr * da * inv / 255) / (outA > 0 ? outA : 1);
+            int outG = (sg * sa + dg * da * inv / 255) / (outA > 0 ? outA : 1);
+            int outB = (sb * sa + db * da * inv / 255) / (outA > 0 ? outA : 1);
+            if (outR < 0) outR = 0; if (outR > 255) outR = 255;
+            if (outG < 0) outG = 0; if (outG > 255) outG = 255;
+            if (outB < 0) outB = 0; if (outB > 255) outB = 255;
+            if (outA < 0) outA = 0; if (outA > 255) outA = 255;
+            destino[i] = (static_cast<uint32_t>(outA) << 24) |
+                          (static_cast<uint32_t>(outR) << 16) |
+                          (static_cast<uint32_t>(outG) << 8) |
+                          static_cast<uint32_t>(outB);
+        }
+    }
+}
+
+
+bool DibujoEngine::agregarCapa() {
+    std::lock_guard<std::mutex> bloqueo(mutex_);
+    if (capas_.size() >= 3) return false;
+    Capa c;
+    c.lienzo.assign(static_cast<std::size_t>(ancho_) * static_cast<std::size_t>(alto_), fondo_);
+    c.visible = true;
+    c.opacidad = 1.0f;
+    capas_.push_back(c);
+    ++revision_;
+    return true;
+}
+
+bool DibujoEngine::eliminarCapa(int indice) {
+    std::lock_guard<std::mutex> bloqueo(mutex_);
+    if (capas_.size() <= 1) return false;
+    if (indice < 0 || indice >= (int)capas_.size()) return false;
+    capas_.erase(capas_.begin() + indice);
+    if (capaActiva_ >= (int)capas_.size()) capaActiva_ = (int)capas_.size() - 1;
+    if (capaActiva_ < 0) capaActiva_ = 0;
+    ++revision_;
+    return true;
+}
+
+bool DibujoEngine::seleccionarCapa(int indice) {
+    std::lock_guard<std::mutex> bloqueo(mutex_);
+    if (indice < 0 || indice >= (int)capas_.size()) return false;
+    capaActiva_ = indice;
+    return true;
+}
+
+void DibujoEngine::visibilidadCapa(int indice, bool visible) {
+    std::lock_guard<std::mutex> bloqueo(mutex_);
+    if (indice < 0 || indice >= (int)capas_.size()) return;
+    capas_[indice].visible = visible;
+    ++revision_;
+}
+
+void DibujoEngine::opacidadCapa(int indice, float alfa) {
+    std::lock_guard<std::mutex> bloqueo(mutex_);
+    if (indice < 0 || indice >= (int)capas_.size()) return;
+    if (alfa < 0.0f) alfa = 0.0f;
+    if (alfa > 1.0f) alfa = 1.0f;
+    capas_[indice].opacidad = alfa;
+    ++revision_;
+}
+
 
 } // namespace dibujo

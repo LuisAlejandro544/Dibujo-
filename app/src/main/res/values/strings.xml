@@ -309,4 +309,17 @@
     <string name="recomendacion_grosor_resultado">Grosor recomendado: %1$d</string>
     <string name="recomendacion_grosor_usar">Usar</string>
 
+    <!-- Capas raster (máximo 3) -->
+    <string name="capas_titulo">Capas</string>
+    <string name="capas_desc">Gestiona las capas raster del dibujo (máximo 3).</string>
+    <string name="capas_agregar">Agregar capa</string>
+    <string name="capas_eliminar">Eliminar capa</string>
+    <string name="capas_seleccionar">Seleccionar</string>
+    <string name="capas_activa">Activa</string>
+    <string name="capas_visible">Visible</string>
+    <string name="capas_oculta">Oculta</string>
+    <string name="capas_opacidad">Opacidad</string>
+    <string name="capas_nombre">Capa %1$d</string>
+    <string name="cd_capas">Capas del dibujo</string>
+
 </resources>

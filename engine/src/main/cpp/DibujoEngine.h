@@ -133,7 +133,7 @@ public:
     uint32_t pixelHoja(int x, int y) const {
         std::lock_guard<std::mutex> bloqueo(mutex_);
         if (x < 0 || y < 0 || x >= ancho_ || y >= alto_) return fondo_;
-        return hoja_[y * ancho_ + x];
+        return pixelCompuesto_(x, y);
     }
 
     // --- Render GPU ---
@@ -168,14 +168,48 @@ public:
     // Lee la cámara de forma consistente con la revisión.
     void leerCamara(float& panX, float& panY, float& zoom, float& rotacion) const;
 
+    // --- Capas (layers) raster: máximo 3 ---
+    int maximoCapas() const { return 3; }
+    int numeroCapas() const { std::lock_guard<std::mutex> b(mutex_); return (int)capas_.size(); }
+    int capaActiva() const { std::lock_guard<std::mutex> b(mutex_); return capaActiva_; }
+    bool agregarCapa();
+    bool eliminarCapa(int indice);
+    bool seleccionarCapa(int indice);
+    void visibilidadCapa(int indice, bool visible);
+    void opacidadCapa(int indice, float alfa);
+    bool esCapaVisible(int indice) const {
+        std::lock_guard<std::mutex> b(mutex_);
+        if (indice < 0 || indice >= (int)capas_.size()) return false;
+        return capas_[indice].visible;
+    }
+    float opacidadDeCapa(int indice) const {
+        std::lock_guard<std::mutex> b(mutex_);
+        if (indice < 0 || indice >= (int)capas_.size()) return 0.0f;
+        return capas_[indice].opacidad;
+    }
+
 private:
     void rasterizarTrazo(const std::vector<float>& puntos, uint32_t color,
                          int grosor, bool redonda, bool borrar);
 
+    uint32_t pixelCompuesto_(int x, int y) const;
+    void componerHoja_(std::vector<uint32_t>& destino) const;
+
+    struct Capa {
+        std::vector<uint32_t> lienzo;
+        bool visible = true;
+        float opacidad = 1.0f;
+    };
+    struct Paso {
+        int capa = 0;
+        Instantanea snap;
+    };
+
     int ancho_;
     int alto_;
     uint32_t fondo_;
-    std::vector<uint32_t> hoja_;
+    std::vector<Capa> capas_;
+    int capaActiva_ = 0;
 
     // Trazo en curso (coordenadas de hoja, ya suavizado/decimado).
     std::vector<float> trazo_;
@@ -208,8 +242,8 @@ private:
     static constexpr float kZoomMax = 64.0f;
 
     // Historial (instantáneas comprimidas de la hoja completa).
-    std::vector<Instantanea> pasado_;
-    std::vector<Instantanea> futuro_;
+    std::vector<Paso> pasado_;
+    std::vector<Paso> futuro_;
     // Igual que el límite de Historial en Kotlin: hojas grandes por snapshot.
     static constexpr std::size_t kMaxHistorialPorDefecto = 30;
     std::size_t maxHistorial_ = kMaxHistorialPorDefecto;

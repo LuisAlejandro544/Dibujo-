@@ -81,6 +81,17 @@ object NativeEngine {
 
     /** Color ARGB de un píxel de la hoja (cuentagotas); fondo si está fuera. */
     external fun nativoPixelHoja(handle: Long, x: Int, y: Int): Int
+
+    // --- Capas raster (máximo 3) ---
+    external fun nativoNumeroCapas(handle: Long): Int
+    external fun nativoCapaActiva(handle: Long): Int
+    external fun nativoAgregarCapa(handle: Long): Boolean
+    external fun nativoEliminarCapa(handle: Long, indice: Int): Boolean
+    external fun nativoSeleccionarCapa(handle: Long, indice: Int): Boolean
+    external fun nativoVisibilidadCapa(handle: Long, indice: Int, visible: Boolean)
+    external fun nativoOpacidadCapa(handle: Long, indice: Int, alfa: Float)
+    external fun nativoEsCapaVisible(handle: Long, indice: Int): Boolean
+    external fun nativoOpacidadDeCapa(handle: Long, indice: Int): Float
     external fun nativoVersion(): String
 
     // --- Render GPU (Android) ---

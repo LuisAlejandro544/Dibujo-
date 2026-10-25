@@ -52,6 +52,14 @@ data class DibujoEstado(
     val hojaAncho: Int = 0,
     /** Alto actual de la hoja en píxeles (cambia al expandir). */
     val hojaAlto: Int = 0,
+    /** Número de capas raster del motor (máximo 3). */
+    val numeroCapas: Int = 1,
+    /** Índice (0-based) de la capa activa. */
+    val capaActiva: Int = 0,
+    /** Visibilidad de cada capa (paralela a las capas). */
+    val capasVisibles: List<Boolean> = listOf(true),
+    /** Opacidad de cada capa (paralela a las capas). */
+    val capasOpacidad: List<Float> = listOf(1f),
     /** Imagen de calco (para calcar debajo del trazo); null si no hay. */
     val calcoUri: String? = null,
     /** La imagen de calco se muestra (se puede alternar en cualquier momento). */
@@ -302,6 +310,10 @@ class DibujoViewModel(app: Application) : AndroidViewModel(app) {
                 motorNombre = m.nombre,
                 hojaAncho = m.ancho,
                 hojaAlto = m.alto,
+                numeroCapas = m.numeroCapas,
+                capaActiva = m.capaActiva,
+                capasVisibles = (0 until m.numeroCapas).map { m.esCapaVisible(it) },
+                capasOpacidad = (0 until m.numeroCapas).map { m.opacidadDeCapa(it) },
                 // El motor recién creado/abierto arranca con la cámara centrada:
                 // se refleja en el estado para que la vista previa y botones como
                 // "enderezar" no queden con la cámara del dibujo anterior.
@@ -1472,6 +1484,51 @@ class DibujoViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    // ----- Capas raster (máximo 3) -----
+    private fun sincronizarCapas() {
+        val m = motor ?: return
+        _estado.update {
+            it.copy(
+                numeroCapas = m.numeroCapas,
+                capaActiva = m.capaActiva,
+                capasVisibles = (0 until m.numeroCapas).map { i -> m.esCapaVisible(i) },
+                capasOpacidad = (0 until m.numeroCapas).map { i -> m.opacidadDeCapa(i) },
+                marco = it.marco + 1,
+            )
+        }
+    }
+
+    fun agregarCapa(): Boolean {
+        val m = motor ?: return false
+        val ok = m.agregarCapa()
+        if (ok) sincronizarCapas()
+        return ok
+    }
+
+    fun eliminarCapa(indice: Int): Boolean {
+        val m = motor ?: return false
+        val ok = m.eliminarCapa(indice)
+        if (ok) sincronizarCapas()
+        return ok
+    }
+
+    fun seleccionarCapa(indice: Int): Boolean {
+        val m = motor ?: return false
+        val ok = m.seleccionarCapa(indice)
+        if (ok) sincronizarCapas()
+        return ok
+    }
+
+    fun visibilidadCapa(indice: Int, visible: Boolean) {
+        motor?.visibilidadCapa(indice, visible)
+        sincronizarCapas()
+    }
+
+    fun opacidadCapa(indice: Int, alfa: Float) {
+        motor?.opacidadCapa(indice, alfa)
+        sincronizarCapas()
+    }
+
     fun rehacer() {
         asegurarSinAjuste()
         confirmarTransformacionVector()
@@ -1732,6 +1789,10 @@ class DibujoViewModel(app: Application) : AndroidViewModel(app) {
             it.copy(
                 hojaAncho = m.ancho,
                 hojaAlto = m.alto,
+                numeroCapas = m.numeroCapas,
+                capaActiva = m.capaActiva,
+                capasVisibles = (0 until m.numeroCapas).map { m.esCapaVisible(it) },
+                capasOpacidad = (0 until m.numeroCapas).map { m.opacidadDeCapa(it) },
                 puedeDeshacer = false,
                 puedeRehacer = false,
                 modificado = true,

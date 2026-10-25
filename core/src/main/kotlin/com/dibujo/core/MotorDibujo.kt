@@ -136,6 +136,24 @@ interface MotorDibujo : AutoCloseable {
      * caso en el que la app cae al render por CPU.
      */
     val handleNativo: Long get() = 0L
+
+    // ---------------------------------------------------------------------
+    // Capas (layers) raster: máximo MAXIMO_CAPAS (3) por motor.
+    // ---------------------------------------------------------------------
+    val maximoCapas: Int get() = MAXIMO_CAPAS
+    val numeroCapas: Int get() = 1
+    val capaActiva: Int get() = 0
+    fun agregarCapa(): Boolean = false
+    fun eliminarCapa(indice: Int): Boolean = false
+    fun seleccionarCapa(indice: Int): Boolean = false
+    fun visibilidadCapa(indice: Int, visible: Boolean) {}
+    fun opacidadCapa(indice: Int, alfa: Float) {}
+    fun esCapaVisible(indice: Int): Boolean = true
+    fun opacidadDeCapa(indice: Int): Float = 1f
+
+    companion object {
+        const val MAXIMO_CAPAS = 3
+    }
 }
 
 /**

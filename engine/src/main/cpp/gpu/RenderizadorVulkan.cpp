@@ -49,6 +49,13 @@ bool RenderizadorVulkan::iniciar(ANativeWindow* ventana, DibujoEngine* motor) {
     motor_ = motor;
     anchoHoja_ = motor_->ancho();
     altoHoja_ = motor_->alto();
+    // Número de niveles de mipmap (incluye el nivel 0): evita minificar la
+    // textura completa en cada cuadro al alejar la vista.
+    {
+        int maxLado = std::max(anchoHoja_, altoHoja_);
+        nivelesMipmap_ = 1;
+        while (maxLado > 1) { maxLado /= 2; ++nivelesMipmap_; }
+    }
     buffer_.assign(static_cast<std::size_t>(anchoHoja_) * altoHoja_, 0);
     if (ventana_ != nullptr) {
         vw_ = ANativeWindow_getWidth(ventana_);
@@ -261,11 +268,11 @@ bool RenderizadorVulkan::crearHoja() {
     ici.imageType = VK_IMAGE_TYPE_2D;
     ici.format = VK_FORMAT_R8G8B8A8_UNORM;
     ici.extent = {static_cast<uint32_t>(anchoHoja_), static_cast<uint32_t>(altoHoja_), 1};
-    ici.mipLevels = 1;
+    ici.mipLevels = nivelesMipmap_;
     ici.arrayLayers = 1;
     ici.samples = VK_SAMPLE_COUNT_1_BIT;
     ici.tiling = VK_IMAGE_TILING_OPTIMAL;
-    ici.usage = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
+    ici.usage = VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
     ici.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
     ici.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
     if (vkCreateImage(dispositivo_, &ici, nullptr, &hoja_) != VK_SUCCESS) {
@@ -330,7 +337,7 @@ void RenderizadorVulkan::subirHojaInicial() {
     VkCommandBuffer cmd = comenzarComandoUnico();
     if (cmd == VK_NULL_HANDLE) return;
 
-    VkImageSubresourceRange rango{VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+    VkImageSubresourceRange rango{VK_IMAGE_ASPECT_COLOR_BIT, 0, nivelesMipmap_, 0, 1};
     VkImageMemoryBarrier a{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
     a.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
     a.newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
@@ -349,17 +356,7 @@ void RenderizadorVulkan::subirHojaInicial() {
                          static_cast<uint32_t>(altoHoja_), 1};
     vkCmdCopyBufferToImage(cmd, staging_.front(), hoja_, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &copia);
 
-    VkImageMemoryBarrier b{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
-    b.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
-    b.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-    b.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-    b.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-    b.image = hoja_;
-    b.subresourceRange = rango;
-    b.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
-    b.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
-    vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TRANSFER_BIT,
-                         VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0, 0, nullptr, 0, nullptr, 1, &b);
+    generarMipmaps(cmd);
 
     terminarComandoUnico(cmd);
     disposicionHoja_ = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
@@ -378,7 +375,7 @@ void RenderizadorVulkan::grabarSubidaHoja(VkCommandBuffer cmd, uint32_t slot) {
         vkUnmapMemory(dispositivo_, memoriaStaging_[slot]);
     }
 
-    VkImageSubresourceRange rango{VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+    VkImageSubresourceRange rango{VK_IMAGE_ASPECT_COLOR_BIT, 0, nivelesMipmap_, 0, 1};
 
     // La imagen pasa de "la lee el shader" a "destino de la copia". La espera
     // cubre también las escrituras de copia anteriores (misma imagen, cuadro
@@ -402,21 +399,103 @@ void RenderizadorVulkan::grabarSubidaHoja(VkCommandBuffer cmd, uint32_t slot) {
                          static_cast<uint32_t>(altoHoja_), 1};
     vkCmdCopyBufferToImage(cmd, staging_[slot], hoja_, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &copia);
 
-    // Y de vuelta a "la lee el shader" para el dibujo de este mismo cuadro.
-    VkImageMemoryBarrier b{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
-    b.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
-    b.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-    b.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-    b.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-    b.image = hoja_;
-    b.subresourceRange = rango;
-    b.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
-    b.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
-    vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TRANSFER_BIT,
-                         VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0, 0, nullptr, 0, nullptr, 1, &b);
+    // Genera los niveles de mipmap y deja la imagen lista para el shader.
+    generarMipmaps(cmd);
 
     disposicionHoja_ = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
     revision_ = rev;
+}
+
+void RenderizadorVulkan::generarMipmaps(VkCommandBuffer cmd) {
+    // Asume que el nivel 0 está en TRANSFER_DST_OPTIMAL (recién copiado) y
+    // deja TODOS los niveles en SHADER_READ_ONLY_OPTIMAL, generando los niveles
+    // 1..N-1 por blit lineal. Sin esto el muestreo al alejar minifica la
+    // textura completa por píxel (lag con hojas grandes).
+    if (nivelesMipmap_ <= 1) {
+        // Un solo nivel: sólo transicionar el nivel 0.
+        VkImageSubresourceRange rango{VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+        VkImageMemoryBarrier b{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
+        b.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+        b.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+        b.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        b.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        b.image = hoja_;
+        b.subresourceRange = rango;
+        b.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+        b.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+        vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TRANSFER_BIT,
+                             VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0, 0, nullptr, 0, nullptr, 1, &b);
+        return;
+    }
+
+    int32_t anchoMip = anchoHoja_;
+    int32_t altoMip = altoHoja_;
+
+    for (uint32_t i = 1; i < nivelesMipmap_; ++i) {
+        VkImageSubresourceRange rangoSrc{VK_IMAGE_ASPECT_COLOR_BIT, i - 1, 1, 0, 1};
+        VkImageMemoryBarrier a{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
+        a.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+        a.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+        a.newLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+        a.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        a.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        a.image = hoja_;
+        a.subresourceRange = rangoSrc;
+        a.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+        a.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+        vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TRANSFER_BIT,
+                             VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0, nullptr, 1, &a);
+
+        VkImageBlit blit{};
+        blit.srcOffsets[0] = {0, 0, 0};
+        blit.srcOffsets[1] = {anchoMip, altoMip, 1};
+        blit.srcSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+        blit.srcSubresource.mipLevel = i - 1;
+        blit.srcSubresource.baseArrayLayer = 0;
+        blit.srcSubresource.layerCount = 1;
+        int32_t nuevoAncho = anchoMip > 1 ? anchoMip / 2 : 1;
+        int32_t nuevoAlto = altoMip > 1 ? altoMip / 2 : 1;
+        blit.dstOffsets[0] = {0, 0, 0};
+        blit.dstOffsets[1] = {nuevoAncho, nuevoAlto, 1};
+        blit.dstSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+        blit.dstSubresource.mipLevel = i;
+        blit.dstSubresource.baseArrayLayer = 0;
+        blit.dstSubresource.layerCount = 1;
+        vkCmdBlitImage(cmd, hoja_, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                       hoja_, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &blit, VK_FILTER_LINEAR);
+
+        // El nivel fuente ya no se necesita como origen: pasa a SHADER_READ_ONLY.
+        VkImageMemoryBarrier b{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
+        b.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+        b.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+        b.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+        b.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        b.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        b.image = hoja_;
+        b.subresourceRange = rangoSrc;
+        b.srcAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+        b.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+        vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TRANSFER_BIT,
+                             VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0, 0, nullptr, 0, nullptr, 1, &b);
+
+        anchoMip = nuevoAncho;
+        altoMip = nuevoAlto;
+    }
+
+    // Último nivel: TRANSFER_DST → SHADER_READ_ONLY.
+    VkImageSubresourceRange rangoUlt{VK_IMAGE_ASPECT_COLOR_BIT, nivelesMipmap_ - 1, 1, 0, 1};
+    VkImageMemoryBarrier c{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
+    c.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+    c.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+    c.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+    c.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    c.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    c.image = hoja_;
+    c.subresourceRange = rangoUlt;
+    c.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+    c.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+    vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TRANSFER_BIT,
+                         VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0, 0, nullptr, 0, nullptr, 1, &c);
 }
 
 bool RenderizadorVulkan::crearDescriptores() {
@@ -427,7 +506,7 @@ bool RenderizadorVulkan::crearDescriptores() {
     sci.addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
     sci.addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
     sci.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
-    sci.maxLod = 0.0f;
+    sci.maxLod = static_cast<float>(nivelesMipmap_ > 1 ? nivelesMipmap_ - 1 : 0);
     if (vkCreateSampler(dispositivo_, &sci, nullptr, &muestreo_) != VK_SUCCESS) return false;
 
     VkDescriptorSetLayoutBinding binding{};

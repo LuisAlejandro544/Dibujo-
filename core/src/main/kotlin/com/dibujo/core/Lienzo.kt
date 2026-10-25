@@ -411,11 +411,38 @@ class Lienzo(
         val origen = pixeles[semilla]
         if (origen == color) return false
 
-        // Intento directo: el trazo ya encierra la región (caso habitual).
-        val directo = inundar(semilla, origen, bloqueado = null)
-        if (directo != null) {
-            for (i in directo.indices) if (directo[i]) pixeles[i] = color
-            return true
+        // Conjunto de píxeles del color de origen conectados al borde (región
+        // "abierta"). Si la semilla no está en él, la región ya está cerrada y
+        // se pintan todos los píxeles del color de origen que no estén
+        // conectados al borde (así no quedan líneas diminutas ni bolsillos).
+        fun exterior(): BooleanArray {
+            val afuera = BooleanArray(pixeles.size)
+            val cola = ArrayDeque<Int>()
+            for (x in 0 until ancho) for (yy in listOf(0, alto - 1)) {
+                val i = yy * ancho + x
+                if (!afuera[i] && pixeles[i] == origen) { afuera[i] = true; cola.add(i) }
+            }
+            for (y in 0 until alto) for (xx in listOf(0, ancho - 1)) {
+                val i = y * ancho + xx
+                if (!afuera[i] && pixeles[i] == origen) { afuera[i] = true; cola.add(i) }
+            }
+            while (cola.isNotEmpty()) {
+                val i = cola.removeLast()
+                val cy = i / ancho; val cx = i % ancho
+                if (cx > 0) { val j = i - 1; if (!afuera[j] && pixeles[j] == origen) { afuera[j] = true; cola.add(j) } }
+                if (cx < ancho - 1) { val j = i + 1; if (!afuera[j] && pixeles[j] == origen) { afuera[j] = true; cola.add(j) } }
+                if (cy > 0) { val j = i - ancho; if (!afuera[j] && pixeles[j] == origen) { afuera[j] = true; cola.add(j) } }
+                if (cy < alto - 1) { val j = i + ancho; if (!afuera[j] && pixeles[j] == origen) { afuera[j] = true; cola.add(j) } }
+            }
+            return afuera
+        }
+        val afueraDirecto = exterior()
+        if (!afueraDirecto[semilla]) {
+            var pinto = false
+            for (i in pixeles.indices) {
+                if (!afueraDirecto[i] && pixeles[i] == origen) { pixeles[i] = color; pinto = true }
+            }
+            return pinto
         }
 
         // El relleno se escapó por un hueco del contorno: cierra huecos

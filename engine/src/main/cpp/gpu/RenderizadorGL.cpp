@@ -169,8 +169,11 @@ bool RenderizadorGL::iniciar(ANativeWindow* ventana, DibujoEngine* motor) {
     glGenTextures(1, &textura_);
     glBindTexture(GL_TEXTURE_2D, textura_);
     // Filtro lineal en ambos sentidos: al hacer zoom el trazo se interpola en
-    // vez de mostrar cada texel como un cuadrado duro (GL_NEAREST).
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    // vez de mostrar cada texel como un cuadrado duro (GL_NEAREST). Con mipmaps
+    // (GL_LINEAR_MIPMAP_LINEAR) el muestreo al alejar usa niveles precalculados:
+    // evita el coste de minificar una textura grande en cada cuadro (lag al ver
+    // el dibujo completo) y suaviza el resultado sin tocar el motor.
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
@@ -235,6 +238,11 @@ void RenderizadorGL::subirHoja() {
     glBindTexture(GL_TEXTURE_2D, textura_);
     glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, anchoHoja_, altoHoja_, GL_RGBA,
                     GL_UNSIGNED_BYTE, buffer_.data());
+    // Mipmaps: se regeneran cada vez que la hoja cambia (trazo terminado,
+    // deshacer, limpiar...). La subida ya copió la hoja completa; generar los
+    // niveles es barato en la GPU y hace que el muestreo al alejar sea O(1) en
+    // vez de minificar una textura de hasta 4096×4096 por píxel.
+    glGenerateMipmap(GL_TEXTURE_2D);
     revision_ = rev;
 }
 
